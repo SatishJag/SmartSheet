@@ -52,7 +52,7 @@ New modules, all under `src/domain/javascript/`:
 - `oxlint`: no errors.
 - `knip`: no new unused exports.
 - `src/domain/javascript/` and `src/application/javascript/` tests: all 208 files pass (5,850 tests pass and 6 are skipped).
-- Full source test group: see the results section below.
+- Full source test group: 1,348 test files pass and 2 are skipped. 25,096 tests pass and 46 are skipped. No failures. The run took 7 min 5 s. These counts match the baseline exactly.
 
 ## What remains
 
