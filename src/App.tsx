@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { AuthGate } from './auth/AuthGate'
 import { SheetList } from './auth/SheetList'
 import { createSupabaseClient, getSupabaseConfig } from './lib/supabase'
+import { SheetView } from './views/SheetView'
 import './App.css'
 
 export default function App() {
@@ -50,12 +51,7 @@ function Shell({ client, userId, email }: { client: SupabaseClient; userId: stri
         {openSheetId === null ? (
           <SheetList client={client} userId={userId} onOpen={setOpenSheetId} />
         ) : (
-          <div>
-            <p>Sheet view coming in the next tasks</p>
-            <button type="button" onClick={() => setOpenSheetId(null)}>
-              Back to sheets
-            </button>
-          </div>
+          <SheetView client={client} sheetId={openSheetId} onBack={() => setOpenSheetId(null)} />
         )}
       </main>
     </div>
