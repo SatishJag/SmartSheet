@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { SheetData } from '../../store/persistence'
@@ -254,6 +254,41 @@ describe('GridView editing', () => {
     await user.keyboard('{ArrowUp}{ArrowUp}')
     expect(cell(1, 'Task')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getAllByRole('gridcell').filter((c) => c.getAttribute('aria-selected') === 'true')).toHaveLength(1)
+  })
+})
+
+describe('GridView keyboard entry', () => {
+  it('Tab into the grid activates the first cell; arrows and Enter then work without a mouse', async () => {
+    const { user } = await renderGrid()
+    await user.tab()
+    expect(cell(1, 'Task')).toHaveFocus()
+    expect(cell(1, 'Task')).toHaveAttribute('aria-selected', 'true')
+
+    await user.keyboard('{ArrowDown}')
+    expect(cell(2, 'Task')).toHaveAttribute('aria-selected', 'true')
+    expect(cell(2, 'Task')).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('textbox', { name: 'Task' })).toHaveValue('Survey')
+  })
+
+  it('keeps one tabbable cell when row 1 is scrolled out of the rendered window', async () => {
+    const rows = Array.from({ length: 5000 }, (_, i) =>
+      makeRow(`r${i}`, `a${String(i).padStart(5, '0')}`, { [COL.task]: `Task ${i + 1}` }),
+    )
+    const { user } = await renderGrid(makeSheetData({ rows, dependencies: [] }))
+    const scroller = screen.getByRole('grid').parentElement!
+    act(() => {
+      scroller.scrollTop = 32 * 2000
+      fireEvent.scroll(scroller)
+    })
+    expect(screen.queryByText('Task 1')).not.toBeInTheDocument()
+
+    const tabbable = screen.getAllByRole('gridcell').filter((c) => c.tabIndex === 0)
+    expect(tabbable).toHaveLength(1)
+    await user.tab()
+    expect(tabbable[0]).toHaveFocus()
+    expect(tabbable[0]).toHaveAttribute('aria-selected', 'true')
   })
 })
 

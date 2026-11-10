@@ -154,6 +154,13 @@ export function GridView({ viewportHeight }: GridViewProps) {
     else api.getState().addRow()
   }
 
+  // Exactly one cell is in the tab order: the active cell when it is rendered, otherwise the
+  // first cell of the first rendered row, so keyboard users can always tab into the grid.
+  const virtualItems = virtualizer.getVirtualItems()
+  const renderedIds = virtualItems.map((item) => tableRows[item.index]?.id)
+  const activeRendered = activeValid && renderedIds.includes(active!.rowId)
+  const firstRenderedRowId = renderedIds[0]
+
   function renderCell(row: GridRow, col: Column, idx: number) {
     const key = `${row.id}:${col.id}`
     const error = errorByCell.get(key)
@@ -194,13 +201,17 @@ export function GridView({ viewportHeight }: GridViewProps) {
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
         title={error}
-        tabIndex={isActive || (!activeValid && row.rowNumber === 1 && idx === 0) ? 0 : -1}
+        tabIndex={isActive || (!activeRendered && row.id === firstRenderedRowId && idx === 0) ? 0 : -1}
         data-row-id={row.id}
         data-col-id={col.id}
         onClick={() => {
           if (!(isActive && editing)) select(row.id, col.id, false)
         }}
         onDoubleClick={() => startEdit(row, col)}
+        onFocus={() => {
+          // Focus arriving by Tab (or any other way) makes this the active cell.
+          if (!isActive) select(row.id, col.id, false)
+        }}
       >
         {content}
         {error && (
@@ -251,7 +262,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
             ))}
           </div>
           <div className="grid-body" style={{ height: virtualizer.getTotalSize() }}>
-            {virtualizer.getVirtualItems().map((item) => {
+            {virtualItems.map((item) => {
               const row = tableRows[item.index].original
               return (
                 <div
