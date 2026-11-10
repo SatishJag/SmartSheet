@@ -206,9 +206,10 @@ describe('GanttView dependency arrows', () => {
 })
 
 describe('GanttView drag', () => {
-  // The anchor row keeps the range start fixed while "Move me" moves.
-  const movable = () =>
-    sheet([['anchor', 'Anchor', '2026-11-02', '1d'], ['m', 'Move me', '2026-11-09', '2d']])
+  // "Move me" is the only (so also the earliest) task: moving it must not move the timeline origin.
+  const movable = () => sheet([['m', 'Move me', '2026-11-09', '2d']])
+  /** Left x of a day's column, read from the header's day label. */
+  const dayX = (iso: string) => num(document.querySelector(`.gantt-day[data-date="${iso}"]`)!, 'x') - DW / 2
 
   it('moves a bar one day right: previews, writes the start once, and the bar follows the store', async () => {
     const { setCell } = await renderGantt(movable())
@@ -221,7 +222,33 @@ describe('GanttView drag', () => {
     expect(setCell).toHaveBeenCalledTimes(1)
     expect(setCell).toHaveBeenCalledWith('m', COL.start, '2026-11-10')
     expect(left('Move me')).toBe(x0 + DW)
+    expect(left('Move me')).toBe(dayX('2026-11-10')) // sits at the dropped date, no snap back
     expect(bar('Move me')).toHaveAccessibleName(/2026-11-10 to 2026-11-11/)
+  })
+
+  it('keeps the earliest bar at its dropped date after moving it right several days', async () => {
+    const { setCell } = await renderGantt(movable())
+    expect(left('Move me')).toBe(dayX('2026-11-09'))
+    drag(body('Move me'), 3 * DW)
+    expect(setCell).toHaveBeenCalledWith('m', COL.start, '2026-11-12')
+    expect(left('Move me')).toBe(dayX('2026-11-12'))
+    expect(left('Move me')).toBe(6 * DW) // origin unchanged: 2026-11-06
+  })
+
+  it('extends the timeline while a bar is dragged past either end, so it is not clipped', async () => {
+    const { setCell } = await renderGantt(movable())
+    const target = body('Move me')
+    fireEvent.pointerDown(target, { clientX: 500, button: 0, pointerId: 1 })
+    fireEvent.pointerMove(window, { clientX: 500 - 6 * DW, pointerId: 1 }) // to 2026-11-03, before day 0
+    expect(left('Move me')).toBeGreaterThanOrEqual(0)
+    expect(left('Move me')).toBe(dayX('2026-11-03'))
+    fireEvent.pointerMove(window, { clientX: 500 + 40 * DW, pointerId: 1 }) // far past the end
+    const svgWidth = num(document.querySelector('.gantt-timeline')!, 'width')
+    expect(right('Move me')).toBeLessThanOrEqual(svgWidth)
+    expect(left('Move me')).toBe(dayX('2026-12-19'))
+    fireEvent.pointerUp(window, { clientX: 500 + 40 * DW, pointerId: 1 })
+    expect(setCell).toHaveBeenCalledWith('m', COL.start, '2026-12-19')
+    expect(left('Move me')).toBe(dayX('2026-12-21')) // Saturday start is scheduled on Monday
   })
 
   it('makes no call for a drag under half a day', async () => {
@@ -256,6 +283,20 @@ describe('GanttView drag', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/summary row/i)
   })
 
+  it('resizes a row with a predecessor but still blocks moving it', async () => {
+    const { setCell } = await renderGantt()
+    // Clear site: Wed 11-11 .. Fri 11-13; + 1 day -> Sat, still 3 working days; + 3 -> Mon 11-16 = 4
+    drag(bar('Clear site').querySelector('.gantt-bar-handle')!, 3 * DW)
+    expect(setCell).toHaveBeenCalledTimes(1)
+    expect(setCell).toHaveBeenCalledWith('r-clear', COL.duration, '4d')
+    expect(screen.getByRole('status')).toHaveTextContent('')
+    drag(body('Clear site'), DW)
+    expect(setCell).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Start date is set by predecessors — edit the Predecessors column to move this task',
+    )
+  })
+
   it('resizes from the right edge, writing the duration in working days', async () => {
     const { setCell } = await renderGantt(sheet([['a', 'Frame', '2026-11-12', '1d']])) // Thu
     // Thu + 4 calendar days = Mon: Thu, Fri, Mon = 3 working days
@@ -266,7 +307,7 @@ describe('GanttView drag', () => {
   })
 
   it('moves a milestone', async () => {
-    const { setCell } = await renderGantt(sheet([['anchor', 'Anchor', '2026-11-02', '1d'], ['m', 'Handover', '2026-11-11', '0d']]))
+    const { setCell } = await renderGantt(sheet([['m', 'Handover', '2026-11-11', '0d']]))
     drag(bar('Handover').querySelector('.gantt-bar-body')!, DW)
     expect(setCell).toHaveBeenCalledWith('m', COL.start, '2026-11-12')
   })

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isWorkingDay, shiftIso } from '../../engine/calendar'
 import type { Scheduled } from '../../engine/schedule'
@@ -10,7 +10,7 @@ import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
 import { fixedViewport, measuredViewport } from '../grid/viewport'
 import { DependencyArrows, type BarEdges } from './arrows'
 import { barKind, GanttBar, ROW_HEIGHT } from './bars'
-import { barGeometry, computeRange, dayIndex, listDays, monthSegments, utcToday, workingDaysInclusive } from './timeScale'
+import { barGeometry, computeRange, dayIndex, daysBetween, listDays, monthSegments, utcToday, workingDaysInclusive } from './timeScale'
 import { useBarDrag, type DragMode, type DragPreview } from './useBarDrag'
 import './gantt.css'
 
@@ -20,7 +20,6 @@ const INDENT_PX = 16
 const OVERSCAN = 10
 
 const MSG_PREDECESSORS = 'Start date is set by predecessors — edit the Predecessors column to move this task'
-const MSG_PREDECESSORS_RESIZE = 'This task is scheduled from its predecessors — edit the Duration column to resize it'
 const MSG_SUMMARY = 'Summary row dates are calculated from their child rows — move the child tasks instead'
 const MSG_NO_DURATION = 'Add a Duration column to resize tasks in the Gantt chart'
 
@@ -92,8 +91,6 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
     () => new Set(data?.sheet.dependenciesEnabled ? data.dependencies.map((d) => d.successorId) : []),
     [data],
   )
-  const range = useMemo(() => computeRange(Object.values(scheduled.byRow), todayIso), [scheduled.byRow, todayIso])
-  const days = useMemo(() => listDays(range), [range])
 
   const drag = useBarDrag(dayWidth, (rowId, mode, delta) => {
     const s = api.getState().scheduled.byRow[rowId]
@@ -112,7 +109,8 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
     const row = rows[indexById.get(rowId) ?? -1]
     let blocked: string | null = null
     if (row?.isParent) blocked = MSG_SUMMARY
-    else if (driven.has(rowId)) blocked = mode === 'move' ? MSG_PREDECESSORS : MSG_PREDECESSORS_RESIZE
+    // Resizing writes only Duration, so a dependency-driven start does not block it.
+    else if (mode === 'move' && driven.has(rowId)) blocked = MSG_PREDECESSORS
     else if (mode === 'resize' && !durationCol) blocked = MSG_NO_DURATION
     if (blocked) {
       e.preventDefault()
@@ -123,7 +121,31 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
     drag.start(e, rowId, mode)
   }
 
+  // The timeline origin only ever moves earlier while mounted, so moving the earliest task does
+  // not shift the whole chart under it. The drag preview counts too: a bar dragged past either
+  // end extends the range instead of being clipped.
+  const originRef = useRef<string | null>(null)
+  const range = useMemo(() => {
+    const spans: { start: string; end: string }[] = Object.values(scheduled.byRow)
+    const p = drag.preview
+    const s = p && cal ? scheduled.byRow[p.rowId] : undefined
+    if (p && s && cal) spans.push(previewed(s, p, p.rowId, cal))
+    const fresh = computeRange(spans, todayIso)
+    const prev = originRef.current
+    const start = prev !== null && prev < fresh.start ? prev : fresh.start
+    const end = shiftIso(fresh.start, fresh.days - 1)
+    return { start, days: daysBetween(start, end) + 1 }
+  }, [scheduled.byRow, todayIso, drag.preview, cal])
+  const days = useMemo(() => listDays(range), [range])
+
   const scrollRef = useRef<HTMLDivElement>(null)
+  // When the origin moves earlier, scroll by the same amount so nothing jumps on screen.
+  useLayoutEffect(() => {
+    const prev = originRef.current
+    originRef.current = range.start
+    const el = scrollRef.current
+    if (prev !== null && el && prev !== range.start) el.scrollLeft += daysBetween(range.start, prev) * dayWidth
+  }, [range.start, dayWidth])
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -207,6 +229,7 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
               {days.map((iso, i) => (
                 <text
                   key={iso}
+                  data-date={iso}
                   className={isWorkingDay(cal, iso) ? 'gantt-day' : 'gantt-day is-nonworking'}
                   x={i * dayWidth + dayWidth / 2}
                   y={2 * HEADER_ROW - 6}
