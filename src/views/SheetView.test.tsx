@@ -63,7 +63,7 @@ describe('SheetView', () => {
 
     expect(await screen.findByRole('grid')).toBeInTheDocument()
     const tabs = screen.getAllByRole('tab')
-    expect(tabs.map((t) => t.textContent)).toEqual(['Grid', 'Gantt'])
+    expect(tabs.map((t) => t.textContent)).toEqual(['Grid', 'Gantt', 'Kanban'])
     expect(screen.getByRole('tab', { name: 'Grid' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Gantt' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.queryByRole('region', { name: 'Gantt chart' })).not.toBeInTheDocument()
@@ -96,11 +96,40 @@ describe('SheetView', () => {
     expect(screen.getByRole('region', { name: 'Gantt chart' })).toBeInTheDocument()
     expect(screen.queryByRole('grid')).not.toBeInTheDocument()
 
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'Kanban' })).toHaveFocus()
+    expect(screen.getByRole('tab', { name: 'Kanban' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('region', { name: 'Done (1)' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Gantt chart' })).not.toBeInTheDocument()
+
     await user.keyboard('{ArrowRight}') // wraps
     expect(screen.getByRole('tab', { name: 'Grid' })).toHaveFocus()
     expect(screen.getByRole('grid')).toBeInTheDocument()
-    await user.keyboard('{ArrowLeft}')
-    expect(screen.getByRole('tab', { name: 'Gantt' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('region', { name: 'Done (1)' })).not.toBeInTheDocument()
+    await user.keyboard('{ArrowLeft}') // wraps backwards
+    expect(screen.getByRole('tab', { name: 'Kanban' })).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Home}')
+    expect(screen.getByRole('tab', { name: 'Grid' })).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{End}')
+    expect(screen.getByRole('tab', { name: 'Kanban' })).toHaveFocus()
+  })
+
+  it('switches to Kanban by click, unmounting the previous view', async () => {
+    vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+    render(<SheetView client={client} sheetId="sheet-1" onBack={() => {}} />)
+    await screen.findByRole('grid')
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Kanban' }))
+    expect(screen.getByRole('tab', { name: 'Kanban' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('combobox', { name: 'Group by' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Done (1)' })).toBeInTheDocument()
+    expect(screen.queryByRole('grid')).not.toBeInTheDocument()
+    expect(screen.getByRole('tabpanel')).toHaveAccessibleName('Kanban')
+
+    await user.click(screen.getByRole('tab', { name: 'Gantt' }))
+    expect(screen.getByRole('region', { name: 'Gantt chart' })).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Group by' })).not.toBeInTheDocument()
   })
 
   it('shows the load error as an alert', async () => {

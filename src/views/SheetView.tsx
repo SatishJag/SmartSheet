@@ -6,6 +6,7 @@ import { createSheetStore } from '../store/sheetStore'
 import { GanttView } from './gantt/GanttView'
 import { GridView } from './grid/GridView'
 import { SaveStatusBadge } from './grid/SaveStatusBadge'
+import { KanbanView } from './kanban/KanbanView'
 
 export interface SheetViewProps {
   client: SupabaseClient
@@ -46,6 +47,7 @@ interface SheetTab {
 const SHEET_TABS: readonly SheetTab[] = [
   { id: 'grid', label: 'Grid', render: () => <GridView /> },
   { id: 'gantt', label: 'Gantt', render: () => <GanttView /> },
+  { id: 'kanban', label: 'Kanban', render: () => <KanbanView /> },
 ]
 
 function SheetTabs() {
