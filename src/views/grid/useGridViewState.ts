@@ -16,6 +16,15 @@ export function useGridViewState() {
     })
   }
 
+  function expand(id: string) {
+    setCollapsed((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
   /** Header click: asc -> desc -> none; a different column starts at asc. */
   function cycleSort(colId: string) {
     setSort((prev) => {
@@ -24,5 +33,5 @@ export function useGridViewState() {
     })
   }
 
-  return { view, toggleCollapsed, cycleSort, setFilter }
+  return { view, toggleCollapsed, expand, cycleSort, setFilter }
 }

@@ -43,7 +43,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
 
   const columns = data?.columns ?? EMPTY_COLUMNS
   const columnDefs = useMemo(() => buildColumnDefs(columns), [columns])
-  const { view, toggleCollapsed, cycleSort, setFilter } = useGridViewState()
+  const { view, toggleCollapsed, expand, cycleSort, setFilter } = useGridViewState()
 
   const allRows = useMemo(() => buildGridRows(data, scheduled), [data, scheduled])
   const rows = useMemo<ViewRow[]>(() => {
@@ -172,8 +172,12 @@ export function GridView({ viewportHeight }: GridViewProps) {
   function shiftActiveRow(dir: 'indent' | 'outdent') {
     if (!activeValid) return
     const id = rows[activeRowIdx].id
-    if (dir === 'indent') api.getState().indentRow(id)
-    else api.getState().outdentRow(id)
+    if (dir === 'indent') {
+      api.getState().indentRow(id)
+      // Expand the new parent so the indented row (and the active cell) stays visible.
+      const parentId = api.getState().data?.rows.find((r) => r.id === id)?.parentId
+      if (parentId) expand(parentId)
+    } else api.getState().outdentRow(id)
   }
 
   function addRow() {

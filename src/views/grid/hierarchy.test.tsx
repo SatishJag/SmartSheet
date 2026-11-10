@@ -128,6 +128,41 @@ describe('indent and outdent', () => {
   })
 })
 
+describe('indent under a collapsed parent', () => {
+  /** 1 r-a (parent of r-a1, collapsed in the tests), 2 r-a1, 3 r-b. */
+  const nested = () =>
+    makeSheetData({
+      dependencies: [],
+      rows: [
+        makeRow('r-a', 'a0', { [COL.task]: 'Mobilise' }),
+        makeRow('r-a1', 'a0', { [COL.task]: 'Site office' }, 'r-a'),
+        makeRow('r-b', 'a1', { [COL.task]: 'Excavate' }),
+      ],
+    })
+
+  it('Tab expands the new parent so the row stays visible and focused', async () => {
+    const { user } = await renderGrid(nested())
+    await user.click(screen.getByRole('button', { name: 'Collapse Mobilise' }))
+    await user.click(cell(3, 'Task'))
+    await user.keyboard('{Tab}')
+    expect(rowOf(1)).toHaveAttribute('aria-expanded', 'true')
+    expect(displayedNumbers()).toEqual(['1', '2', '3'])
+    expect(cell(3, 'Task')).toHaveTextContent('Excavate')
+    expect(cell(3, 'Task')).toHaveAttribute('aria-selected', 'true')
+    expect(cell(3, 'Task')).toHaveFocus()
+  })
+
+  it('the toolbar Indent button expands the new parent too', async () => {
+    const { user } = await renderGrid(nested())
+    await user.click(screen.getByRole('button', { name: 'Collapse Mobilise' }))
+    await user.click(cell(3, 'Status'))
+    await user.click(screen.getByRole('button', { name: 'Indent' }))
+    expect(rowOf(1)).toHaveAttribute('aria-expanded', 'true')
+    expect(rowOf(3)).toHaveAttribute('aria-level', '2')
+    expect(cell(3, 'Status')).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
 describe('collapse', () => {
   it('collapsing a parent hides its children and flips aria-expanded', async () => {
     const { user } = await renderGrid()
