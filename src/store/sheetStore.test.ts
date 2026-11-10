@@ -367,3 +367,121 @@ describe('dependencies', () => {
     expect(p.saveDependencies).toHaveBeenCalledWith('sh', [])
   })
 })
+
+describe('save status across overlapping and failed saves', () => {
+  it('returns to saved when an edit made during retries is saved after the old value fails', async () => {
+    const { store, p } = await loaded()
+    let calls = 0
+    p.saveCell.mockImplementation(async (_r, _c, _v, version) => {
+      calls++
+      // The user edits the same cell while the first value is being retried.
+      if (calls === 2) expect(store.getState().setCell('r1', 'name', 'new')).toEqual({ ok: true })
+      if (calls <= 4) throw new Error('offline')
+      return { version: version + 1 }
+    })
+    store.getState().setCell('r1', 'name', 'old')
+    await settled(store)
+    expect(p.saveCell.mock.calls.map((c) => c[2])).toEqual(['old', 'old', 'old', 'old', 'new'])
+    expect(cell(store, 'r1', 'name')).toBe('new')
+  })
+
+  it('stays failed while a different cell is unsaved, even when another save succeeds', async () => {
+    const { store, p } = await loaded()
+    p.saveCell.mockImplementation(async (_r, c, _v, version) => {
+      if (c === 'name') throw new Error('offline')
+      return { version: version + 1 }
+    })
+    store.getState().setCell('r1', 'name', 'x')
+    await settled(store, 'failed')
+    store.getState().setCell('r1', 'status', 'Done')
+    await vi.waitFor(() => expect(p.saveCell).toHaveBeenCalledWith('r1', 'status', 'Done', 0))
+    await new Promise((r) => setTimeout(r, 10))
+    expect(store.getState().saveStatus).toBe('failed')
+  })
+
+  it('clears a failed dependency save once a later dependency save succeeds', async () => {
+    const { store, p } = await loaded(fakePersistence(sheetData({ dependencies: [] })))
+    p.saveDependencies.mockRejectedValue(new Error('offline'))
+    store.getState().addDependency(fs('r1', 'r2'))
+    await settled(store, 'failed')
+    expect(p.saveDependencies).toHaveBeenCalledTimes(4)
+    p.saveDependencies.mockResolvedValue(undefined)
+    store.getState().removeDependency('r1', 'r2')
+    await settled(store)
+    expect(p.saveDependencies).toHaveBeenLastCalledWith('sh', [])
+  })
+})
+
+describe('new rows', () => {
+  it('inserts a new row before saving an edit to it', async () => {
+    const { store, p } = await loaded()
+    const calls: string[] = []
+    p.insertRow.mockImplementation(async () => void calls.push('insert'))
+    p.saveCell.mockImplementation(async (_r, _c, _v, version) => {
+      calls.push('saveCell')
+      return { version: version + 1 }
+    })
+    const id = store.getState().addRow('r2')
+    store.getState().setCell(id, 'name', 'Frame')
+    await settled(store)
+    expect(calls[0]).toBe('insert')
+    expect(p.insertRow).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-queues the insert with current cells after a failed insert, then recovers', async () => {
+    const { store, p } = await loaded()
+    p.insertRow.mockRejectedValue(new Error('offline'))
+    const id = store.getState().addRow('r2')
+    await settled(store, 'failed')
+    expect(p.insertRow).toHaveBeenCalledTimes(4)
+
+    p.insertRow.mockResolvedValue(undefined)
+    store.getState().setCell(id, 'name', 'Frame')
+    await settled(store)
+    expect(p.insertRow).toHaveBeenCalledTimes(5)
+    expect(p.insertRow.mock.calls[4][1]).toMatchObject({ id, parentId: null, cells: { name: 'Frame' } })
+    expect(p.saveCell).not.toHaveBeenCalled()
+
+    // Now persisted: further edits use saveCell.
+    store.getState().setCell(id, 'name', 'Frame 2')
+    await settled(store)
+    expect(p.saveCell).toHaveBeenCalledWith(id, 'name', 'Frame 2', 0)
+  })
+
+  it('re-queues the insert with the current parent and position after a tree change', async () => {
+    const { store, p } = await loaded(fakePersistence(sheetData({ dependencies: [] })))
+    p.insertRow.mockRejectedValue(new Error('offline'))
+    const id = store.getState().addRow('r2')
+    await settled(store, 'failed')
+    p.insertRow.mockResolvedValue(undefined)
+    store.getState().indentRow(id)
+    await settled(store)
+    const row = store.getState().data!.rows.find((r) => r.id === id)!
+    expect(row.parentId).toBe('r2')
+    expect(p.insertRow).toHaveBeenLastCalledWith('sh', expect.objectContaining({ id, parentId: 'r2', position: row.position }))
+    expect(p.saveRowTree).not.toHaveBeenCalled()
+  })
+
+  it('inserts an unpersisted row before saving a dependency on it', async () => {
+    const { store, p } = await loaded()
+    const calls: string[] = []
+    p.insertRow.mockRejectedValue(new Error('offline'))
+    const id = store.getState().addRow('r2')
+    await settled(store, 'failed')
+    p.insertRow.mockImplementation(async () => void calls.push('insert'))
+    p.saveDependencies.mockImplementation(async () => void calls.push('deps'))
+    expect(store.getState().addDependency(fs('r2', id))).toEqual({ ok: true })
+    await settled(store)
+    expect(calls).toEqual(['insert', 'deps'])
+  })
+
+  it('clears a failed insert when the row is deleted', async () => {
+    const { store, p } = await loaded()
+    p.insertRow.mockRejectedValue(new Error('offline'))
+    const id = store.getState().addRow('r2')
+    await settled(store, 'failed')
+    store.getState().deleteRow(id)
+    await settled(store)
+    expect(p.deleteRows).toHaveBeenCalledWith([id])
+  })
+})

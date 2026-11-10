@@ -65,21 +65,30 @@ const sameDep = (a: SchedDep, b: SchedDep) =>
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /**
- * One queued persistence call. Cell saves share a key per cell so a newer value replaces a
- * queued one (latest wins); every other call has a unique key.
+ * One queued persistence call. Jobs are keyed: a job whose key is already waiting in the
+ * queue (not in flight) is merged into it, so the latest value wins. Keys:
+ * - `cell:<row>:<col>`  one cell; `value` is the latest value to write
+ * - `tree:<row>`        a row's place in the tree, or its insert while it is not yet persisted
+ * - `deps`              the whole dependency set (replace-all); `value` is the latest set
+ * - `delete`            pending row deletions (accumulated until one succeeds)
+ * A key that ran out of retries stays in `failedKeys` until a later job with the same key
+ * (or one that supersedes it, such as the row's insert) succeeds.
  */
 interface Job {
   key: string
-  /** For cell saves: the latest value to write. */
   value?: unknown
   run(job: Job): Promise<void>
 }
 
 /**
  * The sheet store: single in-memory source of truth. Edits apply optimistically and are
- * persisted in the background through one serial queue (which also keeps per-cell saves in
- * order and an inserted row ahead of edits to it). Failed calls are retried with the
- * configured delays; after that the status becomes `failed` and the optimistic state stays.
+ * persisted in the background through one serial queue (which keeps per-cell saves in order
+ * and a new row's insert ahead of edits to it). Failed calls are retried with the configured
+ * delays; after that the status becomes `failed` and the optimistic state stays.
+ *
+ * Rows added in this session stay in `unpersisted` until an insert succeeds. Any later job
+ * that touches such a row (cell edit, tree change, dependency save) inserts it first with its
+ * current cells, parent and position instead of updating a row the database does not have.
  */
 export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): StoreApi<SheetState> {
   const retryDelays = opts.retryDelaysMs ?? [500, 1000, 2000]
@@ -88,7 +97,10 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
   let current: Job | null = null
   let retrying = false
   const failedKeys = new Set<string>()
-  let opCounter = 0
+  /** Rows created locally whose insert has not succeeded yet. */
+  const unpersisted = new Set<string>()
+  /** Row ids to delete in the database; cleared when a delete succeeds. */
+  const pendingDeletes = new Set<string>()
 
   const store = createStore<SheetState>()((set, get) => {
     function refreshStatus(): void {
@@ -120,7 +132,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
             refreshStatus()
           }
         }
-        if (!ok) failedKeys.add(job.key)
+        if (ok) failedKeys.delete(job.key)
+        else failedKeys.add(job.key)
         current = null
       }
       refreshStatus()
@@ -128,15 +141,23 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
 
     function enqueue(job: Job): void {
       failedKeys.delete(job.key)
-      const pending = job.key.startsWith('cell:') ? queue.find((j) => j.key === job.key) : undefined
+      const pending = queue.find((j) => j.key === job.key)
       if (pending) pending.value = job.value
       else queue.push(job)
       if (current === null) void pump()
       else refreshStatus()
     }
 
-    function enqueueOp(run: () => Promise<void>): void {
-      enqueue({ key: `op:${++opCounter}`, run: () => run() })
+    const findRow = (id: string) => get().data?.rows.find((r) => r.id === id)
+
+    /** Insert a not-yet-persisted row with its current cells, parent and position. */
+    async function insertNow(rowId: string): Promise<void> {
+      const data = get().data
+      const row = data?.rows.find((r) => r.id === rowId)
+      if (!data || !row || !unpersisted.has(rowId)) return
+      await p.insertRow(data.sheet.id, row)
+      unpersisted.delete(rowId)
+      failedKeys.delete(`tree:${rowId}`)
     }
 
     function enqueueCell(rowId: string, colId: string, value: unknown): void {
@@ -144,12 +165,59 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         key: `cell:${rowId}:${colId}`,
         value,
         async run(job) {
-          const row = get().data?.rows.find((r) => r.id === rowId)
+          const row = findRow(rowId)
           if (!row) return // row deleted meanwhile; nothing to save
+          if (unpersisted.has(rowId)) {
+            await insertNow(rowId) // the insert carries this cell's current value
+            return
+          }
           const { version } = await p.saveCell(rowId, colId, job.value, row.version)
           const data = get().data
           if (!data) return
           set({ data: { ...data, rows: data.rows.map((r) => (r.id === rowId ? { ...r, version } : r)) } })
+        },
+      })
+    }
+
+    /** Persist a row's current place in the tree, inserting it first if it is not persisted. */
+    function enqueueTree(rowId: string): void {
+      enqueue({
+        key: `tree:${rowId}`,
+        async run() {
+          const row = findRow(rowId)
+          if (!row) return
+          if (unpersisted.has(rowId)) {
+            await insertNow(rowId)
+            return
+          }
+          await p.saveRowTree([{ id: row.id, parentId: row.parentId, position: row.position }])
+        },
+      })
+    }
+
+    function enqueueDependencies(sheetId: string, deps: SchedDep[]): void {
+      enqueue({
+        key: 'deps',
+        value: deps,
+        async run(job) {
+          const latest = job.value as SchedDep[]
+          // A dependency on a row the database does not have would break the foreign key.
+          const ids = new Set(latest.flatMap((d) => [d.predecessorId, d.successorId]))
+          for (const id of ids) if (unpersisted.has(id)) await insertNow(id)
+          await p.saveDependencies(sheetId, latest)
+        },
+      })
+    }
+
+    function enqueueDelete(ids: string[]): void {
+      for (const id of ids) pendingDeletes.add(id)
+      enqueue({
+        key: 'delete',
+        async run() {
+          const batch = [...pendingDeletes]
+          if (batch.length === 0) return
+          await p.deleteRows(batch)
+          for (const id of batch) pendingDeletes.delete(id)
         },
       })
     }
@@ -166,15 +234,13 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       const next = op(data.rows)
       if (next === data.rows) return
       const before = new Map(data.rows.map((r) => [r.id, r]))
-      const changed: RowNode[] = []
+      const changed: string[] = []
       for (const r of next) {
         const old = before.get(r.id)
-        if (!old || old.parentId !== r.parentId || old.position !== r.position) {
-          changed.push({ id: r.id, parentId: r.parentId, position: r.position })
-        }
+        if (!old || old.parentId !== r.parentId || old.position !== r.position) changed.push(r.id)
       }
       commit({ ...data, rows: next as RowRecord[] })
-      if (changed.length > 0) enqueueOp(() => p.saveRowTree(changed))
+      for (const id of changed) enqueueTree(id)
     }
 
     const isParent = (data: SheetData, id: string) => data.rows.some((r) => r.parentId === id)
@@ -250,7 +316,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
           version: 0,
         }
         commit({ ...data, rows: [...data.rows, row] })
-        enqueueOp(() => p.insertRow(data.sheet.id, row))
+        unpersisted.add(row.id)
+        enqueueTree(row.id) // inserts the row with its state when the job runs
         return row.id
       },
 
@@ -285,8 +352,14 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
           { ...data, rows: rows as RowRecord[], dependencies: droppedDeps > 0 ? deps : data.dependencies },
           { notices, errors: get().errors.filter((e) => !removed.has(e.rowId)) },
         )
-        enqueueOp(() => p.deleteRows(removedIds))
-        if (droppedDeps > 0) enqueueOp(() => p.saveDependencies(data.sheet.id, deps))
+        for (const rid of removedIds) {
+          unpersisted.delete(rid)
+          for (const key of [...failedKeys]) {
+            if (key === `tree:${rid}` || key.startsWith(`cell:${rid}:`)) failedKeys.delete(key)
+          }
+        }
+        enqueueDelete(removedIds)
+        if (droppedDeps > 0) enqueueDependencies(data.sheet.id, deps)
       },
 
       addDependency(dep) {
@@ -306,7 +379,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
           return { ok: false, error: `Dependency would create a cycle: ${path}` }
         }
         commit({ ...data, dependencies: deps })
-        enqueueOp(() => p.saveDependencies(data.sheet.id, deps))
+        enqueueDependencies(data.sheet.id, deps)
         return { ok: true }
       },
 
@@ -316,7 +389,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         const deps = data.dependencies.filter((d) => !(d.predecessorId === predecessorId && d.successorId === successorId))
         if (deps.length === data.dependencies.length) return
         commit({ ...data, dependencies: deps })
-        enqueueOp(() => p.saveDependencies(data.sheet.id, deps))
+        enqueueDependencies(data.sheet.id, deps)
       },
     }
   })
