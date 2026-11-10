@@ -58,7 +58,26 @@ function startFromEnd(end: string, durationDays: number, elapsed: boolean, cal: 
   return elapsed ? shiftIso(end, -(durationDays - 1)) : addWorkingDays(cal, end, -(durationDays - 1))
 }
 
-/** Candidate start for the successor implied by one dependency on an already-scheduled predecessor. */
+/** The first working day strictly after iso (iso itself may be a non-working day). */
+function firstWorkingDayAfter(cal: Calendar, iso: string): string {
+  return nextWorkingDay(cal, shiftIso(iso, 1))
+}
+
+/**
+ * The working day lag working days from iso. lag 0 is iso itself, or the next working day when iso
+ * is not one. addWorkingDays counts working days strictly after/before iso, so it is correct for a
+ * non-working iso (an elapsed task's end) as well.
+ */
+function offsetWorkingDays(cal: Calendar, iso: string, lag: number): string {
+  return lag === 0 ? nextWorkingDay(cal, iso) : addWorkingDays(cal, iso, lag)
+}
+
+/**
+ * Candidate start for the successor implied by one dependency on an already-scheduled predecessor.
+ * A predecessor's end can be a non-working day (elapsed durations); its start is always a working
+ * day (manual starts and dependency starts are moved to one; rollups take a child's start), so only
+ * the FS and FF branches need care.
+ */
 function candidateStart(
   dep: SchedDep,
   pred: Scheduled,
@@ -69,11 +88,11 @@ function candidateStart(
   const lag = lagDaysOf(dep, cal)
   switch (dep.type) {
     case 'FS':
-      return addWorkingDays(cal, nextWorkingDay(cal, pred.end), 1 + lag)
+      return addWorkingDays(cal, firstWorkingDayAfter(cal, pred.end), lag)
     case 'SS':
       return addWorkingDays(cal, nextWorkingDay(cal, pred.start), lag)
     case 'FF':
-      return startFromEnd(addWorkingDays(cal, nextWorkingDay(cal, pred.end), lag), durationDays, elapsed, cal)
+      return startFromEnd(offsetWorkingDays(cal, pred.end, lag), durationDays, elapsed, cal)
     case 'SF':
       return startFromEnd(addWorkingDays(cal, nextWorkingDay(cal, pred.start), lag), durationDays, elapsed, cal)
   }

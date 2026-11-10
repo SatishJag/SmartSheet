@@ -147,6 +147,59 @@ describe('schedule', () => {
   })
 })
 
+describe('schedule: predecessors ending on a non-working day (elapsed)', () => {
+  // e6d from Mon 11-09 ends Sat 11-14; e7d ends Sun 11-15.
+  const SAT = row('P', 6, '2026-11-09', true)
+  const SUN = row('P', 7, '2026-11-09', true)
+
+  for (const [label, P] of [['Saturday', SAT], ['Sunday', SUN]] as const) {
+    it(`FS lag 0 after a ${label} end starts the next Monday`, () => {
+      const { byRow } = schedule([P, row('B', 2)], [dep('P', 'B')], defaultCalendar)
+      expect(byRow.B.start).toBe('2026-11-16')
+    })
+
+    it(`FS +1d after a ${label} end starts Tuesday`, () => {
+      const { byRow } = schedule([P, row('B', 2)], [dep('P', 'B', 'FS', 1)], defaultCalendar)
+      expect(byRow.B.start).toBe('2026-11-17')
+    })
+
+    it(`FS -1d after a ${label} end starts the Friday before`, () => {
+      const { byRow } = schedule([P, row('B', 2)], [dep('P', 'B', 'FS', -1)], defaultCalendar)
+      expect(byRow.B.start).toBe('2026-11-13')
+    })
+
+    it(`FF lag 0 after a ${label} end finishes Monday`, () => {
+      const { byRow } = schedule([P, row('B', 2)], [dep('P', 'B', 'FF')], defaultCalendar)
+      expect(byRow.B).toMatchObject({ start: '2026-11-13', end: '2026-11-16' })
+    })
+
+    it(`FF +1d after a ${label} end finishes Monday (the first working day after)`, () => {
+      const { byRow } = schedule([P, row('B', 2)], [dep('P', 'B', 'FF', 1)], defaultCalendar)
+      expect(byRow.B).toMatchObject({ start: '2026-11-13', end: '2026-11-16' })
+    })
+
+    it(`FF -1d after a ${label} end finishes the Friday before`, () => {
+      const { byRow } = schedule([P, row('B', 2)], [dep('P', 'B', 'FF', -1)], defaultCalendar)
+      expect(byRow.B).toMatchObject({ start: '2026-11-12', end: '2026-11-13' })
+    })
+  }
+
+  it('FF +1d after a working-day end is unchanged (one working day later)', () => {
+    const { byRow } = schedule([A, row('B', 2)], [dep('A', 'B', 'FF', 1)], defaultCalendar)
+    expect(byRow.B.end).toBe('2026-11-12')
+  })
+
+  it('SS/SF use the predecessor start, which is always a working day, so elapsed ends do not affect them', () => {
+    const { byRow } = schedule(
+      [SUN, row('S', 2), { ...row('F', 2), id: 'F' }],
+      [dep('P', 'S', 'SS', 1), dep('P', 'F', 'SF', 1)],
+      defaultCalendar,
+    )
+    expect(byRow.S.start).toBe('2026-11-10')
+    expect(byRow.F.end).toBe('2026-11-10')
+  })
+})
+
 function child(
   id: string,
   parentId: string,
