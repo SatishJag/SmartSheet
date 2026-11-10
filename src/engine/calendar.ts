@@ -17,7 +17,8 @@ function formatIso(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
 
-function shiftIso(iso: string, days: number): string {
+/** Shifts iso by a number of calendar days (UTC), ignoring the working calendar. */
+export function shiftIso(iso: string, days: number): string {
   return formatIso(new Date(parseIso(iso).getTime() + days * DAY_MS))
 }
 
