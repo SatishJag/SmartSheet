@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { TEMPLATES, type TemplateId } from '../templates'
+import { insertSheetFromTemplate } from '../templates/insertTemplate'
 
 interface SheetRow {
   id: string
@@ -17,6 +19,9 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
   const [sheets, setSheets] = useState<SheetRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [templateId, setTemplateId] = useState('')
+  const inFlight = useRef(false)
+  const templateSelectId = useId()
 
   useEffect(() => {
     let active = true
@@ -35,19 +40,26 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
   }, [client])
 
   async function createSheet() {
+    if (inFlight.current) return
+    inFlight.current = true
     setError(null)
     setCreating(true)
     try {
-      const { data, error: err } = await client
-        .from('sheets')
-        .insert({ name: 'Untitled sheet', owner_id: userId })
-        .select('id')
-        .single()
-      if (err) setError(err.message)
-      else onOpen((data as { id: string }).id)
+      if (templateId) {
+        onOpen(await insertSheetFromTemplate(client, templateId as TemplateId, userId))
+      } else {
+        const { data, error: err } = await client
+          .from('sheets')
+          .insert({ name: 'Untitled sheet', owner_id: userId })
+          .select('id')
+          .single()
+        if (err) setError(err.message)
+        else onOpen((data as { id: string }).id)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the sheet')
     } finally {
+      inFlight.current = false
       setCreating(false)
     }
   }
@@ -56,9 +68,25 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
     <section className="sheet-list">
       <div className="sheet-list-header">
         <h2>Your sheets</h2>
-        <button type="button" onClick={createSheet} disabled={creating}>
-          New sheet
-        </button>
+        <div className="sheet-list-new">
+          <label htmlFor={templateSelectId}>Template</label>
+          <select
+            id={templateSelectId}
+            value={templateId}
+            onChange={(e) => setTemplateId(e.target.value)}
+            disabled={creating}
+          >
+            <option value="">Blank sheet</option>
+            {TEMPLATES.map((t) => (
+              <option key={t.id} value={t.id} title={t.description}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={createSheet} disabled={creating}>
+            New sheet
+          </button>
+        </div>
       </div>
       {error && <p role="alert">{error}</p>}
       {sheets === null && !error && <p>Loading sheets...</p>}

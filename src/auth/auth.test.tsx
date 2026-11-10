@@ -2,7 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthGate } from './AuthGate'
+import { insertSheetFromTemplate } from '../templates/insertTemplate'
 import { SheetList } from './SheetList'
+
+vi.mock('../templates/insertTemplate', () => ({ insertSheetFromTemplate: vi.fn() }))
 
 const fakeSession = {
   access_token: 'fake-token',
@@ -200,5 +203,71 @@ describe('SheetList', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('insert boom')
     expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  describe('templates', () => {
+    const insertTemplate = vi.mocked(insertSheetFromTemplate)
+
+    it('has a Template select defaulting to Blank sheet, then the templates', async () => {
+      const { client } = makeSheetsClient({})
+      render(<SheetList client={client} userId="user-1" onOpen={() => {}} />)
+      const select = await screen.findByLabelText('Template')
+      expect(select).toHaveValue('')
+      expect(Array.from((select as HTMLSelectElement).options).map((o) => [o.value, o.textContent])).toEqual([
+        ['', 'Blank sheet'],
+        ['project-schedule', 'Project schedule'],
+        ['punch-list', 'Punch list'],
+      ])
+    })
+
+    it('creating from a template calls the template insertion and opens the id', async () => {
+      insertTemplate.mockReset()
+      insertTemplate.mockResolvedValue('tpl-id')
+      const onOpen = vi.fn()
+      const { client, insert } = makeSheetsClient({})
+      render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
+
+      fireEvent.change(await screen.findByLabelText('Template'), { target: { value: 'project-schedule' } })
+      fireEvent.click(screen.getByRole('button', { name: 'New sheet' }))
+
+      await waitFor(() => expect(onOpen).toHaveBeenCalledWith('tpl-id'))
+      expect(insertTemplate).toHaveBeenCalledWith(client, 'project-schedule', 'user-1')
+      expect(insert).not.toHaveBeenCalled()
+    })
+
+    it('shows an alert and does not open when template creation fails', async () => {
+      insertTemplate.mockReset()
+      insertTemplate.mockRejectedValue(new Error('tpl boom'))
+      const onOpen = vi.fn()
+      const { client } = makeSheetsClient({})
+      render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
+
+      fireEvent.change(await screen.findByLabelText('Template'), { target: { value: 'punch-list' } })
+      fireEvent.click(screen.getByRole('button', { name: 'New sheet' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('tpl boom')
+      expect(onOpen).not.toHaveBeenCalled()
+    })
+
+    it('disables the button and select while creating, so a double click makes one sheet', async () => {
+      insertTemplate.mockReset()
+      let resolve!: (id: string) => void
+      insertTemplate.mockReturnValue(new Promise<string>((r) => (resolve = r)))
+      const onOpen = vi.fn()
+      const { client } = makeSheetsClient({})
+      render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
+
+      fireEvent.change(await screen.findByLabelText('Template'), { target: { value: 'punch-list' } })
+      const button = screen.getByRole('button', { name: 'New sheet' })
+      fireEvent.click(button)
+      fireEvent.click(button)
+
+      expect(button).toBeDisabled()
+      expect(screen.getByLabelText('Template')).toBeDisabled()
+      expect(insertTemplate).toHaveBeenCalledTimes(1)
+      resolve('tpl-id')
+      await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(button).not.toBeDisabled())
+    })
   })
 })

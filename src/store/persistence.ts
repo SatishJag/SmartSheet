@@ -102,6 +102,26 @@ export function columnFromDb(r: DbColumn): Column {
   return col
 }
 
+export function columnToDb(
+  col: Column,
+  position: number,
+  sheet: Pick<SheetMeta, 'id' | 'ownerId' | 'workspaceId'>,
+): DbColumn {
+  return {
+    id: col.id,
+    sheet_id: sheet.id,
+    owner_id: sheet.ownerId,
+    workspace_id: sheet.workspaceId,
+    title: col.title,
+    type: col.type,
+    position,
+    options: col.options ?? null,
+    system_type: col.systemType ?? null,
+    role: col.role ?? null,
+    width: null,
+  }
+}
+
 export function rowFromDb(r: DbRow): RowRecord {
   return { id: r.id, parentId: r.parent_id, position: r.position, cells: r.cells ?? {}, version: r.version }
 }
