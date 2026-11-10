@@ -10,3 +10,6 @@ npm-debug.log*
 !.vscode/extensions.json
 .idea
 coverage
+
+.env
+.env.local
