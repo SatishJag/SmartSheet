@@ -218,6 +218,31 @@ describe('GridView editing', () => {
     expect(within(cell(2, 'Inspected')).getByRole('checkbox')).not.toBeChecked()
   })
 
+  it('committing an unchanged value (Enter or blur) does not call setCell', async () => {
+    const { setCell, persistence, user } = await renderGrid()
+    await user.dblClick(cell(2, 'Task'))
+    await user.keyboard('{Enter}')
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(cell(2, 'Task')).toHaveFocus()
+
+    await user.dblClick(cell(3, 'Task'))
+    expect(screen.getByRole('textbox', { name: 'Task' })).toHaveValue('Clear site')
+    await user.click(cell(4, 'Task'))
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+
+    expect(setCell).not.toHaveBeenCalled()
+    expect(persistence.saveCell).not.toHaveBeenCalled()
+  })
+
+  it('double-clicking a checkbox toggles it only for its two clicks', async () => {
+    const columns = [...fixtureColumns, { id: 'c-insp', title: 'Inspected', type: 'CHECKBOX' as const }]
+    const { setCell, user } = await renderGrid(makeSheetData({ columns }))
+    await user.dblClick(within(cell(2, 'Inspected')).getByRole('checkbox'))
+    expect(setCell).toHaveBeenCalledTimes(2)
+    expect(within(cell(2, 'Inspected')).getByRole('checkbox')).not.toBeChecked()
+    expect(editorIn(cell(2, 'Inspected'))).toBeNull()
+  })
+
   it('a picklist cell edits with a select that has a blank option plus the options', async () => {
     const { setCell, user } = await renderGrid()
     await user.dblClick(cell(4, 'Status'))
@@ -232,7 +257,7 @@ describe('GridView editing', () => {
     await user.selectOptions(select, 'In progress')
     expect(setCell).toHaveBeenCalledWith('r-found', COL.status, 'In progress')
     expect(cell(4, 'Status')).toHaveTextContent('In progress')
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('grid')).queryByRole('combobox')).not.toBeInTheDocument()
   })
 
   it('arrow keys move the active cell', async () => {

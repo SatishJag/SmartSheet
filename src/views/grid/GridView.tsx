@@ -1,16 +1,24 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useTable } from '@tanstack/react-table'
-import { observeElementRect, useVirtualizer, type Rect, type Virtualizer } from '@tanstack/react-virtual'
-import { fullOrder } from '../../model/hierarchy'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Column } from '../../model/validate'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
 import { CellEditor, CheckboxCell, type CommitReason } from './cellEditors'
-import { buildColumnDefs, displayText, gridFeatures, isEditable, toEditString, type GridRow } from './columns'
+import { buildColumnDefs, displayText, gridFeatures, isEditable, ROW_NUMBER_COLUMN_ID, toEditString, type GridRow } from './columns'
+import { FilterBar } from './FilterBar'
+import { HierarchyCell } from './HierarchyCell'
+import { useGridViewState } from './useGridViewState'
+import { useRowDrag } from './useRowDrag'
+import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow } from './viewModel'
+import { fixedViewport, measuredViewport } from './viewport'
 import './grid.css'
 
 export const ROW_HEIGHT = 32
 const OVERSCAN = 10
 const EMPTY_COLUMNS: Column[] = []
+
+type ViewRow = GridRow & DisplayRow
+const ARIA_SORT = { asc: 'ascending', desc: 'descending' } as const
 
 interface ActiveCell {
   rowId: string
@@ -23,8 +31,9 @@ export interface GridViewProps {
 }
 
 /**
- * The sheet grid: rows in tree order, virtualized, one active cell at a time, typed editors.
- * Everything comes from the sheet store via context; edits go through `setCell`.
+ * The sheet grid: rows in tree order (or sorted per sibling group / filtered), virtualized, one
+ * active cell at a time, typed editors, hierarchy controls. Everything comes from the sheet store
+ * via context; edits go through store actions. Sort, filter and collapse are UI-only state.
  */
 export function GridView({ viewportHeight }: GridViewProps) {
   const api = useSheetStoreApi()
@@ -34,46 +43,43 @@ export function GridView({ viewportHeight }: GridViewProps) {
 
   const columns = data?.columns ?? EMPTY_COLUMNS
   const columnDefs = useMemo(() => buildColumnDefs(columns), [columns])
-  const rowRecords = data?.rows
+  const { view, toggleCollapsed, cycleSort, setFilter } = useGridViewState()
 
-  const rows = useMemo<GridRow[]>(() => {
-    if (!rowRecords) return []
-    const byId = new Map(rowRecords.map((r) => [r.id, r]))
-    const parents = new Set(rowRecords.map((r) => r.parentId).filter((p) => p !== null))
-    const schedErrors = new Map<string, string[]>()
-    for (const e of scheduled.errors) schedErrors.set(e.rowId, [...(schedErrors.get(e.rowId) ?? []), e.message])
-    return fullOrder(rowRecords).map((id, i) => ({
-      id,
-      rowNumber: i + 1,
-      isParent: parents.has(id),
-      record: byId.get(id)!,
-      scheduled: scheduled.byRow[id],
-      scheduleError: schedErrors.get(id)?.join('; ') ?? null,
-    }))
-  }, [rowRecords, scheduled])
+  const allRows = useMemo(() => buildGridRows(data, scheduled), [data, scheduled])
+  const rows = useMemo<ViewRow[]>(() => {
+    const byId = new Map(allRows.map((r) => [r.id, r]))
+    return buildDisplayRows(data, scheduled, view, allRows).map((d) => ({ ...byId.get(d.id)!, ...d }))
+  }, [data, scheduled, view, allRows])
+  const parentById = useMemo(() => new Map(data?.rows.map((r) => [r.id, r.parentId])), [data])
+  const parentOf = (id: string) => parentById.get(id)
+  const filterActive = effectiveFilter(columns, view.filter) !== null
+  const rowDrag = useRowDrag({
+    enabled: !filterActive && effectiveSort(columns, view.sort) === null,
+    parentOf,
+    onMove: (id, targetId) => api.getState().moveRow(id, targetId, parentOf(targetId) ?? null),
+  })
 
   const errorByCell = useMemo(() => new Map(errors.map((e) => [`${e.rowId}:${e.colId}`, e.message])), [errors])
 
   const table = useTable({
     features: gridFeatures,
     columns: columnDefs,
-    data: rows,
+    data: rows as GridRow[],
     columnResizeMode: 'onChange',
     getRowId: (r) => r.id,
   })
-  const tableRows = table.getRowModel().rows
   const headers = table.getHeaderGroups()[0]?.headers ?? []
   const widthOf = (colId: string) => table.getColumn(colId)?.getSize() ?? 0
   const totalWidth = table.getTotalSize()
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
-    count: tableRows.length,
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: OVERSCAN,
     scrollPaddingStart: ROW_HEIGHT, // the sticky header covers the first row's height
-    getItemKey: (i) => tableRows[i]?.id ?? i,
+    getItemKey: (i) => rows[i]?.id ?? i,
     ...(viewportHeight !== undefined ? fixedViewport(viewportHeight) : measuredViewport),
   })
 
@@ -112,8 +118,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
     setEditing(true)
   }
 
-  function commit(rowId: string, colId: string, raw: string, reason: CommitReason) {
-    api.getState().setCell(rowId, colId, raw)
+  function commit(rowId: string, colId: string, raw: string, reason: CommitReason, initial: string) {
+    // An unchanged value is not an edit, unless re-committing it clears an error on the cell.
+    if (raw !== initial || errorByCell.has(`${rowId}:${colId}`)) api.getState().setCell(rowId, colId, raw)
     focusRequest.current = reason !== 'blur'
     setEditing(false)
   }
@@ -135,7 +142,11 @@ export function GridView({ viewportHeight }: GridViewProps) {
       ArrowLeft: [0, -1],
       ArrowRight: [0, 1],
     }
-    if (e.key in move) {
+    if (e.key === 'Tab' && activeColIdx === 0 && (e.target as HTMLElement).getAttribute('role') === 'gridcell') {
+      // Primary column: Tab indents, Shift+Tab outdents. Elsewhere Tab moves focus as usual.
+      e.preventDefault()
+      shiftActiveRow(e.shiftKey ? 'outdent' : 'indent')
+    } else if (e.key in move) {
       e.preventDefault()
       const [dr, dc] = move[e.key]
       const r = clamp(activeRowIdx + dr, rows.length)
@@ -148,8 +159,25 @@ export function GridView({ viewportHeight }: GridViewProps) {
     }
   }
 
+  /** Collapsing a row that holds the active cell moves the active cell up to that row. */
+  function toggleRow(row: ViewRow) {
+    if (row.expanded && !filterActive && active && isDescendant(parentOf, row.id, active.rowId)) {
+      focusRequest.current = scrollRef.current?.contains(document.activeElement) ?? false
+      setActive({ rowId: row.id, colId: active.colId })
+      setEditing(false)
+    }
+    toggleCollapsed(row.id)
+  }
+
+  function shiftActiveRow(dir: 'indent' | 'outdent') {
+    if (!activeValid) return
+    const id = rows[activeRowIdx].id
+    if (dir === 'indent') api.getState().indentRow(id)
+    else api.getState().outdentRow(id)
+  }
+
   function addRow() {
-    const last = rows[rows.length - 1]
+    const last = allRows[allRows.length - 1]
     if (last) api.getState().addRow(last.id)
     else api.getState().addRow()
   }
@@ -157,23 +185,24 @@ export function GridView({ viewportHeight }: GridViewProps) {
   // Exactly one cell is in the tab order: the active cell when it is rendered, otherwise the
   // first cell of the first rendered row, so keyboard users can always tab into the grid.
   const virtualItems = virtualizer.getVirtualItems()
-  const renderedIds = virtualItems.map((item) => tableRows[item.index]?.id)
+  const renderedIds = virtualItems.map((item) => rows[item.index]?.id)
   const activeRendered = activeValid && renderedIds.includes(active!.rowId)
   const firstRenderedRowId = renderedIds[0]
 
-  function renderCell(row: GridRow, col: Column, idx: number) {
+  function renderCell(row: ViewRow, col: Column, idx: number) {
     const key = `${row.id}:${col.id}`
     const error = errorByCell.get(key)
     const isActive = active?.rowId === row.id && active.colId === col.id
     const editable = isEditable(col, row)
     const errorId = error ? `cell-error-${row.id}-${col.id}` : undefined
+    const initial = toEditString(row.record.cells[col.id])
     let content
     if (isActive && editing && editable) {
       content = (
         <CellEditor
           column={col}
-          initial={toEditString(row.record.cells[col.id])}
-          onCommit={(raw, reason) => commit(row.id, col.id, raw, reason)}
+          initial={initial}
+          onCommit={(raw, reason) => commit(row.id, col.id, raw, reason, initial)}
           onCancel={cancel}
         />
       )
@@ -188,6 +217,19 @@ export function GridView({ viewportHeight }: GridViewProps) {
       )
     } else {
       content = <span className="cell-text">{displayText(col, row)}</span>
+    }
+    if (idx === 0) {
+      content = (
+        <HierarchyCell
+          depth={row.depth}
+          hasChildren={row.hasChildren}
+          expanded={row.expanded}
+          name={displayText(col, row) || `row ${row.rowNumber}`}
+          onToggle={() => toggleRow(row)}
+        >
+          {content}
+        </HierarchyCell>
+      )
     }
     return (
       <div
@@ -207,7 +249,10 @@ export function GridView({ viewportHeight }: GridViewProps) {
         onClick={() => {
           if (!(isActive && editing)) select(row.id, col.id, false)
         }}
-        onDoubleClick={() => startEdit(row, col)}
+        onDoubleClick={() => {
+          // A checkbox already toggled once per click of the double-click.
+          if (col.type !== 'CHECKBOX') startEdit(row, col)
+        }}
         onFocus={() => {
           // Focus arriving by Tab (or any other way) makes this the active cell.
           if (!isActive) select(row.id, col.id, false)
@@ -244,10 +289,18 @@ export function GridView({ viewportHeight }: GridViewProps) {
                 key={h.id}
                 role="columnheader"
                 aria-colindex={i + 1}
+                aria-sort={h.id === ROW_NUMBER_COLUMN_ID ? undefined : view.sort?.colId === h.id ? ARIA_SORT[view.sort.dir] : 'none'}
                 className="grid-header-cell"
                 style={{ width: h.getSize() }}
               >
-                <table.FlexRender header={h} />
+                {h.id === ROW_NUMBER_COLUMN_ID ? (
+                  <table.FlexRender header={h} />
+                ) : (
+                  // Out of the tab order: the grid keeps a single tab stop.
+                  <button type="button" className="sort-button" tabIndex={-1} onClick={() => cycleSort(h.id)}>
+                    <table.FlexRender header={h} />
+                  </button>
+                )}
                 {h.column.getCanResize() && (
                   <div
                     role="separator"
@@ -263,16 +316,25 @@ export function GridView({ viewportHeight }: GridViewProps) {
           </div>
           <div className="grid-body" style={{ height: virtualizer.getTotalSize() }}>
             {virtualItems.map((item) => {
-              const row = tableRows[item.index].original
+              const row = rows[item.index]
               return (
                 <div
                   key={row.id}
                   role="row"
                   aria-rowindex={item.index + 2}
-                  className={`grid-row${row.isParent ? ' is-parent' : ''}`}
+                  aria-level={row.depth + 1}
+                  aria-expanded={row.hasChildren ? row.expanded : undefined}
+                  className={`grid-row${row.isParent ? ' is-parent' : ''}${rowDrag.overId === row.id ? ' is-drop-target' : ''}`}
                   style={{ height: ROW_HEIGHT, transform: `translateY(${item.start}px)` }}
+                  {...rowDrag.rowProps(row.id)}
                 >
-                  <div role="rowheader" aria-colindex={1} className="grid-cell row-number" style={{ width: widthOf('__row') }}>
+                  <div
+                    role="rowheader"
+                    aria-colindex={1}
+                    className="grid-cell row-number"
+                    style={{ width: widthOf(ROW_NUMBER_COLUMN_ID) }}
+                    {...rowDrag.handleProps(row.id)}
+                  >
                     {row.rowNumber}
                     {row.scheduleError && (
                       <span role="img" className="sched-warning" aria-label={row.scheduleError} title={row.scheduleError}>
@@ -292,35 +354,16 @@ export function GridView({ viewportHeight }: GridViewProps) {
         <button type="button" onClick={addRow}>
           Add row
         </button>
+        <button type="button" disabled={!activeValid} onClick={() => shiftActiveRow('indent')}>
+          Indent
+        </button>
+        <button type="button" disabled={!activeValid} onClick={() => shiftActiveRow('outdent')}>
+          Outdent
+        </button>
+        <FilterBar columns={columns} filter={view.filter} onChange={setFilter} />
       </div>
     </div>
   )
 }
 
-/** Height assumed when the scroll element reports none (no layout yet, or jsdom). */
-const FALLBACK_VIEWPORT_HEIGHT = 600
-
-/** Observe the real element size, but never report a zero height (which would render no rows). */
-const measuredViewport = {
-  observeElementRect: (instance: Virtualizer<HTMLDivElement, Element>, cb: (rect: Rect) => void) =>
-    observeElementRect(instance, (rect) =>
-      cb(rect.height > 0 ? rect : { width: rect.width, height: FALLBACK_VIEWPORT_HEIGHT }),
-    ),
-}
-
 const clamp = (i: number, length: number) => Math.max(0, Math.min(length - 1, i))
-
-/**
- * Virtualizer options for a known viewport height: the rect is fixed instead of observed,
- * which also lets jsdom (no layout) window the rows.
- */
-function fixedViewport(height: number) {
-  const rect: Rect = { width: 0, height }
-  return {
-    initialRect: rect,
-    observeElementRect: (_instance: Virtualizer<HTMLDivElement, Element>, cb: (rect: Rect) => void) => {
-      cb(rect)
-      return () => {}
-    },
-  }
-}
