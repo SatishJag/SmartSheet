@@ -157,7 +157,11 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       if (!data || !row || !unpersisted.has(rowId)) return
       await p.insertRow(data.sheet.id, row)
       unpersisted.delete(rowId)
-      failedKeys.delete(`tree:${rowId}`)
+      // The insert carried the row's place and every cell's current value, so earlier failures
+      // for them are resolved. A job still queued or in flight re-adds its key if it fails.
+      for (const key of [...failedKeys]) {
+        if (key === `tree:${rowId}` || key.startsWith(`cell:${rowId}:`)) failedKeys.delete(key)
+      }
     }
 
     function enqueueCell(rowId: string, colId: string, value: unknown): void {

@@ -413,19 +413,47 @@ describe('save status across overlapping and failed saves', () => {
 })
 
 describe('new rows', () => {
-  it('inserts a new row before saving an edit to it', async () => {
+  it('inserts a new row before saving edits to it, sending the latest value', async () => {
     const { store, p } = await loaded()
     const calls: string[] = []
-    p.insertRow.mockImplementation(async () => void calls.push('insert'))
-    p.saveCell.mockImplementation(async (_r, _c, _v, version) => {
-      calls.push('saveCell')
+    let finishInsert!: () => void
+    p.insertRow.mockImplementation(
+      (_s, row) =>
+        new Promise<void>((r) => {
+          calls.push(`insert ${row.id} ${JSON.stringify(row.cells)}`)
+          finishInsert = r
+        }),
+    )
+    p.saveCell.mockImplementation(async (rowId, colId, value, version) => {
+      calls.push(`saveCell ${rowId} ${colId} ${String(value)}`)
       return { version: version + 1 }
     })
     const id = store.getState().addRow('r2')
+    // Edits made while the insert is in flight: coalesced, latest wins.
     store.getState().setCell(id, 'name', 'Frame')
+    store.getState().setCell(id, 'name', 'Framing')
+    expect(p.saveCell).not.toHaveBeenCalled()
+    finishInsert()
     await settled(store)
-    expect(calls[0]).toBe('insert')
-    expect(p.insertRow).toHaveBeenCalledTimes(1)
+    expect(calls).toEqual([`insert ${id} {}`, `saveCell ${id} name Framing`])
+  })
+
+  it('clears failed cells of a new row once its insert succeeds with their values', async () => {
+    const { store, p } = await loaded()
+    p.insertRow.mockRejectedValue(new Error('offline'))
+    const id = store.getState().addRow('r2')
+    await settled(store, 'failed')
+    store.getState().setCell(id, 'name', 'Frame')
+    store.getState().setCell(id, 'status', 'Open')
+    await vi.waitFor(() => expect(p.insertRow).toHaveBeenCalledTimes(12))
+    await settled(store, 'failed')
+
+    // Network back: editing only name inserts the row with both cells and clears everything.
+    p.insertRow.mockResolvedValue(undefined)
+    store.getState().setCell(id, 'name', 'Frame 2')
+    await settled(store)
+    expect(p.insertRow).toHaveBeenLastCalledWith('sh', expect.objectContaining({ id, cells: { name: 'Frame 2', status: 'Open' } }))
+    expect(p.saveCell).not.toHaveBeenCalled()
   })
 
   it('re-queues the insert with current cells after a failed insert, then recovers', async () => {
