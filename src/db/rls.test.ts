@@ -2,7 +2,11 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// PGlite boots a WASM Postgres; under a loaded full-suite run (many parallel jsdom
+// files) that can exceed vitest's 10 s default hook timeout. Scoped to this file only.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 })
 
 // NOTE: verified against PGlite (Postgres in WASM), not a real Supabase instance.
 // Real Supabase provides the `auth` schema, `auth.uid()` and the `authenticated`
@@ -70,17 +74,17 @@ beforeAll(async () => {
   `)
   const migration = readFileSync(resolve(__dirname, '../../supabase/migrations/0001_schema.sql'), 'utf8')
   await db.exec(migration)
-})
+}, 60_000)
 
 afterAll(async () => {
   await db.close()
-})
+}, 60_000)
 
 beforeEach(async () => {
   await asSuperuser()
   await db.exec('truncate sheets cascade')
   await seedAsA()
-})
+}, 30_000)
 
 describe('isolation between users', () => {
   it('lets user A see their own data', async () => {
