@@ -13,3 +13,8 @@ coverage
 
 .env
 .env.local
+
+# Playwright
+test-results/
+playwright-report/
+e2e/screenshots/
