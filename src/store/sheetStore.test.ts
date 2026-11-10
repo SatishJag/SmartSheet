@@ -345,7 +345,10 @@ describe('dependencies', () => {
     const add = store.getState().addDependency
     expect(add(fs('zz', 'r2')).ok).toBe(false)
     expect(add(fs('r1', 'r1')).ok).toBe(false)
-    expect(add(fs('r2', 'r3')).ok).toBe(false)
+    const pairTaken = { ok: false, error: 'A dependency between these rows already exists' }
+    expect(add(fs('r2', 'r3'))).toEqual(pairTaken)
+    // One dependency per pair, whatever its type or lag.
+    expect(add({ predecessorId: 'r2', successorId: 'r3', type: 'SS', lagMinutes: 480 })).toEqual(pairTaken)
     expect(add(fs('r1', 'r3'))).toEqual({ ok: false, error: 'Summary rows cannot have predecessors' })
   })
 

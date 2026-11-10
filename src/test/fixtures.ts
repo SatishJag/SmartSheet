@@ -41,7 +41,8 @@ export const fsDep = (predecessorId: string, successorId: string): SchedDep => (
 /**
  * A small realistic sheet. 2026-11-09 is a Monday; calendar Mon-Fri, 8h days.
  * Tree order (row numbers): 1 r-site (parent), 2 r-survey, 3 r-clear, 4 r-found.
- * Dependencies: r-survey -> r-clear (FS), r-clear -> r-found (FS).
+ * Dependencies: r-survey -> r-clear (FS), r-clear -> r-found (FS). Predecessor text is derived
+ * from these (the predecessor column is never stored in cells).
  */
 export function makeSheetData(overrides: Partial<SheetData> = {}): SheetData {
   return {
@@ -65,13 +66,12 @@ export function makeSheetData(overrides: Partial<SheetData> = {}): SheetData {
       makeRow(
         'r-clear',
         'a1',
-        { [COL.task]: 'Clear site', [COL.duration]: '3d', [COL.predecessors]: '2', [COL.percent]: 50, [COL.status]: 'In progress' },
+        { [COL.task]: 'Clear site', [COL.duration]: '3d', [COL.percent]: 50, [COL.status]: 'In progress' },
         'r-site',
       ),
       makeRow('r-found', 'a1', {
         [COL.task]: 'Foundations',
         [COL.duration]: '5d',
-        [COL.predecessors]: '3',
         [COL.status]: 'Not started',
       }),
     ],

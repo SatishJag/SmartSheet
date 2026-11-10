@@ -4,9 +4,10 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Column } from '../../model/validate'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
 import { CellEditor, CheckboxCell, type CommitReason } from './cellEditors'
-import { buildColumnDefs, displayText, gridFeatures, isEditable, ROW_NUMBER_COLUMN_ID, toEditString, type GridRow } from './columns'
+import { buildColumnDefs, displayText, editString, gridFeatures, isEditable, ROW_NUMBER_COLUMN_ID, type GridRow } from './columns'
 import { FilterBar } from './FilterBar'
 import { HierarchyCell } from './HierarchyCell'
+import { PredecessorCell } from './PredecessorCell'
 import { useGridViewState } from './useGridViewState'
 import { useRowDrag } from './useRowDrag'
 import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow } from './viewModel'
@@ -199,7 +200,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
     const isActive = active?.rowId === row.id && active.colId === col.id
     const editable = isEditable(col, row)
     const errorId = error ? `cell-error-${row.id}-${col.id}` : undefined
-    const initial = toEditString(row.record.cells[col.id])
+    const initial = editString(col, row)
     let content
     if (isActive && editing && editable) {
       content = (
@@ -219,6 +220,8 @@ export function GridView({ viewportHeight }: GridViewProps) {
           onCommit={(raw) => api.getState().setCell(row.id, col.id, raw)}
         />
       )
+    } else if (col.role === 'predecessor') {
+      content = <PredecessorCell rowId={row.id} text={row.predecessors} />
     } else {
       content = <span className="cell-text">{displayText(col, row)}</span>
     }

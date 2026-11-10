@@ -2,6 +2,7 @@ import type { ScheduleResult } from '../../engine/schedule'
 import { fullOrder } from '../../model/hierarchy'
 import type { Column } from '../../model/validate'
 import type { SheetData } from '../../store/persistence'
+import { predecessorStrings } from '../../store/predecessors'
 import { displayText, toEditString, type GridRow } from './columns'
 
 /**
@@ -57,6 +58,7 @@ export function buildGridRows(data: SheetData | null, scheduled: ScheduleResult)
   const parents = new Set(data.rows.map((r) => r.parentId).filter((p) => p !== null))
   const schedErrors = new Map<string, string[]>()
   for (const e of scheduled.errors) schedErrors.set(e.rowId, [...(schedErrors.get(e.rowId) ?? []), e.message])
+  const preds = predecessorStrings(data)
   return fullOrder(data.rows).map((id, i) => ({
     id,
     rowNumber: i + 1,
@@ -64,6 +66,7 @@ export function buildGridRows(data: SheetData | null, scheduled: ScheduleResult)
     record: byId.get(id)!,
     scheduled: scheduled.byRow[id],
     scheduleError: schedErrors.get(id)?.join('; ') ?? null,
+    predecessors: preds.get(id) ?? '',
   }))
 }
 
@@ -152,7 +155,7 @@ export function isDescendant(parentOf: (id: string) => string | null | undefined
 type SortKey = { kind: 0; n: number } | { kind: 1 | 2; s: string }
 
 function sortKey(col: Column, row: GridRow): SortKey | null {
-  let value: unknown = row.record.cells[col.id]
+  let value: unknown = col.role === 'predecessor' ? row.predecessors : row.record.cells[col.id]
   if (row.scheduled && (col.role === 'start' || col.role === 'end')) value = row.scheduled[col.role]
   if (col.type === 'CHECKBOX') return { kind: 0, n: value === true ? 1 : 0 }
   if (typeof value === 'number') return Number.isFinite(value) ? { kind: 0, n: value } : null

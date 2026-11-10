@@ -16,6 +16,8 @@ export interface GridRow {
   scheduled: Scheduled | undefined
   /** Scheduler messages for this row, joined; null when there are none. */
   scheduleError: string | null
+  /** Predecessor text derived from the sheet's dependencies (never stored in cells). */
+  predecessors: string
 }
 
 export const ROW_NUMBER_COLUMN_ID = '__row'
@@ -55,6 +57,11 @@ export function toEditString(value: unknown): string {
   return String(value)
 }
 
+/** The string a cell's editor opens with: the derived text for the predecessor column. */
+export function editString(col: Column, row: GridRow): string {
+  return col.role === 'predecessor' ? row.predecessors : toEditString(row.record.cells[col.id])
+}
+
 const formatPercent = (n: number) => `${Math.round(n * 10) / 10}%`
 
 /**
@@ -62,6 +69,7 @@ const formatPercent = (n: number) => `${Math.round(n * 10) / 10}%`
  * scheduler produced a result for the row; parent rows show rolled-up duration and % complete.
  */
 export function displayText(col: Column, row: GridRow): string {
+  if (col.role === 'predecessor') return row.predecessors
   const sched = row.scheduled
   if (sched) {
     if (col.role === 'start') return sched.start

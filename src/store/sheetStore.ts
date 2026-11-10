@@ -12,6 +12,7 @@ import {
 } from '../model/hierarchy'
 import { validateCell, type ColumnRole } from '../model/validate'
 import type { Persistence, RowRecord, SheetData } from './persistence'
+import { parsePredecessorInput, rowNumbers } from './predecessors'
 import { toSchedInput } from './scheduleInput'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'failed'
@@ -41,6 +42,12 @@ export interface SheetState {
   moveRow(id: string, afterId: string | null, newParentId: string | null): void
   deleteRow(id: string): void
   addDependency(dep: SchedDep): ActionResult
+  /**
+   * Replace all of the row's incoming dependencies with those described by `raw` (e.g.
+   * "2FS +1d, 5SS"; '' removes them). Atomic: on any error nothing changes and the
+   * predecessor cell gets the error. The predecessor column routes here from `setCell`.
+   */
+  setPredecessors(rowId: string, raw: string): ActionResult
   removeDependency(predecessorId: string, successorId: string): void
 }
 
@@ -59,8 +66,14 @@ function computeSchedule(data: SheetData): ScheduleResult {
   return input ? schedule(input.rows, input.deps, input.calendar) : EMPTY_SCHEDULE
 }
 
-const sameDep = (a: SchedDep, b: SchedDep) =>
-  a.predecessorId === b.predecessorId && a.successorId === b.successorId && a.type === b.type && a.lagMinutes === b.lagMinutes
+/** At most one dependency links a (predecessor, successor) pair, whatever its type or lag. */
+const samePair = (a: SchedDep, b: SchedDep) => a.predecessorId === b.predecessorId && a.successorId === b.successorId
+
+const depKey = (d: SchedDep) => `${d.predecessorId}|${d.successorId}|${d.type}|${d.lagMinutes}`
+const sameDepSet = (a: SchedDep[], b: SchedDep[]) => {
+  const keys = new Set(a.map(depKey))
+  return a.length === b.length && b.every((d) => keys.has(depKey(d)))
+}
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -249,8 +262,19 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
 
     const isParent = (data: SheetData, id: string) => data.rows.some((r) => r.parentId === id)
 
-    function rowNumbers(data: SheetData): Map<string, number> {
-      return new Map(fullOrder(data.rows).map((id, i) => [id, i + 1]))
+    /** The cycle error for a candidate dependency set, naming rows by number; null if acyclic. */
+    function cycleError(data: SheetData, deps: SchedDep[]): string | null {
+      const cycle = findCycle(deps)
+      if (!cycle) return null
+      const nums = rowNumbers(data)
+      const path = [...cycle, cycle[0]].map((id) => `row ${nums.get(id) ?? '?'}`).join(' -> ')
+      return `Dependency would create a cycle: ${path}`
+    }
+
+    /** Replace the cell's error (if any) with `message`, or clear it when `message` is null. */
+    function cellErrors(rowId: string, colId: string | undefined, message: string | null): CellError[] {
+      const others = get().errors.filter((e) => !(e.rowId === rowId && e.colId === colId))
+      return message !== null && colId !== undefined ? [...others, { rowId, colId, message }] : others
     }
 
     return {
@@ -278,6 +302,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (!row) return { ok: false, error: `Unknown row ${rowId}` }
         const col = data.columns.find((c) => c.id === colId)
         if (!col) return { ok: false, error: `Unknown column ${colId}` }
+        // Predecessors are not stored in cells: the text is derived from the dependencies.
+        if (col.role === 'predecessor') return get().setPredecessors(rowId, raw)
         if (col.role && ROLLUP_ROLES.includes(col.role) && isParent(data, rowId)) {
           return { ok: false, error: `${col.title} on a summary row is calculated from its child rows` }
         }
@@ -373,16 +399,52 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (!ids.has(dep.predecessorId)) return { ok: false, error: `Unknown row ${dep.predecessorId}` }
         if (!ids.has(dep.successorId)) return { ok: false, error: `Unknown row ${dep.successorId}` }
         if (dep.predecessorId === dep.successorId) return { ok: false, error: 'A row cannot depend on itself' }
-        if (data.dependencies.some((d) => sameDep(d, dep))) return { ok: false, error: 'That dependency already exists' }
+        if (data.dependencies.some((d) => samePair(d, dep))) {
+          return { ok: false, error: 'A dependency between these rows already exists' }
+        }
         if (isParent(data, dep.successorId)) return { ok: false, error: 'Summary rows cannot have predecessors' }
         const deps = [...data.dependencies, dep]
-        const cycle = findCycle(deps)
-        if (cycle) {
-          const nums = rowNumbers(data)
-          const path = [...cycle, cycle[0]].map((id) => `row ${nums.get(id) ?? '?'}`).join(' -> ')
-          return { ok: false, error: `Dependency would create a cycle: ${path}` }
-        }
+        const cycle = cycleError(data, deps)
+        if (cycle) return { ok: false, error: cycle }
         commit({ ...data, dependencies: deps })
+        enqueueDependencies(data.sheet.id, deps)
+        return { ok: true }
+      },
+
+      setPredecessors(rowId, raw) {
+        const data = get().data
+        if (!data) return { ok: false, error: 'Sheet is not loaded' }
+        if (!data.rows.some((r) => r.id === rowId)) return { ok: false, error: `Unknown row ${rowId}` }
+        const col = data.columns.find((c) => c.role === 'predecessor')
+        const fail = (error: string): ActionResult => {
+          set({ errors: cellErrors(rowId, col?.id, error) })
+          return { ok: false, error }
+        }
+
+        if (!data.sheet.dependenciesEnabled) return fail('Dependencies are not enabled for this sheet')
+        if (col) {
+          // Same checks (and messages) as any predecessor cell: syntax, row count, self reference.
+          const valid = validateCell(col, raw, {
+            rowCount: data.rows.length,
+            ownRowNumber: fullOrder(data.rows).indexOf(rowId) + 1,
+            hoursPerDay: data.sheet.calendar.hoursPerDay,
+            dependenciesEnabled: true,
+          })
+          if (!valid.ok) return fail(valid.error)
+        }
+        const parsed = parsePredecessorInput(data, rowId, raw)
+        if (!parsed.ok) return fail(parsed.error)
+        if (parsed.deps.length > 0 && isParent(data, rowId)) return fail('Summary rows cannot have predecessors')
+        const deps = [...data.dependencies.filter((d) => d.successorId !== rowId), ...parsed.deps]
+        const cycle = cycleError(data, deps)
+        if (cycle) return fail(cycle)
+
+        const errors = cellErrors(rowId, col?.id, null)
+        if (sameDepSet(deps, data.dependencies)) {
+          set({ errors }) // nothing changed; re-entering the same text only clears the error
+          return { ok: true }
+        }
+        commit({ ...data, dependencies: deps }, { errors })
         enqueueDependencies(data.sheet.id, deps)
         return { ok: true }
       },
