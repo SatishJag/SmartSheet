@@ -1,4 +1,5 @@
-import { addWorkingDays, nextWorkingDay, shiftIso } from './calendar'
+import { addWorkingDays, isWorkingDay, nextWorkingDay, shiftIso } from './calendar'
+import { findCycleGroups } from './cycles'
 import { toWorkingDays } from './duration'
 import type { Calendar, DepType } from './types'
 
@@ -79,21 +80,23 @@ function candidateStart(
 }
 
 /**
- * Kahn's algorithm over the valid dependencies. Ties are broken by input row order.
+ * Kahn's algorithm over the given edges (dependencies plus child -> parent).
+ * Ties are broken by input row order.
  * Rows that cannot be ordered (in or downstream of a cycle) are returned in leftover.
  */
 function topologicalOrder(
   rows: SchedRow[],
-  incoming: Map<string, SchedDep[]>,
+  edges: SchedDep[],
 ): { order: string[]; leftover: string[] } {
   const indegree = new Map<string, number>()
   const outgoing = new Map<string, string[]>()
   for (const r of rows) {
-    indegree.set(r.id, incoming.get(r.id)?.length ?? 0)
+    indegree.set(r.id, 0)
     outgoing.set(r.id, [])
   }
-  for (const deps of incoming.values()) {
-    for (const d of deps) outgoing.get(d.predecessorId)!.push(d.successorId)
+  for (const e of edges) {
+    outgoing.get(e.predecessorId)!.push(e.successorId)
+    indegree.set(e.successorId, indegree.get(e.successorId)! + 1)
   }
 
   const queue = rows.filter((r) => indegree.get(r.id) === 0).map((r) => r.id)
@@ -138,36 +141,116 @@ function scheduleRow(
   return { start: start!, end, durationDays, percentComplete: row.percentComplete }
 }
 
+/** Number of working days from start to end inclusive. */
+function workingDaysBetween(cal: Calendar, start: string, end: string): number {
+  let count = 0
+  for (let day = start; day <= end; day = shiftIso(day, 1)) {
+    if (isWorkingDay(cal, day)) count++
+  }
+  return count
+}
+
 /**
- * Forward pass: computes start, end and duration for every row from manual starts
- * and dependencies. Parent rollups are not applied here.
+ * Rolls a parent row up from its scheduled children. Returns null if none are scheduled.
+ * Percent is weighted by child duration; if every child is a milestone it is the plain average.
+ */
+function rollUp(children: Scheduled[], cal: Calendar): Scheduled | null {
+  if (children.length === 0) return null
+  let start = children[0].start
+  let end = children[0].end
+  let weight = 0
+  let weighted = 0
+  let percentSum = 0
+  for (const c of children) {
+    if (c.start < start) start = c.start
+    if (c.end > end) end = c.end
+    weight += c.durationDays
+    weighted += c.durationDays * c.percentComplete
+    percentSum += c.percentComplete
+  }
+  const percentComplete = Math.round(weight > 0 ? weighted / weight : percentSum / children.length)
+  return { start, end, durationDays: workingDaysBetween(cal, start, end), percentComplete }
+}
+
+/**
+ * Forward pass plus parent rollups: computes start, end, duration and percent for every row
+ * from manual starts, dependencies and (for parent rows) their children.
+ * Rows in or downstream of a dependency cycle are not scheduled and get an error.
  */
 export function schedule(rows: SchedRow[], deps: SchedDep[], cal: Calendar): ScheduleResult {
   const errors: ScheduleError[] = []
   const byRow: Record<string, Scheduled> = {}
   const rowById = new Map(rows.map((r) => [r.id, r]))
 
+  // A parent row is the parentId of at least one row.
+  const childrenOf = new Map<string, string[]>()
+  for (const r of rows) {
+    if (r.parentId === null || !rowById.has(r.parentId)) continue
+    const list = childrenOf.get(r.parentId) ?? []
+    list.push(r.id)
+    childrenOf.set(r.parentId, list)
+  }
+
   // Keep only dependencies whose rows exist; report unknown predecessors on the successor.
+  // Dependencies into a parent row are ignored: its dates come from its children.
   const incoming = new Map<string, SchedDep[]>()
+  const validDeps: SchedDep[] = []
+  const summaryWithPredecessor = new Set<string>()
   for (const d of deps) {
     if (!rowById.has(d.successorId)) continue
     if (!rowById.has(d.predecessorId)) {
       errors.push({ rowId: d.successorId, message: `Unknown predecessor ${d.predecessorId}` })
       continue
     }
+    if (childrenOf.has(d.successorId)) {
+      if (!summaryWithPredecessor.has(d.successorId)) {
+        summaryWithPredecessor.add(d.successorId)
+        errors.push({ rowId: d.successorId, message: 'Summary rows cannot have predecessors' })
+      }
+      continue
+    }
     const list = incoming.get(d.successorId) ?? []
     list.push(d)
     incoming.set(d.successorId, list)
+    validDeps.push(d)
   }
 
-  const { order, leftover } = topologicalOrder(rows, incoming)
+  // Every child must be ordered before its parent, so those are edges too.
+  const edges = [...validDeps]
+  for (const [parentId, childIds] of childrenOf) {
+    for (const childId of childIds) {
+      edges.push({ predecessorId: childId, successorId: parentId, type: 'FS', lagMinutes: 0 })
+    }
+  }
+
+  const inCycle = new Set<string>()
+  for (const group of findCycleGroups(edges)) {
+    const message = `Dependency cycle: ${[...group.path, group.path[0]].join(' -> ')}`
+    for (const id of group.members) {
+      inCycle.add(id)
+      errors.push({ rowId: id, message })
+    }
+  }
+
+  const { order, leftover } = topologicalOrder(rows, edges)
 
   for (const id of order) {
-    const result = scheduleRow(rowById.get(id)!, incoming.get(id) ?? [], byRow, cal)
+    const row = rowById.get(id)!
+    const childIds = childrenOf.get(id)
+    if (childIds) {
+      const scheduledChildren = childIds.flatMap((c) => (byRow[c] ? [byRow[c]] : []))
+      const rolled = rollUp(scheduledChildren, cal)
+      if (rolled) byRow[id] = rolled
+      else errors.push({ rowId: id, message: 'No scheduled children' })
+      continue
+    }
+    const result = scheduleRow(row, incoming.get(id) ?? [], byRow, cal)
     if ('rowId' in result) errors.push(result)
     else byRow[id] = result
   }
-  for (const id of leftover) errors.push({ rowId: id, message: 'Dependency cycle' })
+  for (const id of leftover) {
+    if (!inCycle.has(id)) errors.push({ rowId: id, message: 'Depends on a row in a dependency cycle' })
+  }
 
   return { byRow, errors }
 }
