@@ -10,9 +10,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
     "fractional-indexing": "^4.0.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.16",
