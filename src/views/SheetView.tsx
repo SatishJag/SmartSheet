@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabasePersistence } from '../store/persistence'
 import { SheetStoreProvider, useSheetStore } from '../store/SheetStoreContext'
 import { createSheetStore } from '../store/sheetStore'
+import { GanttView } from './gantt/GanttView'
 import { GridView } from './grid/GridView'
 import { SaveStatusBadge } from './grid/SaveStatusBadge'
 
@@ -35,6 +36,66 @@ function SheetViewForSheet({ client, sheetId, onBack }: SheetViewProps) {
   )
 }
 
+interface SheetTab {
+  id: string
+  label: string
+  render(): ReactNode
+}
+
+/** The sheet's views, in tab order. Only the active one is mounted; the store keeps the data. */
+const SHEET_TABS: readonly SheetTab[] = [
+  { id: 'grid', label: 'Grid', render: () => <GridView /> },
+  { id: 'gantt', label: 'Gantt', render: () => <GanttView /> },
+]
+
+function SheetTabs() {
+  const [activeId, setActiveId] = useState(SHEET_TABS[0].id)
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>())
+  const baseId = useId()
+  const active = SHEET_TABS.find((t) => t.id === activeId) ?? SHEET_TABS[0]
+
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const i = SHEET_TABS.findIndex((t) => t.id === active.id)
+    const n = SHEET_TABS.length
+    const next =
+      e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i - 1 + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1
+    if (next < 0) return
+    e.preventDefault()
+    const id = SHEET_TABS[next].id
+    setActiveId(id)
+    tabRefs.current.get(id)?.focus()
+  }
+
+  return (
+    <>
+      <div role="tablist" aria-label="Sheet views" className="sheet-tabs" onKeyDown={onKeyDown}>
+        {SHEET_TABS.map((t) => (
+          <button
+            key={t.id}
+            ref={(el) => {
+              if (el) tabRefs.current.set(t.id, el)
+              else tabRefs.current.delete(t.id)
+            }}
+            type="button"
+            role="tab"
+            id={`${baseId}-tab-${t.id}`}
+            aria-selected={t.id === active.id}
+            aria-controls={`${baseId}-panel`}
+            tabIndex={t.id === active.id ? 0 : -1}
+            className={t.id === active.id ? 'sheet-tab is-active' : 'sheet-tab'}
+            onClick={() => setActiveId(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={`${baseId}-panel`} aria-labelledby={`${baseId}-tab-${active.id}`} className="sheet-tabpanel">
+        {active.render()}
+      </div>
+    </>
+  )
+}
+
 function SheetContent({ onBack }: { onBack: () => void }) {
   const data = useSheetStore((s) => s.data)
   const loadError = useSheetStore((s) => s.loadError)
@@ -52,7 +113,7 @@ function SheetContent({ onBack }: { onBack: () => void }) {
       {loadError ? (
         <p role="alert">Could not load the sheet: {loadError}</p>
       ) : data ? (
-        <GridView />
+        <SheetTabs />
       ) : (
         <p>Loading sheet…</p>
       )}

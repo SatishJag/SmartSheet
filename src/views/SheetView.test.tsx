@@ -57,6 +57,52 @@ describe('SheetView', () => {
     expect(onBack).toHaveBeenCalledTimes(1)
   })
 
+  it('shows the Grid tab by default and switches to Gantt by click, unmounting the grid', async () => {
+    vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+    render(<SheetView client={client} sheetId="sheet-1" onBack={() => {}} />)
+
+    expect(await screen.findByRole('grid')).toBeInTheDocument()
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.map((t) => t.textContent)).toEqual(['Grid', 'Gantt'])
+    expect(screen.getByRole('tab', { name: 'Grid' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Gantt' })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.queryByRole('region', { name: 'Gantt chart' })).not.toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Gantt' }))
+    expect(screen.getByRole('tab', { name: 'Gantt' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('region', { name: 'Gantt chart' })).toBeInTheDocument()
+    expect(screen.queryByRole('grid')).not.toBeInTheDocument()
+    expect(screen.getByRole('tabpanel')).toHaveAccessibleName('Gantt')
+
+    await user.click(screen.getByRole('tab', { name: 'Grid' }))
+    expect(screen.getByRole('grid')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Gantt chart' })).not.toBeInTheDocument()
+  })
+
+  it('switches tabs with the arrow keys and moves focus', async () => {
+    vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+    render(<SheetView client={client} sheetId="sheet-1" onBack={() => {}} />)
+    await screen.findByRole('grid')
+
+    const user = userEvent.setup()
+    const gridTab = screen.getByRole('tab', { name: 'Grid' })
+    expect(gridTab).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('tab', { name: 'Gantt' })).toHaveAttribute('tabindex', '-1')
+    gridTab.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'Gantt' })).toHaveFocus()
+    expect(screen.getByRole('tab', { name: 'Gantt' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('region', { name: 'Gantt chart' })).toBeInTheDocument()
+    expect(screen.queryByRole('grid')).not.toBeInTheDocument()
+
+    await user.keyboard('{ArrowRight}') // wraps
+    expect(screen.getByRole('tab', { name: 'Grid' })).toHaveFocus()
+    expect(screen.getByRole('grid')).toBeInTheDocument()
+    await user.keyboard('{ArrowLeft}')
+    expect(screen.getByRole('tab', { name: 'Gantt' })).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('shows the load error as an alert', async () => {
     const persistence = makeFakePersistence()
     persistence.loadSheet.mockRejectedValue(new Error('permission denied for table sheets'))
