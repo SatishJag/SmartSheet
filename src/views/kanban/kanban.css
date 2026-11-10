@@ -72,6 +72,9 @@
 }
 
 .kanban-card {
+  /* Containing block for the card's visually hidden label, so the label stays inside the lane's
+     scroll area instead of being placed relative to the page (which made the page scroll). */
+  position: relative;
   padding: 8px;
   border: 1px solid #cbd2d9;
   border-radius: 4px;
