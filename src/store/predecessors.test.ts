@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { COL, fsDep, makeRow, makeSheetData } from '../test/fixtures'
-import { parsePredecessorInput, predecessorString, predecessorStrings, predecessorTooltip } from './predecessors'
+import { parsePredecessorInput, predecessorString, predecessorStrings, predecessorTooltip, sheetLookup } from './predecessors'
 
 // Fixture tree order: 1 r-site (parent), 2 r-survey, 3 r-clear, 4 r-found.
 
@@ -52,6 +52,21 @@ describe('predecessorTooltip', () => {
     data.rows.push(makeRow('r-x', 'a2', {}))
     expect(predecessorTooltip(data, 'r-found')).toBe('2: Survey\n5: Row 5')
     expect(predecessorTooltip(data, 'r-survey')).toBe('')
+  })
+})
+
+describe('lookup cost', () => {
+  it('builds the lookups once per SheetData and 40 tooltips on a 5,000-row chain take well under 50 ms', () => {
+    const rows = Array.from({ length: 5000 }, (_, i) => makeRow(`r${i}`, `a${String(i).padStart(5, '0')}`, { [COL.task]: `T${i + 1}` }))
+    const data = makeSheetData({ rows, dependencies: rows.slice(1).map((r, i) => fsDep(rows[i].id, r.id)) })
+    const lookup = sheetLookup(data)
+    expect(sheetLookup(data)).toBe(lookup)
+    const t0 = performance.now()
+    for (let i = 2000; i < 2040; i++) expect(predecessorTooltip(data, `r${i}`)).toBe(`${i}: T${i}`)
+    expect(performance.now() - t0).toBeLessThan(50)
+    expect(sheetLookup(data)).toBe(lookup)
+    // A new SheetData (the store replaces it on each change) gets fresh lookups.
+    expect(sheetLookup({ ...data })).not.toBe(lookup)
   })
 })
 

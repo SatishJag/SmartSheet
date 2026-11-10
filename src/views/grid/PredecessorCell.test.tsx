@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { SheetStoreProvider } from '../../store/SheetStoreContext'
 import { makeSheetData, makeTestStore } from '../../test/fixtures'
 import { GridView } from './GridView'
@@ -55,9 +55,14 @@ describe('predecessor cell', () => {
 
   it('an unchanged entry is not an edit', async () => {
     const { user, store } = await renderGrid()
+    const setCell = vi.spyOn(store.getState(), 'setCell')
+    const setPredecessors = vi.spyOn(store.getState(), 'setPredecessors')
     const before = store.getState().data
     await user.dblClick(cell(3, 'Predecessors'))
+    expect(within(cell(3, 'Predecessors')).getByRole('textbox')).toHaveValue('2FS')
     await user.keyboard('{Enter}')
+    expect(setCell).not.toHaveBeenCalled()
+    expect(setPredecessors).not.toHaveBeenCalled()
     expect(store.getState().data).toBe(before)
   })
 
