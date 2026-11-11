@@ -12,6 +12,7 @@ import {
   formulaError,
   gridFeatures,
   isEditable,
+  readOnlyReason,
   ROW_NUMBER_COLUMN_ID,
   type GridRow,
 } from './columns'
@@ -315,7 +316,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
         aria-readonly={editable ? undefined : true}
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
-        title={error}
+        title={error ?? readOnlyReason(col, row)}
         tabIndex={isActive || (!activeRendered && row.id === firstRenderedRowId && idx === 0) ? 0 : -1}
         data-row-id={row.id}
         data-col-id={col.id}

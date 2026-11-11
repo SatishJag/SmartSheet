@@ -61,6 +61,7 @@ export function buildGridRows(data: SheetData | null, scheduled: ScheduleResult)
   for (const e of scheduled.errors) schedErrors.set(e.rowId, [...(schedErrors.get(e.rowId) ?? []), e.message])
   const preds = predecessorStrings(data)
   const formulas = formulaEvaluator(data) // lazy and memoized: only cells that are shown/sorted get evaluated
+  const driven = new Set(data.sheet.dependenciesEnabled ? data.dependencies.map((d) => d.successorId) : [])
   return fullOrder(data.rows).map((id, i) => ({
     id,
     rowNumber: i + 1,
@@ -69,6 +70,7 @@ export function buildGridRows(data: SheetData | null, scheduled: ScheduleResult)
     scheduled: scheduled.byRow[id],
     scheduleError: schedErrors.get(id)?.join('; ') ?? null,
     predecessors: preds.get(id) ?? '',
+    startDriven: driven.has(id),
     formulaOf: (colId: string) => formulas(id, colId),
   }))
 }

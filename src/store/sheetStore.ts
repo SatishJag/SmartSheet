@@ -58,6 +58,14 @@ export interface SheetStoreOptions {
   retryDelaysMs?: number[]
 }
 
+/** Why a Start date cannot be typed on a row driven by its predecessors (grid, Gantt and store). */
+export const START_SET_BY_PREDECESSORS = 'Start date is set by predecessors — edit the Predecessors column to move this task'
+
+/** Whether a row's start comes from its incoming dependencies (so a typed Start would be ignored). */
+export function isStartDriven(data: SheetData, rowId: string): boolean {
+  return data.sheet.dependenciesEnabled && data.dependencies.some((d) => d.successorId === rowId)
+}
+
 /** Columns whose values on a parent row come from its children. */
 const ROLLUP_ROLES: readonly ColumnRole[] = ['start', 'end', 'duration', 'percentComplete']
 
@@ -417,6 +425,10 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (col.role === 'predecessor') return get().setPredecessors(rowId, raw)
         if (col.role && ROLLUP_ROLES.includes(col.role) && isParent(data, rowId)) {
           return { ok: false, error: `${col.title} on a summary row is calculated from its child rows` }
+        }
+        if (col.role === 'start' && isStartDriven(data, rowId)) {
+          set({ errors: cellErrors(rowId, colId, START_SET_BY_PREDECESSORS) })
+          return { ok: false, error: START_SET_BY_PREDECESSORS }
         }
 
         const order = fullOrder(data.rows)

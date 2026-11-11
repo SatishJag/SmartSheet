@@ -7,6 +7,7 @@ import { visibleOrder } from '../../model/hierarchy'
 import type { SheetData } from '../../store/persistence'
 import { rowNumbers } from '../../store/predecessors'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
+import { START_SET_BY_PREDECESSORS } from '../../store/sheetStore'
 import { fixedViewport, measuredViewport } from '../grid/viewport'
 import { DependencyArrows, type BarEdges } from './arrows'
 import { barKind, GanttBar, ROW_HEIGHT } from './bars'
@@ -30,7 +31,7 @@ const HEADER_ROW = 20
 const INDENT_PX = 16
 const OVERSCAN = 10
 
-const MSG_PREDECESSORS = 'Start date is set by predecessors — edit the Predecessors column to move this task'
+const MSG_PREDECESSORS = START_SET_BY_PREDECESSORS
 const MSG_SUMMARY = 'Summary row dates are calculated from their child rows — move the child tasks instead'
 const MSG_NO_DURATION = 'Add a Duration column to resize tasks in the Gantt chart'
 

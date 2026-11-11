@@ -3,6 +3,7 @@ import type { Scheduled } from '../../engine/schedule'
 import type { RowRecord } from '../../store/persistence'
 import type { Column, ColumnRole } from '../../model/validate'
 import { formulaDisplay, type FormulaCellResult } from '../../formula/sheetFormulas'
+import { START_SET_BY_PREDECESSORS } from '../../store/sheetStore'
 
 export const gridFeatures = tableFeatures({ columnSizingFeature, columnResizingFeature })
 export type GridFeatures = typeof gridFeatures
@@ -19,6 +20,8 @@ export interface GridRow {
   scheduleError: string | null
   /** Predecessor text derived from the sheet's dependencies (never stored in cells). */
   predecessors: string
+  /** The row's start comes from its predecessors, so its Start cell cannot be typed in. */
+  startDriven?: boolean
   /** The evaluated formula in a cell of this row; null when the cell holds no evaluated formula. */
   formulaOf?: (colId: string) => FormulaCellResult | null
 }
@@ -45,11 +48,21 @@ export function buildColumnDefs(columns: Column[]): ColumnDef<GridFeatures, Grid
 /** Roles whose value on a parent row is rolled up from its children. */
 const PARENT_ROLLUP_ROLES: readonly ColumnRole[] = ['start', 'duration', 'percentComplete']
 
-/** Whether a cell can be edited: never an 'end' cell, never a rolled-up cell on a parent row. */
+/**
+ * Whether a cell can be edited: never an 'end' cell, never a rolled-up cell on a parent row,
+ * never the Start of a row whose start is set by its predecessors.
+ */
 export function isEditable(col: Column, row: GridRow): boolean {
   if (col.role === 'end') return false
   if (row.isParent && col.role && PARENT_ROLLUP_ROLES.includes(col.role)) return false
+  if (col.role === 'start' && row.startDriven) return false
   return true
+}
+
+/** A tooltip explaining why a read-only cell cannot be edited, when there is a useful one. */
+export function readOnlyReason(col: Column, row: GridRow): string | undefined {
+  if (col.role === 'start' && row.startDriven && !row.isParent) return START_SET_BY_PREDECESSORS
+  return undefined
 }
 
 /** A stored cell value as the string the editor starts from (and setCell accepts). */

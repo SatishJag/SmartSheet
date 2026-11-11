@@ -343,6 +343,28 @@ describe('GridView rows', () => {
   })
 })
 
+describe('GridView dependency-driven Start', () => {
+  it('a Start cell on a row with predecessors has no editor and explains why', async () => {
+    const { user, setCell } = await renderGrid()
+    const start = cell(3, 'Start') // Clear site depends on Survey
+    expect(start).toHaveAttribute('aria-readonly', 'true')
+    expect(start).toHaveAttribute('title', 'Start date is set by predecessors — edit the Predecessors column to move this task')
+    await user.dblClick(start)
+    expect(editorIn(start)).toBeNull()
+    await user.keyboard('{Enter}')
+    expect(editorIn(start)).toBeNull()
+    expect(setCell).not.toHaveBeenCalled()
+  })
+
+  it('a Start cell on a row without predecessors stays editable', async () => {
+    const { user } = await renderGrid()
+    const start = cell(2, 'Start') // Survey
+    expect(start).not.toHaveAttribute('aria-readonly')
+    await user.dblClick(start)
+    expect(editorIn(start)).not.toBeNull()
+  })
+})
+
 describe('GridView formulas', () => {
   const formulaColumns = [
     { id: 'task', title: 'Task', type: 'TEXT_NUMBER' as const },

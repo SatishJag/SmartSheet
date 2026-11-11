@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { COL, fsDep, makeRow, makeSheetData, makeTestStore } from '../test/fixtures'
+import { START_SET_BY_PREDECESSORS } from './sheetStore'
 
 // Fixture: 1 r-site (parent of 2 r-survey and 3 r-clear), 4 r-found. Deps: 2 -> 3, 3 -> 4.
 
@@ -110,6 +111,26 @@ describe('tree actions that would create a hierarchy cycle', () => {
     const { store } = await makeTestStore({ ...base, sheet: { ...base.sheet, dependenciesEnabled: false } })
     store.getState().indentRow('b')
     expect(parentOf(store, 'b')).toBe('a')
+  })
+})
+
+describe('typing a Start date on a dependency-driven row', () => {
+  it('is rejected with the shared message and records the cell error', async () => {
+    const { store, persistence } = await makeTestStore()
+    const r = store.getState().setCell('r-clear', COL.start, '2026-12-01')
+    expect(r).toEqual({ ok: false, error: START_SET_BY_PREDECESSORS })
+    expect(START_SET_BY_PREDECESSORS).toBe('Start date is set by predecessors — edit the Predecessors column to move this task')
+    expect(store.getState().errors).toEqual([{ rowId: 'r-clear', colId: COL.start, message: START_SET_BY_PREDECESSORS }])
+    expect(store.getState().data!.rows.find((x) => x.id === 'r-clear')!.cells[COL.start]).toBeUndefined()
+    expect(persistence.saveCell).not.toHaveBeenCalled()
+  })
+
+  it('is allowed on a row without predecessors, and when dependencies are disabled', async () => {
+    const { store } = await makeTestStore()
+    expect(store.getState().setCell('r-survey', COL.start, '2026-12-01')).toEqual({ ok: true })
+    const base = makeSheetData()
+    const { store: s2 } = await makeTestStore({ ...base, sheet: { ...base.sheet, dependenciesEnabled: false } })
+    expect(s2.getState().setCell('r-clear', COL.start, '2026-12-01')).toEqual({ ok: true })
   })
 })
 
