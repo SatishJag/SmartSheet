@@ -125,3 +125,24 @@ main {
   flex: 1;
   min-height: 0;
 }
+
+.sheet-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sheet-list-row .sheet-item {
+  flex: 1;
+}
+
+.inline-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-rename-error {
+  color: #b42318;
+  font-size: 0.9em;
+}

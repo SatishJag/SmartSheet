@@ -186,9 +186,9 @@ describe('SheetList', () => {
     })
     render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /Tower A/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Tower A/ }))
     expect(onOpen).toHaveBeenCalledWith('s1')
-    expect(screen.getByRole('button', { name: /Tower B/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Tower B/ })).toBeInTheDocument()
     expect(screen.queryByText('No sheets yet')).not.toBeInTheDocument()
   })
 

@@ -5,6 +5,7 @@ import { supabasePersistence } from '../store/persistence'
 import { SheetStoreProvider, useSheetStore, useSheetStoreApi } from '../store/SheetStoreContext'
 import { createSheetStore, type SaveStatus, type SheetState } from '../store/sheetStore'
 import { ConfirmDialog } from './ConfirmDialog'
+import { InlineRename } from './InlineRename'
 import { GanttView } from './gantt/GanttView'
 import { GridView } from './grid/GridView'
 import { SaveStatusBadge } from './grid/SaveStatusBadge'
@@ -43,7 +44,7 @@ function SheetViewForSheet({ client, sheetId, onBack, onSaveStatusChange, store:
 
   return (
     <SheetStoreProvider store={store}>
-      <SheetContent onBack={onBack} onSaveStatusChange={onSaveStatusChange} />
+      <SheetContent client={client} sheetId={sheetId} onBack={onBack} onSaveStatusChange={onSaveStatusChange} />
     </SheetStoreProvider>
   )
 }
@@ -149,10 +150,39 @@ function useSaveGuards(onSaveStatusChange?: (status: SaveStatus) => void): SaveS
   return status
 }
 
+/** The sheet's name as the page heading, with an inline Rename that saves to the sheets table. */
+function SheetName({ client, sheetId, name }: { client: SupabaseClient; sheetId: string; name: string }) {
+  const api = useSheetStoreApi()
+  const [editing, setEditing] = useState(false)
+
+  async function save(next: string): Promise<string | null> {
+    const { error } = await client.from('sheets').update({ name: next }).eq('id', sheetId)
+    if (error) return error.message
+    api.getState().setSheetName(next)
+    setEditing(false)
+    return null
+  }
+
+  return editing ? (
+    <InlineRename initial={name} onSave={save} onCancel={() => setEditing(false)} />
+  ) : (
+    <>
+      <h2>{name}</h2>
+      <button type="button" aria-label="Rename sheet" onClick={() => setEditing(true)}>
+        Rename
+      </button>
+    </>
+  )
+}
+
 function SheetContent({
+  client,
+  sheetId,
   onBack,
   onSaveStatusChange,
 }: {
+  client: SupabaseClient
+  sheetId: string
   onBack: () => void
   onSaveStatusChange?: (status: SaveStatus) => void
 }) {
@@ -180,7 +210,7 @@ function SheetContent({
         <button type="button" onClick={() => (status === 'saved' ? onBack() : setConfirmBack(true))}>
           Back to sheets
         </button>
-        {data && <h2>{data.sheet.name}</h2>}
+        {data && <SheetName client={client} sheetId={sheetId} name={data.sheet.name} />}
         <span className="spacer" />
         {data && <SaveStatusBadge />}
       </header>

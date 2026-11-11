@@ -53,6 +53,8 @@ export interface SheetState {
   removeDependency(predecessorId: string, successorId: string): void
   /** Removes the notice at `index` (no-op when out of range). */
   dismissNotice(index: number): void
+  /** Updates the loaded sheet's name locally (the caller saves it to the sheets table). */
+  setSheetName(name: string): void
   /**
    * Re-queues every change that ran out of retries (cells with their current values, row places,
    * the current dependency set, pending deletions) and every row whose insert has not succeeded.
@@ -626,6 +628,13 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         // Rows whose insert never succeeded (whatever job last tried it).
         for (const id of unpersisted) if (findRow(id) && !queue.some((j) => j.key === `tree:${id}`)) enqueueTree(id)
         refreshStatus()
+      },
+
+      setSheetName(name) {
+        const data = get().data
+        if (!data) return
+        // The schedule does not depend on the name, so it is kept as is.
+        set({ data: { ...data, sheet: { ...data.sheet, name } } })
       },
 
       dismissNotice(index) {

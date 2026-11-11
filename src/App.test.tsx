@@ -61,7 +61,7 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: /Tower A/ }, SLOW))
+    await user.click(await screen.findByRole('button', { name: /^Tower A/ }, SLOW))
     expect(await screen.findByRole('grid', {}, SLOW)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Tower A' })).toBeInTheDocument()
 
@@ -82,7 +82,7 @@ describe('App', () => {
     render(<App />)
 
     // Nothing unsaved yet: Sign out goes straight through.
-    await user.click(await screen.findByRole('button', { name: /Tower A/ }, SLOW))
+    await user.click(await screen.findByRole('button', { name: /^Tower A/ }, SLOW))
     await screen.findByRole('grid', {}, SLOW)
     await user.dblClick(screen.getByText('Survey'))
     await user.keyboard('{Control>}a{/Control}Survey 2{Enter}')
@@ -107,7 +107,7 @@ describe('App', () => {
     vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
     const user = userEvent.setup()
     render(<App />)
-    await user.click(await screen.findByRole('button', { name: /Tower A/ }, SLOW))
+    await user.click(await screen.findByRole('button', { name: /^Tower A/ }, SLOW))
     await screen.findByRole('grid', {}, SLOW)
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()

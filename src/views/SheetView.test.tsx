@@ -220,6 +220,49 @@ describe('SheetView', () => {
     })
   })
 
+  describe('renaming the sheet from its header', () => {
+    function clientWithUpdate(result: { error: { message: string } | null }) {
+      const eq = vi.fn().mockResolvedValue(result)
+      const update = vi.fn(() => ({ eq }))
+      const from = vi.fn(() => ({ update }))
+      return { client: { from } as unknown as SupabaseClient, from, update, eq }
+    }
+
+    it('Rename edits the name inline and saves it through the client and the local sheet', async () => {
+      const { client: c, from, update, eq } = clientWithUpdate({ error: null })
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const { store } = await makeTestStore()
+      render(<SheetView client={c} sheetId="sheet-1" onBack={() => {}} store={store} />)
+      await screen.findByRole('grid')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: 'Rename sheet' }))
+      const input = screen.getByRole('textbox', { name: 'Sheet name' })
+      expect(input).toHaveValue('Tower A')
+      await user.clear(input)
+      await user.type(input, 'Tower A (east){Enter}')
+      expect(await screen.findByRole('heading', { name: 'Tower A (east)' })).toBeInTheDocument()
+      expect(from).toHaveBeenCalledWith('sheets')
+      expect(update).toHaveBeenCalledWith({ name: 'Tower A (east)' })
+      expect(eq).toHaveBeenCalledWith('id', 'sheet-1')
+      expect(store.getState().data!.sheet.name).toBe('Tower A (east)')
+    })
+
+    it('a failed rename shows an alert and keeps the old name', async () => {
+      const { client: c } = clientWithUpdate({ error: { message: 'rename boom' } })
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const { store } = await makeTestStore()
+      render(<SheetView client={c} sheetId="sheet-1" onBack={() => {}} store={store} />)
+      await screen.findByRole('grid')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: 'Rename sheet' }))
+      await user.type(screen.getByRole('textbox', { name: 'Sheet name' }), ' 2{Enter}')
+      expect(await screen.findByRole('alert')).toHaveTextContent('rename boom')
+      expect(store.getState().data!.sheet.name).toBe('Tower A')
+      await user.keyboard('{Escape}')
+      expect(screen.getByRole('heading', { name: 'Tower A' })).toBeInTheDocument()
+    })
+  })
+
   it('shows the load error as an alert', async () => {
     const persistence = makeFakePersistence()
     persistence.loadSheet.mockRejectedValue(new Error('permission denied for table sheets'))
