@@ -2,6 +2,7 @@ import { columnResizingFeature, columnSizingFeature, tableFeatures, type ColumnD
 import type { Scheduled } from '../../engine/schedule'
 import type { RowRecord } from '../../store/persistence'
 import type { Column, ColumnRole } from '../../model/validate'
+import { formulaDisplay, type FormulaCellResult } from '../../formula/sheetFormulas'
 
 export const gridFeatures = tableFeatures({ columnSizingFeature, columnResizingFeature })
 export type GridFeatures = typeof gridFeatures
@@ -18,6 +19,8 @@ export interface GridRow {
   scheduleError: string | null
   /** Predecessor text derived from the sheet's dependencies (never stored in cells). */
   predecessors: string
+  /** The evaluated formula in a cell of this row; null when the cell holds no evaluated formula. */
+  formulaOf?: (colId: string) => FormulaCellResult | null
 }
 
 export const ROW_NUMBER_COLUMN_ID = '__row'
@@ -77,7 +80,15 @@ export function displayText(col: Column, row: GridRow): string {
     if (row.isParent && col.role === 'duration') return `${sched.durationDays}d`
     if (row.isParent && col.role === 'percentComplete') return formatPercent(sched.percentComplete)
   }
+  const formula = row.formulaOf?.(col.id)
+  if (formula) return formulaDisplay(formula)
   const value = row.record.cells[col.id]
   if (col.role === 'percentComplete' && typeof value === 'number') return formatPercent(value)
   return toEditString(value)
+}
+
+/** The error message of a cell's formula, or undefined when it has none. */
+export function formulaError(col: Column, row: GridRow): string | undefined {
+  const formula = row.formulaOf?.(col.id)
+  return formula && !formula.ok ? formula.error : undefined
 }

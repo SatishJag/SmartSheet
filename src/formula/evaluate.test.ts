@@ -234,3 +234,27 @@ describe('errors', () => {
     expect(evaluate('=[A]+1', throwing).ok).toBe(false)
   })
 })
+
+describe('hardening', () => {
+  it('rejects nesting deeper than 100 with a clear error instead of overflowing the stack', () => {
+    expect(err('=' + '('.repeat(101) + '1' + ')'.repeat(101))).toBe('Formula is nested too deeply')
+    expect(err('=' + '-'.repeat(101) + '1')).toBe('Formula is nested too deeply')
+    expect(err('=' + 'IF(TRUE,'.repeat(101) + '1' + ',0)'.repeat(101))).toBe('Formula is nested too deeply')
+    expect(err('=' + '('.repeat(5000) + '1' + ')'.repeat(5000))).toBe('Formula is nested too deeply')
+    expect(ok('=' + '('.repeat(90) + '1' + ')'.repeat(90))).toBe(1)
+  })
+
+  it('NETDAYS never returns -0', () => {
+    const v = ok('=NETDAYS("2026-11-15","2026-11-14")') // Sun -> Sat: no weekdays
+    expect(Object.is(v, -0)).toBe(false)
+    expect(v).toBe(0)
+  })
+
+  it('compares two strictly numeric strings as numbers', () => {
+    const ctx = makeCtx({ A: ['10'], B: ['9'] })
+    expect(ok('=[A]>[B]', ctx)).toBe(true)
+    expect(ok('=[A]="10.0"', ctx)).toBe(true)
+    expect(ok('="abc"<"abd"')).toBe(true)
+    expect(ok('="10x">"9x"')).toBe(false) // not numeric: text order
+  })
+})

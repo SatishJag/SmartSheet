@@ -5,6 +5,7 @@ import type { SheetData } from '../../store/persistence'
 import { SheetStoreProvider } from '../../store/SheetStoreContext'
 import { COL, fixtureColumns, fsDep, makeRow, makeSheetData, makeTestStore } from '../../test/fixtures'
 import { GridView } from './GridView'
+import { buildDisplayRows } from './viewModel'
 
 async function renderGrid(data: SheetData = makeSheetData()) {
   const { store, persistence } = await makeTestStore(data)
@@ -339,6 +340,88 @@ describe('GridView rows', () => {
     expect(store.getState().data!.rows).toHaveLength(5)
     expect(screen.getByRole('grid')).toHaveAttribute('aria-rowcount', '6')
     expect(cell(5, 'Task')).toHaveTextContent('')
+  })
+})
+
+describe('GridView formulas', () => {
+  const formulaColumns = [
+    { id: 'task', title: 'Task', type: 'TEXT_NUMBER' as const },
+    { id: 'qty', title: 'Qty', type: 'TEXT_NUMBER' as const },
+    { id: 'cost', title: 'Cost', type: 'TEXT_NUMBER' as const },
+    { id: 'calc', title: 'Calc', type: 'TEXT_NUMBER' as const },
+    { id: 'start', title: 'Start', type: 'DATE' as const, role: 'start' as const },
+  ]
+  const formulaSheet = (calc: unknown[]) =>
+    makeSheetData({
+      columns: formulaColumns,
+      rows: calc.map((c, i) => makeRow(`f${i}`, `a${i}`, { task: `T${i + 1}`, qty: i + 1, cost: 10 * (i + 1), calc: c })),
+      dependencies: [],
+    })
+
+  it('shows evaluated results: arithmetic, SUM over a column, IF on the row', async () => {
+    await renderGrid(formulaSheet(['=1+2', '=SUM([Cost])', '=IF([Qty]>2,"big","small")', '=[Qty]>3']))
+    expect(cell(1, 'Calc')).toHaveTextContent(/^3$/)
+    expect(cell(2, 'Calc')).toHaveTextContent(/^100$/)
+    expect(cell(3, 'Calc')).toHaveTextContent(/^big$/)
+    expect(cell(4, 'Calc')).toHaveTextContent(/^TRUE$/)
+  })
+
+  it('the editor opens with the formula text, and a new formula shows its result', async () => {
+    const { user, setCell } = await renderGrid(formulaSheet(['=1+2']))
+    await user.dblClick(cell(1, 'Calc'))
+    const editor = screen.getByRole('textbox', { name: 'Calc' })
+    expect(editor).toHaveValue('=1+2')
+    await user.clear(editor)
+    await user.type(editor, '=[[Qty]*5{Enter}') // "[[" types a literal "["
+    expect(setCell).toHaveBeenCalledWith('f0', 'calc', '=[Qty]*5')
+    expect(cell(1, 'Calc')).toHaveTextContent(/^5$/)
+  })
+
+  it.each([
+    ['=1/0', 'Division by zero'],
+    ['=FOO(1)', "Unknown function 'FOO'"],
+    ['=[Nope]+1', "Unknown column 'Nope'"],
+  ])('%s shows #ERROR with the error marker and message', async (formula, message) => {
+    await renderGrid(formulaSheet([formula]))
+    const c = cell(1, 'Calc')
+    expect(c).toHaveTextContent(/^#ERROR/)
+    expect(c).toHaveAttribute('aria-invalid', 'true')
+    expect(c).toHaveAttribute('title', message)
+    expect(c).toHaveAccessibleDescription(message)
+  })
+
+  it('a self reference shows #CIRCULAR', async () => {
+    await renderGrid(formulaSheet(['=[Calc]+1']))
+    expect(cell(1, 'Calc')).toHaveTextContent(/^#CIRCULAR/)
+    expect(cell(1, 'Calc')).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('a formula in a schedule-role column is still rejected', async () => {
+    const { store } = await renderGrid(formulaSheet(['=1']))
+    expect(store.getState().setCell('f0', 'start', '=TODAY()')).toEqual({
+      ok: false,
+      error: 'Formulas are not allowed in start columns',
+    })
+  })
+
+  it('sorts and filters by the evaluated value', async () => {
+    // Raw text would sort =1+3, =2*100, =50-20; the values are 30, 4, 200.
+    const { store, user } = await renderGrid(formulaSheet(['=50-20', '=1+3', '=2*100']))
+    await user.click(within(header('Calc')).getByRole('button'))
+    const order = () =>
+      screen
+        .getAllByRole('row')
+        .slice(1)
+        .map((r) => within(r).getAllByRole('gridcell')[0].textContent)
+    expect(order()).toEqual(['T2', 'T1', 'T3']) // 4, 30, 200 numerically
+
+    const { data, scheduled } = store.getState()
+    const filtered = buildDisplayRows(data, scheduled, {
+      collapsed: new Set(),
+      sort: null,
+      filter: { colId: 'calc', op: 'greaterThan', value: '10' },
+    })
+    expect(filtered.map((r) => r.id)).toEqual(['f0', 'f2'])
   })
 })
 

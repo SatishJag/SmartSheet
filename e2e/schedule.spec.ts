@@ -31,6 +31,12 @@ test('predecessors drive the Gantt chart, invalid input is flagged, and everythi
   await editCell(page, 1, 'Duration', '3d')
   await editCell(page, 2, 'Task', 'Task 2')
   await editCell(page, 2, 'Duration', '2d')
+  // A formula in a text column shows its result; the editor keeps the formula.
+  const phase2 = await editCell(page, 2, 'Phase', '=2*21')
+  await expect(phase2).toHaveText('42')
+  await phase2.dblclick()
+  await expect(phase2.getByLabel('Phase', { exact: true })).toHaveValue('=2*21')
+  await page.keyboard.press('Escape')
   const pred2 = await editCell(page, 2, 'Predecessors', '1')
   await expect(pred2).toHaveText('1FS') // the app writes predecessors in canonical form
   await expect(await gridCell(page, 2, 'Start')).toHaveText('2026-11-12')
@@ -85,4 +91,5 @@ test('predecessors drive the Gantt chart, invalid input is flagged, and everythi
   await expect(page.getByRole('grid').getByRole('row')).toHaveCount(2)
   await expect(await gridCell(page, 1, 'Task')).toHaveText('Task 2')
   await expect(await gridCell(page, 1, 'Predecessors')).toHaveText('')
+  await expect(await gridCell(page, 1, 'Phase')).toHaveText('42')
 })

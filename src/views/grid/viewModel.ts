@@ -1,4 +1,5 @@
 import type { ScheduleResult } from '../../engine/schedule'
+import { formulaDisplay, formulaEvaluator } from '../../formula/sheetFormulas'
 import { fullOrder } from '../../model/hierarchy'
 import type { Column } from '../../model/validate'
 import type { SheetData } from '../../store/persistence'
@@ -59,6 +60,7 @@ export function buildGridRows(data: SheetData | null, scheduled: ScheduleResult)
   const schedErrors = new Map<string, string[]>()
   for (const e of scheduled.errors) schedErrors.set(e.rowId, [...(schedErrors.get(e.rowId) ?? []), e.message])
   const preds = predecessorStrings(data)
+  const formulas = formulaEvaluator(data) // lazy and memoized: only cells that are shown/sorted get evaluated
   return fullOrder(data.rows).map((id, i) => ({
     id,
     rowNumber: i + 1,
@@ -67,6 +69,7 @@ export function buildGridRows(data: SheetData | null, scheduled: ScheduleResult)
     scheduled: scheduled.byRow[id],
     scheduleError: schedErrors.get(id)?.join('; ') ?? null,
     predecessors: preds.get(id) ?? '',
+    formulaOf: (colId: string) => formulas(id, colId),
   }))
 }
 
@@ -157,6 +160,9 @@ type SortKey = { kind: 0; n: number } | { kind: 1 | 2; s: string }
 function sortKey(col: Column, row: GridRow): SortKey | null {
   let value: unknown = col.role === 'predecessor' ? row.predecessors : row.record.cells[col.id]
   if (row.scheduled && (col.role === 'start' || col.role === 'end')) value = row.scheduled[col.role]
+  // Formula cells sort by their evaluated value (errors by their #ERROR / #CIRCULAR text).
+  const formula = row.formulaOf?.(col.id)
+  if (formula) value = formula.ok ? (typeof formula.value === 'boolean' ? formulaDisplay(formula) : formula.value) : formula.display
   if (col.type === 'CHECKBOX') return { kind: 0, n: value === true ? 1 : 0 }
   if (typeof value === 'number') return Number.isFinite(value) ? { kind: 0, n: value } : null
   const s = toEditString(value).trim()

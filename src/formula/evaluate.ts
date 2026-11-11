@@ -121,9 +121,23 @@ function describe(t: Token): string {
   }
 }
 
+/** Deepest nesting (parentheses, function calls, unary minus) a formula may use. */
+const MAX_DEPTH = 100
+
 class Parser {
   private pos = 0
+  private depth = 0
   constructor(private readonly tokens: Token[]) {}
+
+  /** Runs `parse` one nesting level deeper, failing cleanly past MAX_DEPTH (no stack overflow). */
+  private nested<T>(parse: () => T): T {
+    if (++this.depth > MAX_DEPTH) fail('Formula is nested too deeply')
+    try {
+      return parse()
+    } finally {
+      this.depth--
+    }
+  }
 
   parse(): Node {
     const node = this.comparison()
@@ -182,7 +196,7 @@ class Parser {
   private unary(): Node {
     if (this.isOp('-')) {
       this.next()
-      return { kind: 'neg', operand: this.unary() }
+      return { kind: 'neg', operand: this.nested(() => this.unary()) }
     }
     return this.primary()
   }
@@ -203,10 +217,10 @@ class Parser {
           if (this.isOp(')')) {
             this.next()
           } else {
-            args.push(this.comparison())
+            args.push(this.nested(() => this.comparison()))
             while (this.isOp(',')) {
               this.next()
-              args.push(this.comparison())
+              args.push(this.nested(() => this.comparison()))
             }
             this.expectOp(')')
           }
@@ -219,7 +233,7 @@ class Parser {
       }
       case 'op':
         if (t.value === '(') {
-          const inner = this.comparison()
+          const inner = this.nested(() => this.comparison())
           this.expectOp(')')
           return inner
         }
@@ -265,9 +279,17 @@ function checkFinite(n: number): number {
   return n
 }
 
+const STRICT_NUMERIC = /^[+-]?(\d+\.?\d*|\.\d+)$/
+const isNumericString = (s: string) => STRICT_NUMERIC.test(s.trim())
+
 function compare(op: string, a: FormulaValue, b: FormulaValue): boolean {
   let result: number | null
-  if (typeof a === 'string' && typeof b === 'string') {
+  if (typeof a === 'string' && typeof b === 'string' && isNumericString(a) && isNumericString(b)) {
+    // Two numbers stored as text ("10" vs "9") compare as numbers, not lexicographically.
+    const na = Number(a)
+    const nb = Number(b)
+    result = na < nb ? -1 : na > nb ? 1 : 0
+  } else if (typeof a === 'string' && typeof b === 'string') {
     result = a < b ? -1 : a > b ? 1 : 0
   } else if (typeof a === 'boolean' && typeof b === 'boolean') {
     result = Number(a) - Number(b)
@@ -314,7 +336,7 @@ function parseIsoDate(value: FormulaValue): number {
 
 /** Mon-Fri days strictly after day d1 up to and including d2 (day numbers since epoch). */
 function weekdaysBetween(d1: number, d2: number): number {
-  if (d2 < d1) return -weekdaysBetween(d2, d1)
+  if (d2 < d1) return -weekdaysBetween(d2, d1) || 0 // never -0
   const span = d2 - d1
   const fullWeeks = Math.floor(span / 7)
   let count = fullWeeks * 5

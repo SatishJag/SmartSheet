@@ -5,7 +5,16 @@ import type { Column } from '../../model/validate'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
 import { ConfirmDialog } from '../ConfirmDialog'
 import { CellEditor, CheckboxCell, type CommitReason } from './cellEditors'
-import { buildColumnDefs, displayText, editString, gridFeatures, isEditable, ROW_NUMBER_COLUMN_ID, type GridRow } from './columns'
+import {
+  buildColumnDefs,
+  displayText,
+  editString,
+  formulaError,
+  gridFeatures,
+  isEditable,
+  ROW_NUMBER_COLUMN_ID,
+  type GridRow,
+} from './columns'
 import { FilterBar } from './FilterBar'
 import { HierarchyCell } from './HierarchyCell'
 import { PredecessorCell } from './PredecessorCell'
@@ -252,7 +261,8 @@ export function GridView({ viewportHeight }: GridViewProps) {
 
   function renderCell(row: ViewRow, col: Column, idx: number) {
     const key = `${row.id}:${col.id}`
-    const error = errorByCell.get(key)
+    // A validation error from the last edit wins; otherwise a formula that fails to evaluate.
+    const error = errorByCell.get(key) ?? formulaError(col, row)
     const isActive = active?.rowId === row.id && active.colId === col.id
     const editable = isEditable(col, row)
     const errorId = error ? `cell-error-${row.id}-${col.id}` : undefined
