@@ -65,7 +65,64 @@ const EMPTY_SCHEDULE: ScheduleResult = { byRow: {}, errors: [] }
 
 function computeSchedule(data: SheetData): ScheduleResult {
   const input = toSchedInput(data)
-  return input ? schedule(input.rows, input.deps, input.calendar) : EMPTY_SCHEDULE
+  if (!input) return EMPTY_SCHEDULE
+  const result = schedule(input.rows, input.deps, input.calendar)
+  if (result.errors.length === 0) return result
+  // The engine names rows by id; users see row numbers.
+  const nums = rowNumbers(data)
+  const row = (id: string) => (nums.has(id) ? `row ${nums.get(id)}` : id)
+  const named = (message: string) => {
+    let m = /^Predecessor (\S+) could not be scheduled$/.exec(message)
+    if (m) return `Predecessor ${row(m[1])} could not be scheduled`
+    m = /^Dependency cycle: (.+)$/.exec(message)
+    if (m) return `Dependency cycle: ${m[1].split(' -> ').map(row).join(' -> ')}`
+    return message
+  }
+  return { ...result, errors: result.errors.map((e) => ({ ...e, message: named(e.message) })) }
+}
+
+/** Every row's parent link as an edge child -> parent, exactly as schedule() adds them. */
+function hierarchyEdges(rows: readonly RowNode[]): SchedDep[] {
+  const ids = new Set(rows.map((r) => r.id))
+  return rows.flatMap((r) =>
+    r.parentId !== null && ids.has(r.parentId) ? [{ predecessorId: r.id, successorId: r.parentId, type: 'FS' as const, lagMinutes: 0 }] : [],
+  )
+}
+
+/** True if `ancestor` is a strict ancestor of `id` in `rows`. */
+function isAncestor(parentOf: Map<string, string | null>, ancestor: string, id: string): boolean {
+  const seen = new Set<string>()
+  for (let p = parentOf.get(id) ?? null; p !== null && !seen.has(p); p = parentOf.get(p) ?? null) {
+    if (p === ancestor) return true
+    seen.add(p)
+  }
+  return false
+}
+
+/**
+ * A cycle in the dependency graph plus the implicit child -> parent edges the scheduler adds,
+ * or null. `pure` is true when every edge of the found cycle is a dependency; otherwise `dep` is
+ * a dependency of the cycle whose rows are ancestor and descendant (when there is one).
+ */
+function findScheduleCycle(
+  deps: SchedDep[],
+  rows: readonly RowNode[],
+): { path: string[]; pure: boolean; dep: SchedDep | null; parentOf: Map<string, string | null> } | null {
+  const path = findCycle([...deps, ...hierarchyEdges(rows)])
+  if (!path) return null
+  const depKeys = new Set(deps.map((d) => `${d.predecessorId}>${d.successorId}`))
+  const closed = [...path, path[0]]
+  const pure = closed.slice(1).every((to, i) => depKeys.has(`${closed[i]}>${to}`))
+  const parentOf = new Map(rows.map((r) => [r.id, r.parentId]))
+  const members = new Set(path)
+  const dep =
+    deps.find(
+      (d) =>
+        members.has(d.predecessorId) &&
+        members.has(d.successorId) &&
+        (isAncestor(parentOf, d.predecessorId, d.successorId) || isAncestor(parentOf, d.successorId, d.predecessorId)),
+    ) ?? null
+  return { path, pure, dep, parentOf }
 }
 
 /** At most one dependency links a (predecessor, successor) pair, whatever its type or lag. */
@@ -246,12 +303,23 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       set({ data, scheduled: computeSchedule(data), ...extra })
     }
 
-    /** Apply a hierarchy operation; a no-op (same array) does nothing at all. */
-    function applyTree(op: (rows: RowNode[]) => RowNode[]): void {
+    /**
+     * Apply a hierarchy operation; a no-op (same array) does nothing at all. A change that would
+     * make a task depend on its own parent or sub-task (a cycle through the scheduler's
+     * child -> parent edges) is refused with a notice instead.
+     */
+    function applyTree(verb: string, op: (rows: RowNode[]) => RowNode[]): void {
       const data = get().data
       if (!data) return
       const next = op(data.rows)
       if (next === data.rows) return
+      if (data.sheet.dependenciesEnabled) {
+        const problem = treeCycleNotice(data, next, verb) ?? newSummaryWithPredecessors(data, next, verb)
+        if (problem) {
+          set({ notices: [...get().notices, problem] })
+          return
+        }
+      }
       const before = new Map(data.rows.map((r) => [r.id, r]))
       const changed: string[] = []
       for (const r of next) {
@@ -264,13 +332,54 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
 
     const isParent = (data: SheetData, id: string) => data.rows.some((r) => r.parentId === id)
 
-    /** The cycle error for a candidate dependency set, naming rows by number; null if acyclic. */
+    /**
+     * The cycle error for a candidate dependency set, naming rows by number; null if acyclic.
+     * Hierarchy-aware: a parent's dates come from its children, so depending on one's own
+     * parent or sub-task is a cycle too.
+     */
     function cycleError(data: SheetData, deps: SchedDep[]): string | null {
-      const cycle = findCycle(deps)
+      const cycle = findScheduleCycle(deps, data.rows)
       if (!cycle) return null
       const nums = rowNumbers(data)
-      const path = [...cycle, cycle[0]].map((id) => `row ${nums.get(id) ?? '?'}`).join(' -> ')
-      return `Dependency would create a cycle: ${path}`
+      const label = (id: string) => `row ${nums.get(id) ?? '?'}`
+      if (cycle.pure) return `Dependency would create a cycle: ${[...cycle.path, cycle.path[0]].map(label).join(' -> ')}`
+      const pair = cycle.dep ? [cycle.dep.predecessorId, cycle.dep.successorId] : [...cycle.path, cycle.path[0]]
+      return `A task cannot depend on its own parent or sub-task (${pair.map(label).join(' -> ')})`
+    }
+
+    /**
+     * A tree change must not turn a row with predecessors into a summary (parent) row: summary
+     * rows take their dates from their children and cannot have predecessors.
+     */
+    function newSummaryWithPredecessors(data: SheetData, next: readonly RowNode[], verb: string): string | null {
+      const wasParent = new Set(data.rows.map((r) => r.parentId))
+      const driven = new Set(data.dependencies.map((d) => d.successorId))
+      const row = next.find((r) => r.parentId !== null && !wasParent.has(r.parentId) && driven.has(r.parentId))
+      if (!row) return null
+      const n = rowNumbers(data).get(row.parentId!)
+      return `Can't ${verb}: row ${n} has predecessors, and summary rows cannot have predecessors`
+    }
+
+    /** Why a tree change (rows -> next) cannot be applied, or null when it can. */
+    function treeCycleNotice(data: SheetData, next: readonly RowNode[], verb: string): string | null {
+      const cycle = findScheduleCycle(data.dependencies, next)
+      if (!cycle) return null
+      const nums = rowNumbers(data) // the numbers the user sees now
+      const label = (id: string) => `row ${nums.get(id) ?? '?'}`
+      const d = cycle.dep
+      if (d) {
+        const pred = d.predecessorId
+        const succ = d.successorId
+        let relation: string
+        if (isAncestor(cycle.parentOf, pred, succ)) {
+          relation = cycle.parentOf.get(succ) === pred ? 'its parent' : 'one of its parent rows'
+        } else {
+          relation = cycle.parentOf.get(pred) === succ ? 'its sub-task' : 'one of its sub-tasks'
+        }
+        return `Can't ${verb}: ${label(succ)} depends on ${label(pred)}, which would become ${relation}`
+      }
+      const path = [...cycle.path, cycle.path[0]].map(label).join(' -> ')
+      return `Can't ${verb}: it would make a task depend on its own parent or sub-task (${path})`
     }
 
     /** Replace the cell's error (if any) with `message`, or clear it when `message` is null. */
@@ -354,15 +463,15 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       indentRow(id) {
-        applyTree((rows) => indent(rows, id))
+        applyTree('indent', (rows) => indent(rows, id))
       },
 
       outdentRow(id) {
-        applyTree((rows) => outdent(rows, id))
+        applyTree('outdent', (rows) => outdent(rows, id))
       },
 
       moveRow(id, afterId, newParentId) {
-        applyTree((rows) => moveRowInTree(rows, id, afterId, newParentId))
+        applyTree('move', (rows) => moveRowInTree(rows, id, afterId, newParentId))
       },
 
       deleteRow(id) {
