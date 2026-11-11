@@ -10,7 +10,18 @@ import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
 import { fixedViewport, measuredViewport } from '../grid/viewport'
 import { DependencyArrows, type BarEdges } from './arrows'
 import { barKind, GanttBar, ROW_HEIGHT } from './bars'
-import { barGeometry, computeRange, dayIndex, daysBetween, listDays, monthSegments, utcToday, workingDaysInclusive } from './timeScale'
+import {
+  barGeometry,
+  capRange,
+  computeRange,
+  dayIndex,
+  daysBetween,
+  listDays,
+  monthSegments,
+  utcToday,
+  workingDaysInclusive,
+  type DayRange,
+} from './timeScale'
 import { useBarDrag, type DragMode, type DragPreview } from './useBarDrag'
 import './gantt.css'
 
@@ -125,7 +136,7 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
   // not shift the whole chart under it. The drag preview counts too: a bar dragged past either
   // end extends the range instead of being clipped.
   const originRef = useRef<string | null>(null)
-  const range = useMemo(() => {
+  const freshRange = useMemo(() => {
     const spans: { start: string; end: string }[] = Object.values(scheduled.byRow)
     const p = drag.preview
     const s = p && cal ? scheduled.byRow[p.rowId] : undefined
@@ -134,9 +145,67 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
     const prev = originRef.current
     const start = prev !== null && prev < fresh.start ? prev : fresh.start
     const end = shiftIso(fresh.start, fresh.days - 1)
-    return { start, days: daysBetween(start, end) + 1 }
+    // A schedule spanning more than MAX_RANGE_DAYS is clipped to its earliest window.
+    return capRange({ start, days: daysBetween(start, end) + 1, limited: fresh.limited })
   }, [scheduled.byRow, todayIso, drag.preview, cal])
+  // Keep the range's identity while its value is unchanged so the header and shading stay memoized.
+  const { start: rangeStart, days: rangeDays, limited } = freshRange
+  const range = useMemo<DayRange>(() => ({ start: rangeStart, days: rangeDays }), [rangeStart, rangeDays])
   const days = useMemo(() => listDays(range), [range])
+  const timelineWidth = range.days * dayWidth
+
+  // The day header and non-working shading are the largest node sets (one per day): build them
+  // only when the range, day width or calendar changes, not on every row/collapse/drag update.
+  const dateHeader = useMemo(
+    () =>
+      cal ? (
+        <svg className="gantt-dates" width={timelineWidth} height={2 * HEADER_ROW} aria-hidden="true">
+          {monthSegments(range).map((m) => (
+            <g key={m.label}>
+              <rect className="gantt-month" x={m.startIndex * dayWidth} y={0} width={m.days * dayWidth} height={HEADER_ROW} />
+              <text x={m.startIndex * dayWidth + 4} y={HEADER_ROW - 6}>
+                {m.label}
+              </text>
+            </g>
+          ))}
+          {days.map((iso, i) => (
+            <text
+              key={iso}
+              data-date={iso}
+              className={isWorkingDay(cal, iso) ? 'gantt-day' : 'gantt-day is-nonworking'}
+              x={i * dayWidth + dayWidth / 2}
+              y={2 * HEADER_ROW - 6}
+              textAnchor="middle"
+            >
+              {Number(iso.slice(8))}
+            </text>
+          ))}
+        </svg>
+      ) : null,
+    [range, days, dayWidth, cal, timelineWidth],
+  )
+  const shading = useMemo(
+    () =>
+      cal ? (
+        <g className="gantt-shading">
+          {days.map((iso, i) =>
+            isWorkingDay(cal, iso) ? null : (
+              <rect
+                key={iso}
+                data-testid="nonworking-day"
+                data-date={iso}
+                className="gantt-nonworking"
+                x={i * dayWidth}
+                y={0}
+                width={dayWidth}
+                height="100%"
+              />
+            ),
+          )}
+        </g>
+      ) : null,
+    [days, dayWidth, cal],
+  )
 
   const scrollRef = useRef<HTMLDivElement>(null)
   // When the origin moves earlier, scroll by the same amount so nothing jumps on screen.
@@ -183,7 +252,6 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
   const first = items[0]?.index ?? 0
   const last = items[items.length - 1]?.index ?? -1
   const totalHeight = virtualizer.getTotalSize()
-  const timelineWidth = range.days * dayWidth
   const todayIdx = dayIndex(range.start, todayIso)
 
   const shown = (rowId: string): Scheduled | null => {
@@ -211,34 +279,18 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
   return (
     <section className="gantt" aria-label="Gantt chart">
       {statusRegion}
+      {limited && (
+        <p className="gantt-limit-note" role="note">
+          Timeline limited to 10 years
+        </p>
+      )}
       <div ref={scrollRef} className="gantt-scroll" style={viewportHeight !== undefined ? { height: viewportHeight } : undefined}>
         <div className="gantt-inner" style={{ width: LABEL_WIDTH + timelineWidth }}>
           <div className="gantt-header" style={{ height: 2 * HEADER_ROW }}>
             <div className="gantt-corner" style={{ width: LABEL_WIDTH }}>
               Task
             </div>
-            <svg className="gantt-dates" width={timelineWidth} height={2 * HEADER_ROW} aria-hidden="true">
-              {monthSegments(range).map((m) => (
-                <g key={m.label}>
-                  <rect className="gantt-month" x={m.startIndex * dayWidth} y={0} width={m.days * dayWidth} height={HEADER_ROW} />
-                  <text x={m.startIndex * dayWidth + 4} y={HEADER_ROW - 6}>
-                    {m.label}
-                  </text>
-                </g>
-              ))}
-              {days.map((iso, i) => (
-                <text
-                  key={iso}
-                  data-date={iso}
-                  className={isWorkingDay(cal, iso) ? 'gantt-day' : 'gantt-day is-nonworking'}
-                  x={i * dayWidth + dayWidth / 2}
-                  y={2 * HEADER_ROW - 6}
-                  textAnchor="middle"
-                >
-                  {Number(iso.slice(8))}
-                </text>
-              ))}
-            </svg>
+            {dateHeader}
           </div>
           <div className="gantt-body" style={{ height: totalHeight }}>
             <div className="gantt-labels" style={{ width: LABEL_WIDTH, height: totalHeight }}>
@@ -276,22 +328,7 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
               })}
             </div>
             <svg className="gantt-timeline" width={timelineWidth} height={totalHeight}>
-              <g className="gantt-shading">
-                {days.map((iso, i) =>
-                  isWorkingDay(cal, iso) ? null : (
-                    <rect
-                      key={iso}
-                      data-testid="nonworking-day"
-                      data-date={iso}
-                      className="gantt-nonworking"
-                      x={i * dayWidth}
-                      y={0}
-                      width={dayWidth}
-                      height={totalHeight}
-                    />
-                  ),
-                )}
-              </g>
+              {shading}
               {todayIdx >= 0 && todayIdx < range.days && (
                 <line
                   data-testid="today-line"

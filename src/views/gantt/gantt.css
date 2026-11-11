@@ -12,6 +12,13 @@
   font-size: 0.9em;
 }
 
+.gantt-limit-note {
+  margin: 0;
+  padding: 2px 4px;
+  color: #52606d;
+  font-size: 0.9em;
+}
+
 .gantt-empty {
   padding: 24px;
   color: #52606d;

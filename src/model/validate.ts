@@ -42,6 +42,16 @@ const FORMULA_BLOCKED_ROLES: readonly ColumnRole[] = ['start', 'end', 'duration'
 const ok = (value: unknown): ValidateResult => ({ ok: true, value })
 const fail = (error: string): ValidateResult => ({ ok: false, error })
 
+/** Earliest and latest dates a DATE cell accepts (keeps the Gantt timeline and scheduler bounded). */
+export const MIN_DATE = '1970-01-01'
+export const MAX_DATE = '2100-12-31'
+const DATE_RANGE_MSG = `Enter a date between ${MIN_DATE} and ${MAX_DATE}`
+
+/** True for a real calendar date written YYYY-MM-DD within MIN_DATE..MAX_DATE. */
+export function isAcceptedDate(s: string): boolean {
+  return isRealDate(s) && s >= MIN_DATE && s <= MAX_DATE
+}
+
 function isRealDate(s: string): boolean {
   const m = ISO_DATE.exec(s)
   if (!m) return false
@@ -89,7 +99,8 @@ export function validateCell(col: Column, raw: string, ctx: ValidateContext): Va
       return ok(NUMERIC.test(text) ? Number(text) : text)
     }
     case 'DATE':
-      return isRealDate(text) ? ok(text) : fail('Enter a valid date as YYYY-MM-DD')
+      if (!isRealDate(text)) return fail('Enter a valid date as YYYY-MM-DD')
+      return isAcceptedDate(text) ? ok(text) : fail(DATE_RANGE_MSG)
     case 'CHECKBOX': {
       const lower = text.toLowerCase()
       if (lower === 'true') return ok(true)

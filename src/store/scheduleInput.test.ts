@@ -80,6 +80,22 @@ describe('toSchedInput', () => {
     expect(input.rows[0].manualStart).toBeNull()
   })
 
+  it('ignores a loaded start date outside 1970-01-01..2100-12-31 (treated as no start)', () => {
+    const input = toSchedInput(
+      sheet({
+        rows: [
+          row('r1', 'a0', { s: '9999-12-31' }),
+          row('r2', 'a1', { s: '1969-12-31' }),
+          row('r3', 'a2', { s: '2100-12-31' }),
+          row('r4', 'a3', { s: '1970-01-01' }),
+          row('r5', 'a4', { s: '2026-02-30' }),
+        ],
+        dependencies: [],
+      }),
+    )!
+    expect(input.rows.map((r) => r.manualStart)).toEqual([null, null, '2100-12-31', '1970-01-01', null])
+  })
+
   it('drops dependencies when dependencies are disabled', () => {
     const base = sheet()
     const input = toSchedInput({ ...base, sheet: { ...base.sheet, dependenciesEnabled: false } })!

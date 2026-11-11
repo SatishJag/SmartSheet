@@ -68,6 +68,14 @@ describe('DATE', () => {
     expect(validateCell(col('DATE'), '2028-02-29', ctx).ok).toBe(true)
     expect(validateCell(col('DATE'), '2026-02-29', ctx).ok).toBe(false)
   })
+  it('accepts dates only from 1970-01-01 to 2100-12-31', () => {
+    expect(validateCell(col('DATE'), '1970-01-01', ctx).ok).toBe(true)
+    expect(validateCell(col('DATE'), '2100-12-31', ctx).ok).toBe(true)
+    const msg = { ok: false, error: 'Enter a date between 1970-01-01 and 2100-12-31' }
+    expect(validateCell(col('DATE'), '9999-12-31', ctx)).toEqual(msg)
+    expect(validateCell(col('DATE'), '1969-12-31', ctx)).toEqual(msg)
+    expect(validateCell(role('DATE', 'start'), '2101-01-01', ctx)).toEqual(msg)
+  })
   it('start/end roles follow the same rule', () => {
     expect(validateCell(role('DATE', 'start'), '2026-11-09', ctx).ok).toBe(true)
     expect(validateCell(role('DATE', 'end'), 'banana', ctx).ok).toBe(false)

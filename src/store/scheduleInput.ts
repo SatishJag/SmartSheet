@@ -2,9 +2,8 @@ import { parseDuration } from '../engine/duration'
 import type { SchedDep, SchedRow } from '../engine/schedule'
 import type { Calendar } from '../engine/types'
 import { fullOrder } from '../model/hierarchy'
+import { isAcceptedDate } from '../model/validate'
 import type { SheetData } from './persistence'
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
  * Builds the scheduling engine input from sheet data. Pure.
@@ -33,7 +32,8 @@ export function toSchedInput(data: SheetData): { rows: SchedRow[]; deps: SchedDe
       parentId: r.parentId,
       durationMinutes: duration ? duration.minutes : oneDay,
       elapsed: duration ? duration.elapsed : false,
-      manualStart: typeof start === 'string' && ISO_DATE.test(start) ? start : null,
+      // Out-of-range or impossible dates (only possible in data written outside the app) count as no start.
+      manualStart: typeof start === 'string' && isAcceptedDate(start) ? start : null,
       percentComplete: typeof pct === 'number' && Number.isFinite(pct) ? pct : 0,
     }
   })

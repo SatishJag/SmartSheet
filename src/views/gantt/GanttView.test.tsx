@@ -148,6 +148,23 @@ describe('GanttView timeline', () => {
     expect(screen.getByText('Add a Start column to see the Gantt chart')).toBeInTheDocument()
   })
 
+  it('limits a schedule spanning more than 10 years to its earliest 3,650 days with a visible note', async () => {
+    await renderGantt(
+      sheet([
+        ['a', 'Dig', '2026-11-09', '3d'],
+        ['b', 'Far', '2100-12-31', '1d'],
+      ]),
+    )
+    expect(screen.getByText('Timeline limited to 10 years')).toBeInTheDocument()
+    expect(document.querySelectorAll('.gantt-day').length).toBe(3650)
+    expect(bar('Dig')).toBeInTheDocument()
+  })
+
+  it('shows no limit note for a normal schedule', async () => {
+    await renderGantt(sheet([['a', 'Dig', '2026-11-09', '3d']]))
+    expect(screen.queryByText('Timeline limited to 10 years')).toBeNull()
+  })
+
   it('hides child bars when a parent is collapsed', async () => {
     await renderGantt()
     const toggle = screen.getByRole('button', { name: 'Collapse Site preparation' })

@@ -12,11 +12,21 @@ const MIN_RANGE_DAYS = 30
 const LEAD_DAYS = 3
 const TAIL_DAYS = 14
 
+/** The most calendar days the timeline draws (about 10 years); longer schedules are clipped. */
+export const MAX_RANGE_DAYS = 3650
+
 export interface DayRange {
   /** First day shown. */
   start: string
   /** Number of calendar days shown. */
   days: number
+  /** True when the schedule spans more than MAX_RANGE_DAYS and the range was clipped to its earliest window. */
+  limited?: boolean
+}
+
+/** Clips a range to MAX_RANGE_DAYS from its start, flagging it when clipped. */
+export function capRange(range: DayRange): DayRange {
+  return range.days > MAX_RANGE_DAYS ? { start: range.start, days: MAX_RANGE_DAYS, limited: true } : range
 }
 
 const toMs = (iso: string) => {
@@ -57,7 +67,7 @@ export function workingDaysInclusive(cal: Calendar, start: string, end: string):
 }
 
 /**
- * The days to draw: earliest start - 3 to latest end + 14, at least 30 days.
+ * The days to draw: earliest start - 3 to latest end + 14, at least 30 days, at most MAX_RANGE_DAYS.
  * With nothing scheduled: today - 3 to today + 27.
  */
 export function computeRange(spans: { start: string; end: string }[], today: string): DayRange {
@@ -70,7 +80,7 @@ export function computeRange(spans: { start: string; end: string }[], today: str
   }
   const start = shiftIso(min, -LEAD_DAYS)
   const days = daysBetween(start, shiftIso(max, TAIL_DAYS)) + 1
-  return { start, days: Math.max(MIN_RANGE_DAYS, days) }
+  return capRange({ start, days: Math.max(MIN_RANGE_DAYS, days) })
 }
 
 export function listDays(range: DayRange): string[] {

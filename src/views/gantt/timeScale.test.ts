@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { defaultCalendar } from '../../engine/calendar'
-import { barGeometry, computeRange, dayIndex, daysBetween, listDays, monthSegments, workingDaysInclusive, xOf } from './timeScale'
+import { barGeometry, computeRange, dayIndex, MAX_RANGE_DAYS, daysBetween, listDays, monthSegments, workingDaysInclusive, xOf } from './timeScale'
 
 describe('timeScale', () => {
   it('counts calendar days between ISO dates, across months and DST-free UTC', () => {
@@ -46,6 +46,19 @@ describe('timeScale', () => {
       days: daysBetween('2026-11-06', '2027-01-29') + 1 + 14,
     })
     expect(computeRange([], '2026-11-10')).toEqual({ start: '2026-11-07', days: 31 })
+  })
+
+  it('caps the range at 3,650 days, keeping the earliest window, and flags it as limited', () => {
+    const r = computeRange(
+      [
+        { start: '2026-11-09', end: '2026-11-11' },
+        { start: '2099-01-01', end: '2099-01-05' },
+      ],
+      '2026-01-01',
+    )
+    expect(r).toEqual({ start: '2026-11-06', days: MAX_RANGE_DAYS, limited: true })
+    expect(MAX_RANGE_DAYS).toBe(3650)
+    expect(computeRange([{ start: '2026-11-09', end: '2026-11-11' }], '2026-01-01').limited).toBeUndefined()
   })
 
   it('lists days and month segments', () => {
