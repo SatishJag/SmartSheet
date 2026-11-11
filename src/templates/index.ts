@@ -1,16 +1,21 @@
 import type { SheetData } from '../store/persistence'
 import { punchListTemplate } from './punchList'
 import { projectScheduleTemplate, type SheetTemplate } from './projectSchedule'
+import { simpleListTemplate } from './simpleList'
 
-export type TemplateId = 'project-schedule' | 'punch-list'
+export type TemplateId = 'project-schedule' | 'punch-list' | 'simple-list'
 export type { SheetTemplate } from './projectSchedule'
 export { STATUS_OPTIONS, TRADE_OPTIONS } from './presets'
-export { projectScheduleTemplate, punchListTemplate }
+export { projectScheduleTemplate, punchListTemplate, simpleListTemplate }
 
+/** In picker order; the first is the default. */
 const BY_ID: Record<TemplateId, SheetTemplate> = {
   'project-schedule': projectScheduleTemplate,
   'punch-list': punchListTemplate,
+  'simple-list': simpleListTemplate,
 }
+
+export const DEFAULT_TEMPLATE_ID: TemplateId = 'project-schedule'
 
 export interface TemplateInfo {
   id: TemplateId

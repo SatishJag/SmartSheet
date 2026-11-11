@@ -192,50 +192,37 @@ describe('SheetList', () => {
     expect(screen.queryByText('No sheets yet')).not.toBeInTheDocument()
   })
 
-  it('New sheet inserts with owner_id and opens the returned id', async () => {
-    const onOpen = vi.fn()
-    const { client, insert, insertSelect } = makeSheetsClient({})
-    render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'New sheet' }))
-
-    await waitFor(() => expect(onOpen).toHaveBeenCalledWith('new-id'))
-    expect(insert).toHaveBeenCalledWith({ name: 'Untitled sheet', owner_id: 'user-1' })
-    expect(insertSelect).toHaveBeenCalledWith('id')
-  })
-
   it('shows an alert when listing fails', async () => {
     const { client } = makeSheetsClient({ list: { data: null, error: { message: 'list boom' } } })
     render(<SheetList client={client} userId="user-1" onOpen={() => {}} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('list boom')
   })
 
-  it('shows an alert and does not open when insert fails', async () => {
-    const onOpen = vi.fn()
-    const { client } = makeSheetsClient({
-      insert: { data: null, error: { message: 'insert boom' } },
-    })
-    render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'New sheet' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('insert boom')
-    expect(onOpen).not.toHaveBeenCalled()
-  })
-
   describe('templates', () => {
     const insertTemplate = vi.mocked(insertSheetFromTemplate)
 
-    it('has a Template select defaulting to Blank sheet, then the templates', async () => {
+    it('has a Template select with the three templates only, defaulting to Project schedule', async () => {
       const { client } = makeSheetsClient({})
       render(<SheetList client={client} userId="user-1" onOpen={() => {}} />)
       const select = await screen.findByLabelText('Template')
-      expect(select).toHaveValue('')
+      expect(select).toHaveValue('project-schedule')
       expect(Array.from((select as HTMLSelectElement).options).map((o) => [o.value, o.textContent])).toEqual([
-        ['', 'Blank sheet'],
         ['project-schedule', 'Project schedule'],
         ['punch-list', 'Punch list'],
+        ['simple-list', 'Simple list'],
       ])
+    })
+
+    it('New sheet with the default creates a Project schedule (never an empty, column-less sheet)', async () => {
+      insertTemplate.mockReset()
+      insertTemplate.mockResolvedValue('tpl-default')
+      const onOpen = vi.fn()
+      const { client, insert } = makeSheetsClient({})
+      render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
+      fireEvent.click(await screen.findByRole('button', { name: 'New sheet' }))
+      await waitFor(() => expect(onOpen).toHaveBeenCalledWith('tpl-default'))
+      expect(insertTemplate).toHaveBeenCalledWith(client, 'project-schedule', 'user-1')
+      expect(insert).not.toHaveBeenCalled()
     })
 
     it('creating from a template calls the template insertion and opens the id', async () => {

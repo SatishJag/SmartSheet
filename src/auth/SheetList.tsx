@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { TEMPLATES, type TemplateId } from '../templates'
+import { DEFAULT_TEMPLATE_ID, TEMPLATES, type TemplateId } from '../templates'
 import { insertSheetFromTemplate } from '../templates/insertTemplate'
 import { fetchAllPages } from '../store/paging'
 
@@ -20,7 +20,7 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
   const [sheets, setSheets] = useState<SheetRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
-  const [templateId, setTemplateId] = useState('')
+  const [templateId, setTemplateId] = useState<TemplateId>(DEFAULT_TEMPLATE_ID)
   const inFlight = useRef(false)
   const templateSelectId = useId()
 
@@ -53,17 +53,8 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
     setError(null)
     setCreating(true)
     try {
-      if (templateId) {
-        onOpen(await insertSheetFromTemplate(client, templateId as TemplateId, userId))
-      } else {
-        const { data, error: err } = await client
-          .from('sheets')
-          .insert({ name: 'Untitled sheet', owner_id: userId })
-          .select('id')
-          .single()
-        if (err) setError(err.message)
-        else onOpen((data as { id: string }).id)
-      }
+      // Every new sheet starts from a template, so it always has columns to work with.
+      onOpen(await insertSheetFromTemplate(client, templateId, userId))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the sheet')
     } finally {
@@ -81,10 +72,9 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
           <select
             id={templateSelectId}
             value={templateId}
-            onChange={(e) => setTemplateId(e.target.value)}
+            onChange={(e) => setTemplateId(e.target.value as TemplateId)}
             disabled={creating}
           >
-            <option value="">Blank sheet</option>
             {TEMPLATES.map((t) => (
               <option key={t.id} value={t.id} title={t.description}>
                 {t.name}

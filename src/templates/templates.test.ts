@@ -10,6 +10,7 @@ import { createSheetFromTemplate, TEMPLATES } from './index'
 import { STATUS_OPTIONS, TRADE_OPTIONS } from './presets'
 import { projectScheduleTemplate } from './projectSchedule'
 import { punchListTemplate } from './punchList'
+import { simpleListTemplate } from './simpleList'
 
 const summarize = (cols: { title: string; type: string; role?: string }[]) =>
   cols.map((c) => [c.title, c.type, c.role ?? null])
@@ -83,16 +84,31 @@ describe('punch list template', () => {
   })
 })
 
+describe('simple list template', () => {
+  it('has Task, Status (status role) and Notes, and no dependencies', () => {
+    expect(summarize(simpleListTemplate.columns)).toEqual([
+      ['Task', 'TEXT_NUMBER', null],
+      ['Status', 'PICKLIST', 'status'],
+      ['Notes', 'TEXT_NUMBER', null],
+    ])
+    expect(simpleListTemplate.name).toBe('Simple list')
+    expect(simpleListTemplate.columns[1].options).toEqual([...STATUS_OPTIONS])
+    expect(simpleListTemplate.dependenciesEnabled).toBe(false)
+    expect(simpleListTemplate.calendar).toEqual(CAL)
+  })
+})
+
 describe('TEMPLATES and createSheetFromTemplate', () => {
-  it('lists both templates for the UI', () => {
+  it('lists the three templates for the UI, Project schedule first', () => {
     expect(TEMPLATES.map((t) => [t.id, t.name])).toEqual([
       ['project-schedule', 'Project schedule'],
       ['punch-list', 'Punch list'],
+      ['simple-list', 'Simple list'],
     ])
     expect(TEMPLATES.every((t) => t.description.length > 0)).toBe(true)
   })
 
-  it.each(['project-schedule', 'punch-list'] as const)('builds a full SheetData for %s', (id) => {
+  it.each(['project-schedule', 'punch-list', 'simple-list'] as const)('builds a full SheetData for %s', (id) => {
     const d = createSheetFromTemplate(id, 'user-1')
     expect(d.sheet.ownerId).toBe('user-1')
     expect(d.sheet.workspaceId).toBe('user-1')
@@ -120,13 +136,13 @@ describe('TEMPLATES and createSheetFromTemplate', () => {
   })
 })
 
-async function mount(id: 'project-schedule' | 'punch-list', view: () => ReactElement) {
+async function mount(id: 'project-schedule' | 'punch-list' | 'simple-list', view: () => ReactElement) {
   const { store } = await makeTestStore(createSheetFromTemplate(id, 'u'))
   render(createElement(SheetStoreProvider, { store, children: view() }))
 }
 
 describe('views over the templates', () => {
-  it.each(['project-schedule', 'punch-list'] as const)('Kanban groups %s by the Status column', async (id) => {
+  it.each(['project-schedule', 'punch-list', 'simple-list'] as const)('Kanban groups %s by the Status column', async (id) => {
     await mount(id, () => createElement(KanbanView))
     expect(screen.getByLabelText('Group by')).toHaveDisplayValue('Status')
     expect(screen.getAllByRole('region')).toHaveLength(STATUS_OPTIONS.length + 1)
@@ -143,6 +159,7 @@ describe('views over the templates', () => {
   it.each([
     ['project-schedule', ['Task', 'Phase', 'Trade', 'Duration', 'Start', 'End', 'Predecessors', 'Status', '% Complete']],
     ['punch-list', ['Item', 'Location', 'Trade', 'Assigned To', 'Status', 'Due Date']],
+    ['simple-list', ['Task', 'Status', 'Notes']],
   ] as const)('grid renders the %s headers', async (id, titles) => {
     await mount(id, () => createElement(GridView, { viewportHeight: 600 }))
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent)

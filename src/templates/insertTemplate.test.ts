@@ -31,6 +31,7 @@ describe('insertSheetFromTemplate', () => {
   it.each([
     ['project-schedule', 9],
     ['punch-list', 6],
+    ['simple-list', 3],
   ] as const)('inserts the sheet then one bulk column insert for %s', async (id, n) => {
     const { client, calls, inserts } = makeClient()
     const sheetId = await insertSheetFromTemplate(client, id, 'user-1')
