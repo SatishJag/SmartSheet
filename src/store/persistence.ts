@@ -3,6 +3,7 @@ import type { SchedDep } from '../engine/schedule'
 import type { Calendar, DepType } from '../engine/types'
 import type { RowNode } from '../model/hierarchy'
 import type { Column, ColumnRole, ColumnType } from '../model/validate'
+import { fetchAllPages } from './paging'
 
 export interface SheetMeta {
   id: string
@@ -193,20 +194,28 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
   }
 
   return {
+    /**
+     * Supabase returns at most 1000 rows per request, so every list is paged with a stable
+     * order; a failed or inconsistent page fails the whole load rather than truncating it.
+     */
     async loadSheet(id) {
-      const [sheetRes, colRes, rowRes, depRes] = await Promise.all([
+      const [sheetRes, cols, rows, deps] = await Promise.all([
         client.from('sheets').select('*').eq('id', id).single(),
-        client.from('columns').select('*').eq('sheet_id', id).order('position', { ascending: true }),
-        client.from('rows').select('*').eq('sheet_id', id),
-        client.from('dependencies').select('*').eq('sheet_id', id),
+        fetchAllPages<DbColumn>((from, to) =>
+          client.from('columns').select('*').eq('sheet_id', id).order('position', { ascending: true }).order('id').range(from, to),
+        ),
+        fetchAllPages<DbRow>((from, to) => client.from('rows').select('*').eq('sheet_id', id).order('id').range(from, to)),
+        fetchAllPages<DbDependency>((from, to) =>
+          client.from('dependencies').select('*').eq('sheet_id', id).order('id').range(from, to),
+        ),
       ])
       const sheet = sheetFromDb(check(sheetRes) as DbSheet)
       owners.set(sheet.id, sheet)
       return {
         sheet,
-        columns: (check(colRes) as DbColumn[]).map(columnFromDb),
-        rows: (check(rowRes) as DbRow[]).map(rowFromDb),
-        dependencies: (check(depRes) as DbDependency[]).map(dependencyFromDb),
+        columns: cols.map(columnFromDb),
+        rows: rows.map(rowFromDb),
+        dependencies: deps.map(dependencyFromDb),
       }
     },
 

@@ -134,13 +134,19 @@ describe('AuthGate', () => {
 type Result = { data: unknown; error: { message: string } | null }
 
 function makeSheetsClient(opts: { list?: Result; insert?: Result }) {
-  const order = vi.fn().mockResolvedValue(opts.list ?? { data: [], error: null })
+  const list = opts.list ?? { data: [], error: null }
+  // Pages like PostgREST: .range(from, to) slices the list.
+  const range = vi.fn(async (from: number, to: number) =>
+    Array.isArray(list.data) ? { data: list.data.slice(from, to + 1), error: null } : list,
+  )
+  const ordered = { order: vi.fn(() => ordered), range }
+  const order = vi.fn(() => ordered)
   const select = vi.fn(() => ({ order }))
   const single = vi.fn().mockResolvedValue(opts.insert ?? { data: { id: 'new-id' }, error: null })
   const insertSelect = vi.fn(() => ({ single }))
   const insert = vi.fn(() => ({ select: insertSelect }))
   const from = vi.fn(() => ({ select, insert }))
-  return { client: { from } as unknown as SupabaseClient, from, select, order, insert, insertSelect }
+  return { client: { from } as unknown as SupabaseClient, from, select, order, range, insert, insertSelect }
 }
 
 describe('SheetList', () => {
@@ -153,6 +159,18 @@ describe('SheetList', () => {
     expect(from).toHaveBeenCalledWith('sheets')
     expect(select).toHaveBeenCalledWith('id,name,created_at')
     expect(order).toHaveBeenCalledWith('created_at', { ascending: false })
+  })
+
+  it('pages the sheet list in ranges of 1000 until a short page', async () => {
+    const data = Array.from({ length: 1001 }, (_, i) => ({ id: `s${i}`, name: `Sheet ${i}`, created_at: '2026-01-01T00:00:00Z' }))
+    const { client, range } = makeSheetsClient({ list: { data, error: null } })
+    render(<SheetList client={client} userId="user-1" onOpen={() => {}} />)
+    expect(await screen.findByText('Sheet 1000')).toBeInTheDocument()
+    expect(document.querySelectorAll('.sheet-item')).toHaveLength(1001)
+    expect(range.mock.calls).toEqual([
+      [0, 999],
+      [1000, 1999],
+    ])
   })
 
   it('lists sheets and opens one on click', async () => {

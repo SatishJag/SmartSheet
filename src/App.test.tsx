@@ -31,9 +31,10 @@ function fakeClient(): SupabaseClient {
       onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
       signOut: vi.fn(),
     },
-    from: vi.fn(() => ({
-      select: () => ({ order: () => Promise.resolve(list) }),
-    })),
+    from: vi.fn(() => {
+      const ordered = { order: () => ordered, range: () => Promise.resolve(list) }
+      return { select: () => ordered }
+    }),
   } as unknown as SupabaseClient
 }
 

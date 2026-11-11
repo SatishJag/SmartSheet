@@ -62,6 +62,9 @@ export interface FakeResult<T = unknown> {
 
 const TABLES: readonly TableName[] = ['sheets', 'columns', 'rows', 'dependencies']
 
+/** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
+export const MAX_ROWS = 1000
+
 const DEFAULT_CALENDAR = { workingWeekdays: [1, 2, 3, 4, 5], nonWorkingDates: [], hoursPerDay: 8 }
 
 /** Columns of each table, with what a missing value becomes on insert. */
@@ -335,7 +338,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
   /**
    * One query, built by chaining and run when awaited (like supabase-js's PostgrestBuilder).
-   * Supports: select, insert, update, delete, eq, in, not(col, 'in', '(..)'), order, single,
+   * Supports: select, insert, update, delete, eq, in, not(col, 'in', '(..)'), order, range, single,
    * and `.select(cols)` after a write to return the written rows.
    */
   class QueryBuilder {
@@ -344,6 +347,8 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     private filters: Filter[] = []
     private orders: { col: string; ascending: boolean }[] = []
     private wantSingle = false
+    private rangeFrom = 0
+    private rangeTo: number | null = null
     private readonly table: TableName
 
     constructor(table: TableName) {
@@ -416,6 +421,18 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       const extra = Object.keys(options).filter((k) => k !== 'ascending')
       if (extra.length > 0) unsupported(`${this.table}.order(${col}, {${extra.join(', ')}})`)
       this.orders.push({ col, ascending: options.ascending ?? true })
+      return this
+    }
+
+    /** PostgREST row range (inclusive); the response is still capped at MAX_ROWS. */
+    range(from: number, to: number, options?: unknown): this {
+      if (!this.op || this.op.kind !== 'select') unsupported(`${this.table}.range() on ${this.op?.kind ?? 'no operation'}`)
+      if (options !== undefined) unsupported(`${this.table}.range(..., options)`)
+      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from) {
+        unsupported(`${this.table}.range(${from}, ${to})`)
+      }
+      this.rangeFrom = from
+      this.rangeTo = to
       return this
     }
 
@@ -497,7 +514,10 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
           return 0
         })
       }
-      return { data: rows.map((r) => project(r, columns)), error: null }
+      // Like PostgREST with max-rows = 1000: a response never holds more than MAX_ROWS rows,
+      // with or without .range(), so callers must page.
+      const end = Math.min(this.rangeTo === null ? Infinity : this.rangeTo + 1, this.rangeFrom + MAX_ROWS)
+      return { data: rows.slice(this.rangeFrom, end).map((r) => project(r, columns)), error: null }
     }
 
     private returned(rows: DbRecord[]): DbRecord[] {

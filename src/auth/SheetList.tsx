@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { TEMPLATES, type TemplateId } from '../templates'
 import { insertSheetFromTemplate } from '../templates/insertTemplate'
+import { fetchAllPages } from '../store/paging'
 
 interface SheetRow {
   id: string
@@ -25,15 +26,22 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
 
   useEffect(() => {
     let active = true
-    client
-      .from('sheets')
-      .select('id,name,created_at')
-      .order('created_at', { ascending: false })
-      .then(({ data, error: err }) => {
-        if (!active) return
-        if (err) setError(err.message)
-        else setSheets((data ?? []) as SheetRow[])
-      })
+    // Paged: Supabase returns at most 1000 rows per request.
+    fetchAllPages<SheetRow>((from, to) =>
+      client
+        .from('sheets')
+        .select('id,name,created_at')
+        .order('created_at', { ascending: false })
+        .order('id')
+        .range(from, to),
+    ).then(
+      (rows) => {
+        if (active) setSheets(rows)
+      },
+      (err: unknown) => {
+        if (active) setError(err instanceof Error ? err.message : 'Could not load sheets')
+      },
+    )
     return () => {
       active = false
     }

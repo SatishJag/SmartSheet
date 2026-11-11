@@ -105,6 +105,22 @@ describe('fakeSupabase tables', () => {
     expect(r.data).toMatchObject({ parent_id: null, cells: {}, version: 0, owner_id: uid })
   })
 
+  it('caps a select without a range at 1000 rows and pages with .range(from, to) like PostgREST', async () => {
+    const s = await newSheet()
+    const ids = Array.from({ length: 1201 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
+    const ins = await client.from('rows').insert(ids.map((id, i) => ({ id, sheet_id: s, position: `a${i}` })))
+    expect(ins.error).toBeNull()
+    const capped = (await client.from('rows').select('id').eq('sheet_id', s)).data as { id: string }[]
+    expect(capped).toHaveLength(1000)
+    const page2 = (await client.from('rows').select('id').eq('sheet_id', s).order('id').range(1000, 1999)).data as { id: string }[]
+    expect(page2.map((r) => r.id)).toEqual(ids.slice(1000))
+    const small = (await client.from('rows').select('id').eq('sheet_id', s).order('id').range(5, 7)).data as { id: string }[]
+    expect(small.map((r) => r.id)).toEqual(ids.slice(5, 8))
+    // A range wider than the cap is still capped.
+    const wide = (await client.from('rows').select('id').eq('sheet_id', s).order('id').range(0, 4999)).data as unknown[]
+    expect(wide).toHaveLength(1000)
+  })
+
   it('selects with eq, in, not in, order and column lists', async () => {
     const s = await newSheet()
     await client.from('columns').insert([
