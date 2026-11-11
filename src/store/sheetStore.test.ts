@@ -319,6 +319,15 @@ describe('rows', () => {
     expect(p2.saveDependencies).not.toHaveBeenCalled()
     expect(p.saveDependencies).toHaveBeenCalledTimes(1)
   })
+
+  it('dismissNotice removes one notice by index', async () => {
+    const { store } = await loaded()
+    store.setState({ notices: ['a', 'b', 'c'] })
+    store.getState().dismissNotice(1)
+    expect(store.getState().notices).toEqual(['a', 'c'])
+    store.getState().dismissNotice(9)
+    expect(store.getState().notices).toEqual(['a', 'c'])
+  })
 })
 
 describe('dependencies', () => {

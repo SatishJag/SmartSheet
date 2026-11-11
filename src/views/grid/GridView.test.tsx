@@ -342,6 +342,75 @@ describe('GridView rows', () => {
   })
 })
 
+describe('GridView row deletion', () => {
+  const ids = (store: Awaited<ReturnType<typeof renderGrid>>['store']) => store.getState().data!.rows.map((r) => r.id)
+
+  it('Delete row is disabled with no active row; on a leaf row it deletes at once and moves the active cell', async () => {
+    const { store, user } = await renderGrid()
+    const button = screen.getByRole('button', { name: 'Delete row' })
+    expect(button).toBeDisabled()
+
+    await user.click(cell(4, 'Task')) // Foundations, the last row
+    await user.click(button)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(ids(store)).toEqual(['r-site', 'r-survey', 'r-clear'])
+    // No row after it: the active cell moves to the previous row.
+    expect(cell(3, 'Task')).toHaveAttribute('aria-selected', 'true')
+    expect(store.getState().notices).toEqual(['Removed 1 dependency that referenced deleted rows'])
+  })
+
+  it('the Delete key deletes the active leaf row and the next row becomes active', async () => {
+    const { store, user } = await renderGrid()
+    await user.click(cell(2, 'Duration')) // Survey
+    await user.keyboard('{Delete}')
+    expect(ids(store)).toEqual(['r-site', 'r-clear', 'r-found'])
+    expect(cell(2, 'Task')).toHaveTextContent('Clear site')
+    expect(cell(2, 'Duration')).toHaveAttribute('aria-selected', 'true')
+    expect(cell(2, 'Duration')).toHaveFocus()
+  })
+
+  it('the Delete key does nothing while an editor is open', async () => {
+    const { store, user } = await renderGrid()
+    await user.dblClick(cell(2, 'Task'))
+    await user.keyboard('{Delete}')
+    expect(ids(store)).toHaveLength(4)
+    expect(screen.getByRole('textbox', { name: 'Task' })).toBeInTheDocument()
+  })
+
+  it('a row with sub-rows asks first in an accessible dialog; Escape cancels and returns focus', async () => {
+    const { store, user } = await renderGrid()
+    await user.click(cell(1, 'Duration')) // Site preparation, 2 sub-rows
+    await user.keyboard('{Delete}')
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete row' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAccessibleDescription('Delete this row and its 2 sub-rows?')
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(ids(store)).toHaveLength(4)
+    expect(cell(1, 'Duration')).toHaveFocus()
+  })
+
+  it('confirming deletes the row and its sub-rows', async () => {
+    const { store, user } = await renderGrid()
+    await user.click(cell(1, 'Task'))
+    await user.click(screen.getByRole('button', { name: 'Delete row' }))
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(ids(store)).toEqual(['r-found'])
+    expect(cell(1, 'Task')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('deleting the only row clears the active cell', async () => {
+    const { store, user } = await renderGrid(makeSheetData({ rows: [makeRow('only', 'a0', { [COL.task]: 'Only' })], dependencies: [] }))
+    await user.click(cell(1, 'Task'))
+    await user.keyboard('{Delete}')
+    expect(ids(store)).toEqual([])
+    expect(screen.getByRole('button', { name: 'Delete row' })).toBeDisabled()
+  })
+})
+
 describe('GridView column resize', () => {
   it('dragging a header edge changes the column width, with a 60px minimum', async () => {
     await renderGrid()

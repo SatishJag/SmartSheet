@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { SheetStoreProvider } from '../../store/SheetStoreContext'
 import { makeTestStore } from '../../test/fixtures'
@@ -36,14 +36,22 @@ describe('SaveStatusBadge', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('renders store notices in a status region', async () => {
+  it('renders store notices in a status region that is always present (so additions are announced)', async () => {
     const store = await renderBadge()
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
     act(() =>
       store.setState({ notices: ['Removed 2 dependencies that referenced deleted rows', 'Another notice'] }),
     )
     const region = screen.getByRole('status')
     expect(region).toHaveTextContent('Removed 2 dependencies that referenced deleted rows')
     expect(region).toHaveTextContent('Another notice')
+  })
+
+  it('dismisses a notice with its Dismiss button', async () => {
+    const store = await renderBadge()
+    act(() => store.setState({ notices: ['First notice', 'Second notice'] }))
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss: First notice' }))
+    expect(store.getState().notices).toEqual(['Second notice'])
+    expect(screen.queryByText('First notice')).not.toBeInTheDocument()
   })
 })

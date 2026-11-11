@@ -7,10 +7,11 @@ const LABELS: Record<Exclude<SaveStatus, 'failed'>, string> = {
   unsaved: 'Unsaved changes — retrying…',
 }
 
-/** Save status of the sheet store, plus its notices (read-only for now). */
+/** Save status of the sheet store, plus its notices (each dismissable). */
 export function SaveStatusBadge() {
   const status = useSheetStore((s) => s.saveStatus)
   const notices = useSheetStore((s) => s.notices)
+  const dismiss = useSheetStore((s) => s.dismissNotice)
   return (
     <div className="save-status">
       {status === 'failed' ? (
@@ -22,15 +23,21 @@ export function SaveStatusBadge() {
           {LABELS[status]}
         </span>
       )}
-      {notices.length > 0 && (
-        <div role="status" className="sheet-notices">
+      {/* Always mounted so screen readers announce notices as they are added. */}
+      <div role="status" className="sheet-notices">
+        {notices.length > 0 && (
           <ul>
             {notices.map((n, i) => (
-              <li key={i}>{n}</li>
+              <li key={`${i}:${n}`}>
+                <span>{n}</span>
+                <button type="button" className="notice-dismiss" aria-label={`Dismiss: ${n}`} onClick={() => dismiss(i)}>
+                  Dismiss
+                </button>
+              </li>
             ))}
           </ul>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

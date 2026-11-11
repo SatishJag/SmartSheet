@@ -3,6 +3,7 @@ import { useTable } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Column } from '../../model/validate'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
+import { ConfirmDialog } from '../ConfirmDialog'
 import { CellEditor, CheckboxCell, type CommitReason } from './cellEditors'
 import { buildColumnDefs, displayText, editString, gridFeatures, isEditable, ROW_NUMBER_COLUMN_ID, type GridRow } from './columns'
 import { FilterBar } from './FilterBar'
@@ -86,6 +87,8 @@ export function GridView({ viewportHeight }: GridViewProps) {
 
   const [active, setActive] = useState<ActiveCell | null>(null)
   const [editing, setEditing] = useState(false)
+  /** A parent row waiting for the user to confirm its deletion. */
+  const [pendingDelete, setPendingDelete] = useState<{ rowId: string; subRows: number } | null>(null)
   /** Set when the active cell should take keyboard focus after the next render. */
   const focusRequest = useRef(false)
 
@@ -157,6 +160,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
     } else if (e.key === 'Enter' || e.key === 'F2') {
       e.preventDefault()
       startEdit(rows[activeRowIdx], columns[activeColIdx])
+    } else if (e.key === 'Delete' && (e.target as HTMLElement).getAttribute('role') === 'gridcell') {
+      e.preventDefault()
+      requestDelete()
     }
   }
 
@@ -179,6 +185,56 @@ export function GridView({ viewportHeight }: GridViewProps) {
       const parentId = api.getState().data?.rows.find((r) => r.id === id)?.parentId
       if (parentId) expand(parentId)
     } else api.getState().outdentRow(id)
+  }
+
+  /** Ids of all descendants of a row (any depth). */
+  function descendantsOf(id: string): string[] {
+    const children = new Map<string, string[]>()
+    for (const r of data?.rows ?? []) {
+      if (r.parentId === null) continue
+      const list = children.get(r.parentId) ?? []
+      list.push(r.id)
+      children.set(r.parentId, list)
+    }
+    const out: string[] = []
+    const seen = new Set([id])
+    for (let stack = [...(children.get(id) ?? [])]; stack.length > 0; ) {
+      const c = stack.pop()!
+      if (seen.has(c)) continue
+      seen.add(c)
+      out.push(c)
+      stack.push(...(children.get(c) ?? []))
+    }
+    return out
+  }
+
+  /** Delete row (toolbar or Delete key): a leaf goes at once, a parent asks first. */
+  function requestDelete() {
+    if (!activeValid) return
+    const id = rows[activeRowIdx].id
+    const subRows = descendantsOf(id).length
+    if (subRows > 0) setPendingDelete({ rowId: id, subRows })
+    else deleteRow(id)
+  }
+
+  /** Deletes a row and its sub-rows; the active cell moves to the next remaining row, else the previous. */
+  function deleteRow(id: string) {
+    const removed = new Set([id, ...descendantsOf(id)])
+    const idx = rowIndex.get(id) ?? -1
+    const neighbour =
+      rows.slice(idx + 1).find((r) => !removed.has(r.id)) ??
+      rows
+        .slice(0, Math.max(0, idx))
+        .reverse()
+        .find((r) => !removed.has(r.id))
+    const colId = active?.colId
+    setPendingDelete(null)
+    api.getState().deleteRow(id)
+    if (neighbour && colId) select(neighbour.id, colId, true)
+    else {
+      setActive(null)
+      setEditing(false)
+    }
   }
 
   function addRow() {
@@ -367,8 +423,20 @@ export function GridView({ viewportHeight }: GridViewProps) {
         <button type="button" disabled={!activeValid} onClick={() => shiftActiveRow('outdent')}>
           Outdent
         </button>
+        <button type="button" disabled={!activeValid} onClick={requestDelete}>
+          Delete row
+        </button>
         <FilterBar columns={columns} filter={view.filter} onChange={setFilter} />
       </div>
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete row"
+          message={`Delete this row and its ${pendingDelete.subRows} sub-row${pendingDelete.subRows === 1 ? '' : 's'}?`}
+          confirmLabel="Delete"
+          onConfirm={() => deleteRow(pendingDelete.rowId)}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   )
 }

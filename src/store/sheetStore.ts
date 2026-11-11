@@ -49,6 +49,8 @@ export interface SheetState {
    */
   setPredecessors(rowId: string, raw: string): ActionResult
   removeDependency(predecessorId: string, successorId: string): void
+  /** Removes the notice at `index` (no-op when out of range). */
+  dismissNotice(index: number): void
 }
 
 export interface SheetStoreOptions {
@@ -456,6 +458,12 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (deps.length === data.dependencies.length) return
         commit({ ...data, dependencies: deps })
         enqueueDependencies(data.sheet.id, deps)
+      },
+
+      dismissNotice(index) {
+        const notices = get().notices
+        if (index < 0 || index >= notices.length) return
+        set({ notices: notices.filter((_, i) => i !== index) })
       },
     }
   })

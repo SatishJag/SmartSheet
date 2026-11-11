@@ -66,4 +66,23 @@ test('predecessors drive the Gantt chart, invalid input is flagged, and everythi
   await expect(pred).toHaveText('1FS')
   await expect(pred).not.toHaveAttribute('aria-invalid', 'true')
   await expectBars(page, T1_4D, T2_AFTER_4D)
+
+  // Deleting the predecessor row removes the dependency, says so, and empties the successor's cell.
+  await openTab(page, 'Grid')
+  await (await gridCell(page, 1, 'Task')).click()
+  await page.getByRole('button', { name: 'Delete row' }).click()
+  const notice = page.getByRole('status').filter({ hasText: 'Removed 1 dependency that referenced deleted rows' })
+  await expect(notice).toBeVisible()
+  await expect(page.getByRole('grid').getByRole('row')).toHaveCount(2) // header + 1 row
+  await expect(await gridCell(page, 1, 'Task')).toHaveText('Task 2')
+  await expect(await gridCell(page, 1, 'Predecessors')).toHaveText('')
+  await page.getByRole('button', { name: 'Dismiss: Removed 1 dependency that referenced deleted rows' }).click()
+  await expect(page.getByText('Removed 1 dependency that referenced deleted rows')).toHaveCount(0)
+
+  await expectSaved(page)
+  await page.reload()
+  await page.getByRole('button', { name: /^Project schedule/ }).click()
+  await expect(page.getByRole('grid').getByRole('row')).toHaveCount(2)
+  await expect(await gridCell(page, 1, 'Task')).toHaveText('Task 2')
+  await expect(await gridCell(page, 1, 'Predecessors')).toHaveText('')
 })
