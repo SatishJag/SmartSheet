@@ -160,6 +160,18 @@ describe('supabasePersistence.saveDependencies (diff-based)', () => {
   })
 })
 
+describe('supabasePersistence.insertRow', () => {
+  it('is an upsert on id, so a retry after a lost response does not fail with a duplicate key', async () => {
+    const { client, sheetId } = seeded(1, 0)
+    const p = supabasePersistence(client)
+    const row = { id: crypto.randomUUID(), parentId: null, position: 'b0', cells: { x: 1 }, version: 0 }
+    await p.insertRow(sheetId, row)
+    await p.insertRow(sheetId, { ...row, cells: { x: 2 } })
+    const { data } = await client.from('rows').select('id, cells').eq('id', row.id)
+    expect(data).toEqual([{ id: row.id, cells: { x: 2 } }])
+  })
+})
+
 describe('supabasePersistence.loadSheet paging', () => {
   it('loads every row and dependency past the 1000-row response cap', async () => {
     const { client, sheetId, rowIds } = seeded(2500, 1200)

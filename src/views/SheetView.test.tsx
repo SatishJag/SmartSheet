@@ -1,10 +1,10 @@
 import { StrictMode } from 'react'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { supabasePersistence, type SheetData } from '../store/persistence'
-import { makeFakePersistence, makeSheetData } from '../test/fixtures'
+import { makeFakePersistence, makeSheetData, makeTestStore } from '../test/fixtures'
 import { SheetView } from './SheetView'
 
 vi.mock('../store/persistence', async (importOriginal) => ({
@@ -130,6 +130,94 @@ describe('SheetView', () => {
     await user.click(screen.getByRole('tab', { name: 'Gantt' }))
     expect(screen.getByRole('region', { name: 'Gantt chart' })).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Group by' })).not.toBeInTheDocument()
+  })
+
+  describe('unsaved changes', () => {
+    async function renderWithStore(onBack = vi.fn(), onSaveStatusChange = vi.fn()) {
+      const { store } = await makeTestStore()
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const view = render(
+        <SheetView client={client} sheetId="sheet-1" onBack={onBack} store={store} onSaveStatusChange={onSaveStatusChange} />,
+      )
+      await screen.findByRole('grid')
+      const retry = vi.spyOn(store.getState(), 'retryFailed').mockImplementation(() => {})
+      return { store, retry, onBack, onSaveStatusChange, ...view }
+    }
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('retries failed saves when the browser comes back online', async () => {
+      const { store, retry } = await renderWithStore()
+      act(() => store.setState({ saveStatus: 'failed', failedCount: 1 }))
+      act(() => {
+        window.dispatchEvent(new Event('online'))
+      })
+      expect(retry).toHaveBeenCalledTimes(1)
+    })
+
+    it('retries once automatically 30 s after saving failed, and not if the status recovers first', async () => {
+      const { store, retry } = await renderWithStore()
+      vi.useFakeTimers()
+      act(() => store.setState({ saveStatus: 'failed', failedCount: 1 }))
+      act(() => vi.advanceTimersByTime(29_000))
+      expect(retry).not.toHaveBeenCalled()
+      act(() => vi.advanceTimersByTime(1_000))
+      expect(retry).toHaveBeenCalledTimes(1)
+      act(() => vi.advanceTimersByTime(60_000))
+      expect(retry).toHaveBeenCalledTimes(1) // a single timer
+
+      act(() => store.setState({ saveStatus: 'saved', failedCount: 0 }))
+      act(() => store.setState({ saveStatus: 'failed', failedCount: 1 }))
+      act(() => store.setState({ saveStatus: 'saved', failedCount: 0 }))
+      act(() => vi.advanceTimersByTime(60_000))
+      expect(retry).toHaveBeenCalledTimes(1) // cleared when the status left failed
+    })
+
+    it('guards page unload only while changes are not saved', async () => {
+      const { store } = await renderWithStore()
+      const unload = () => {
+        const e = new Event('beforeunload', { cancelable: true })
+        window.dispatchEvent(e)
+        return e.defaultPrevented
+      }
+      expect(unload()).toBe(false)
+      act(() => store.setState({ saveStatus: 'saving' }))
+      expect(unload()).toBe(true)
+      act(() => store.setState({ saveStatus: 'saved' }))
+      expect(unload()).toBe(false)
+    })
+
+    it('reports the save status to the parent', async () => {
+      const { store, onSaveStatusChange } = await renderWithStore()
+      act(() => store.setState({ saveStatus: 'failed', failedCount: 1 }))
+      expect(onSaveStatusChange).toHaveBeenLastCalledWith('failed')
+    })
+
+    it('Back to sheets asks first while changes are unsaved: Stay keeps the sheet, Leave goes back', async () => {
+      const { store, onBack } = await renderWithStore()
+      act(() => store.setState({ saveStatus: 'failed', failedCount: 2 }))
+      const user = userEvent.setup()
+      const back = screen.getByRole('button', { name: 'Back to sheets' })
+      await user.click(back)
+      const dialog = screen.getByRole('alertdialog', { name: 'Unsaved changes' })
+      expect(dialog).toHaveAccessibleDescription('You have unsaved changes. Leave anyway?')
+      await user.click(within(dialog).getByRole('button', { name: 'Stay' }))
+      expect(onBack).not.toHaveBeenCalled()
+      expect(back).toHaveFocus()
+
+      await user.click(back)
+      await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Leave' }))
+      expect(onBack).toHaveBeenCalledTimes(1)
+    })
+
+    it('Back to sheets goes straight back when everything is saved', async () => {
+      const { onBack } = await renderWithStore()
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Back to sheets' }))
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      expect(onBack).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('shows the load error as an alert', async () => {

@@ -525,3 +525,96 @@ describe('new rows', () => {
     expect(p.deleteRows).toHaveBeenCalledWith([id])
   })
 })
+
+describe('retryFailed and failedCount', () => {
+  it('counts failed changes and re-sends every failed cell with its current value', async () => {
+    const { store, p } = await loaded()
+    p.saveCell.mockRejectedValue(new Error('offline'))
+    store.getState().setCell('r1', 'name', 'A')
+    store.getState().setCell('r2', 'name', 'B')
+    await vi.waitFor(() => expect(store.getState().failedCount).toBe(2))
+    expect(store.getState().saveStatus).toBe('failed')
+
+    p.saveCell.mockImplementation(async (_r, _c, _v, version) => ({ version: version + 1 }))
+    p.saveCell.mockClear()
+    store.getState().retryFailed()
+    await settled(store)
+    expect(store.getState().failedCount).toBe(0)
+    expect(p.saveCell.mock.calls.map((c) => [c[0], c[1], c[2]]).sort()).toEqual([
+      ['r1', 'name', 'A'],
+      ['r2', 'name', 'B'],
+    ])
+  })
+
+  it('re-sends a failed dependency save with the current set', async () => {
+    const { store, p } = await loaded(fakePersistence(sheetData({ dependencies: [] })))
+    p.saveDependencies.mockRejectedValue(new Error('offline'))
+    store.getState().addDependency(fs('r1', 'r2'))
+    await settled(store, 'failed')
+    p.saveDependencies.mockResolvedValue(undefined)
+    store.getState().retryFailed()
+    await settled(store)
+    expect(p.saveDependencies).toHaveBeenLastCalledWith('sh', [fs('r1', 'r2')])
+  })
+
+  it('re-sends failed deletes', async () => {
+    const { store, p } = await loaded(fakePersistence(sheetData({ dependencies: [] })))
+    p.deleteRows.mockRejectedValue(new Error('offline'))
+    store.getState().deleteRow('r2')
+    await settled(store, 'failed')
+    p.deleteRows.mockResolvedValue(undefined)
+    p.deleteRows.mockClear()
+    store.getState().retryFailed()
+    await settled(store)
+    expect(p.deleteRows).toHaveBeenCalledWith(['r2'])
+  })
+
+  it('re-sends a failed insert of a new row', async () => {
+    const { store, p } = await loaded()
+    p.insertRow.mockRejectedValue(new Error('offline'))
+    const id = store.getState().addRow('r2')
+    await settled(store, 'failed')
+    p.insertRow.mockResolvedValue(undefined)
+    p.insertRow.mockClear()
+    store.getState().retryFailed()
+    await settled(store)
+    expect(p.insertRow).toHaveBeenCalledWith('sh', expect.objectContaining({ id }))
+  })
+
+  it('retryFailed with nothing failed does nothing', async () => {
+    const { store, p } = await loaded()
+    store.getState().retryFailed()
+    await settled(store)
+    expect(p.saveCell).not.toHaveBeenCalled()
+    expect(store.getState().failedCount).toBe(0)
+  })
+
+  it('an edit to a child whose parent insert failed inserts the parent chain first, root first', async () => {
+    const { store, p } = await loaded(fakePersistence(sheetData({ dependencies: [] })))
+    p.insertRow.mockRejectedValue(new Error('offline'))
+    const parent = store.getState().addRow('r2')
+    await settled(store, 'failed')
+    const inserted: string[] = []
+    p.insertRow.mockImplementation(async (_s, row) => void inserted.push(row.id))
+    const child = store.getState().addRow(null, parent)
+    await settled(store)
+    expect(inserted).toEqual([parent, child])
+    expect(store.getState().failedCount).toBe(0)
+  })
+
+  it('a tree change of a persisted row under a parent whose insert failed inserts that parent first', async () => {
+    const { store, p } = await loaded(fakePersistence(sheetData({ dependencies: [] })))
+    p.insertRow.mockRejectedValue(new Error('offline'))
+    const fresh = store.getState().addRow('r1') // between r1 and r2
+    await settled(store, 'failed')
+    const calls: string[] = []
+    p.insertRow.mockImplementation(async (_s, row) => void calls.push(`insert ${row.id}`))
+    p.saveRowTree.mockImplementation(async (...args: unknown[]) => {
+      calls.push(`tree ${(args[0] as { id: string }[]).map((r) => r.id).join()}`)
+    })
+    store.getState().indentRow('r2') // r2 becomes a child of the unpersisted row
+    await settled(store)
+    expect(store.getState().data!.rows.find((r) => r.id === 'r2')!.parentId).toBe(fresh)
+    expect(calls).toEqual([`insert ${fresh}`, 'tree r2'])
+  })
+})

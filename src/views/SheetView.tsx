@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { StoreApi } from 'zustand/vanilla'
 import { supabasePersistence } from '../store/persistence'
-import { SheetStoreProvider, useSheetStore } from '../store/SheetStoreContext'
-import { createSheetStore } from '../store/sheetStore'
+import { SheetStoreProvider, useSheetStore, useSheetStoreApi } from '../store/SheetStoreContext'
+import { createSheetStore, type SaveStatus, type SheetState } from '../store/sheetStore'
+import { ConfirmDialog } from './ConfirmDialog'
 import { GanttView } from './gantt/GanttView'
 import { GridView } from './grid/GridView'
 import { SaveStatusBadge } from './grid/SaveStatusBadge'
@@ -12,16 +14,25 @@ export interface SheetViewProps {
   client: SupabaseClient
   sheetId: string
   onBack: () => void
+  /** Told whenever the sheet's save status changes (the app guards Sign out with it). */
+  onSaveStatusChange?: (status: SaveStatus) => void
+  /** A ready-made store (tests); by default one is created over Supabase persistence. */
+  store?: StoreApi<SheetState>
 }
+
+/** Failed saves are retried once automatically this long after the status becomes `failed`. */
+export const AUTO_RETRY_MS = 30_000
+
+export const UNSAVED_MESSAGE = 'You have unsaved changes. Leave anyway?'
 
 /** One open sheet. Keyed by sheet id so each sheet gets its own store. */
 export function SheetView(props: SheetViewProps) {
   return <SheetViewForSheet key={props.sheetId} {...props} />
 }
 
-function SheetViewForSheet({ client, sheetId, onBack }: SheetViewProps) {
+function SheetViewForSheet({ client, sheetId, onBack, onSaveStatusChange, store: given }: SheetViewProps) {
   // Created once per mounted sheet; useState's initializer is safe under StrictMode.
-  const [store] = useState(() => createSheetStore(supabasePersistence(client)))
+  const [store] = useState(() => given ?? createSheetStore(supabasePersistence(client)))
   const loadStarted = useRef(false)
 
   useEffect(() => {
@@ -32,7 +43,7 @@ function SheetViewForSheet({ client, sheetId, onBack }: SheetViewProps) {
 
   return (
     <SheetStoreProvider store={store}>
-      <SheetContent onBack={onBack} />
+      <SheetContent onBack={onBack} onSaveStatusChange={onSaveStatusChange} />
     </SheetStoreProvider>
   )
 }
@@ -98,14 +109,75 @@ function SheetTabs() {
   )
 }
 
-function SheetContent({ onBack }: { onBack: () => void }) {
+/**
+ * Keeps unsaved work safe: retries failed saves when the browser comes back online and once
+ * AUTO_RETRY_MS after saving fails, warns before the page unloads while anything is unsaved,
+ * and reports the status upwards.
+ */
+function useSaveGuards(onSaveStatusChange?: (status: SaveStatus) => void): SaveStatus {
+  const api = useSheetStoreApi()
+  const status = useSheetStore((s) => s.saveStatus)
+
+  useEffect(() => {
+    const retry = () => api.getState().retryFailed()
+    window.addEventListener('online', retry)
+    return () => window.removeEventListener('online', retry)
+  }, [api])
+
+  useEffect(() => {
+    if (status !== 'failed') return
+    const timer = setTimeout(() => api.getState().retryFailed(), AUTO_RETRY_MS)
+    return () => clearTimeout(timer)
+  }, [status, api])
+
+  useEffect(() => {
+    if (status === 'saved') return
+    const guard = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = '' // older browsers need returnValue set to show the prompt
+    }
+    window.addEventListener('beforeunload', guard)
+    return () => window.removeEventListener('beforeunload', guard)
+  }, [status])
+
+  const report = useRef(onSaveStatusChange)
+  report.current = onSaveStatusChange
+  useEffect(() => {
+    report.current?.(status)
+  }, [status])
+
+  return status
+}
+
+function SheetContent({
+  onBack,
+  onSaveStatusChange,
+}: {
+  onBack: () => void
+  onSaveStatusChange?: (status: SaveStatus) => void
+}) {
   const data = useSheetStore((s) => s.data)
   const loadError = useSheetStore((s) => s.loadError)
+  const status = useSaveGuards(onSaveStatusChange)
+  const [confirmBack, setConfirmBack] = useState(false)
 
   return (
     <section className="sheet-view">
+      {confirmBack && (
+        <ConfirmDialog
+          title="Unsaved changes"
+          message={UNSAVED_MESSAGE}
+          confirmLabel="Leave"
+          cancelLabel="Stay"
+          onConfirm={() => {
+            setConfirmBack(false)
+            onBack()
+          }}
+          onCancel={() => setConfirmBack(false)}
+        />
+      )}
       <header className="sheet-view-header">
-        <button type="button" onClick={onBack}>
+        <button type="button" onClick={() => (status === 'saved' ? onBack() : setConfirmBack(true))}>
           Back to sheets
         </button>
         {data && <h2>{data.sheet.name}</h2>}

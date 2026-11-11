@@ -286,7 +286,7 @@ describe('KanbanView large lanes', () => {
     await user.click(within(lane('Done')).getByRole('button', { name: 'Show 50 more' }))
     expect(within(lane('Done')).getAllByRole('listitem')).toHaveLength(250)
     expect(within(lane('Done')).queryByRole('button', { name: /Show/ })).not.toBeInTheDocument()
-  })
+  }, 30_000) // renders 250 cards and queries by role: ~2 s alone, over 5 s on a loaded full run
 
   it('has no Show more button at exactly 100 cards', async () => {
     await renderKanban(flatSheet(Array.from({ length: 100 }, () => 'Done')))

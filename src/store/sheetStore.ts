@@ -29,6 +29,8 @@ export interface SheetState {
   data: SheetData | null
   scheduled: ScheduleResult
   saveStatus: SaveStatus
+  /** How many changes (cells, row places, the dependency set, deletions) failed to save. */
+  failedCount: number
   /** Cell validation errors, at most one per cell. */
   errors: CellError[]
   notices: string[]
@@ -51,6 +53,11 @@ export interface SheetState {
   removeDependency(predecessorId: string, successorId: string): void
   /** Removes the notice at `index` (no-op when out of range). */
   dismissNotice(index: number): void
+  /**
+   * Re-queues every change that ran out of retries (cells with their current values, row places,
+   * the current dependency set, pending deletions) and every row whose insert has not succeeded.
+   */
+  retryFailed(): void
 }
 
 export interface SheetStoreOptions {
@@ -189,7 +196,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       else if (retrying) status = 'unsaved'
       else if (current || queue.length > 0) status = 'saving'
       else status = 'saved'
-      if (get().saveStatus !== status) set({ saveStatus: status })
+      const failedCount = failedKeys.size
+      if (get().saveStatus !== status || get().failedCount !== failedCount) set({ saveStatus: status, failedCount })
     }
 
     async function pump(): Promise<void> {
@@ -230,17 +238,28 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
 
     const findRow = (id: string) => get().data?.rows.find((r) => r.id === id)
 
-    /** Insert a not-yet-persisted row with its current cells, parent and position. */
+    /**
+     * Insert a not-yet-persisted row with its current cells, parent and position, after any
+     * not-yet-persisted ancestors (root first), so the parent foreign key always holds.
+     */
     async function insertNow(rowId: string): Promise<void> {
       const data = get().data
-      const row = data?.rows.find((r) => r.id === rowId)
-      if (!data || !row || !unpersisted.has(rowId)) return
-      await p.insertRow(data.sheet.id, row)
-      unpersisted.delete(rowId)
-      // The insert carried the row's place and every cell's current value, so earlier failures
-      // for them are resolved. A job still queued or in flight re-adds its key if it fails.
-      for (const key of [...failedKeys]) {
-        if (key === `tree:${rowId}` || key.startsWith(`cell:${rowId}:`)) failedKeys.delete(key)
+      if (!data) return
+      const chain: string[] = []
+      for (let id: string | null = rowId; id !== null && unpersisted.has(id) && !chain.includes(id); ) {
+        chain.unshift(id)
+        id = data.rows.find((r) => r.id === id)?.parentId ?? null
+      }
+      for (const id of chain) {
+        const row = get().data?.rows.find((r) => r.id === id)
+        if (!row || !unpersisted.has(id)) continue
+        await p.insertRow(data.sheet.id, row)
+        unpersisted.delete(id)
+        // The insert carried the row's place and every cell's current value, so earlier failures
+        // for them are resolved. A job still queued or in flight re-adds its key if it fails.
+        for (const key of [...failedKeys]) {
+          if (key === `tree:${id}` || key.startsWith(`cell:${id}:`)) failedKeys.delete(key)
+        }
       }
     }
 
@@ -274,6 +293,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
             await insertNow(rowId)
             return
           }
+          // Its new parent may be a row whose insert has not succeeded yet.
+          if (row.parentId !== null && unpersisted.has(row.parentId)) await insertNow(row.parentId)
           await p.saveRowTree([{ id: row.id, parentId: row.parentId, position: row.position }])
         },
       })
@@ -400,6 +421,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       data: null,
       scheduled: EMPTY_SCHEDULE,
       saveStatus: 'saved',
+      failedCount: 0,
       errors: [],
       notices: [],
       loadError: null,
@@ -579,6 +601,31 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (deps.length === data.dependencies.length) return
         commit({ ...data, dependencies: deps })
         enqueueDependencies(data.sheet.id, deps)
+      },
+
+      retryFailed() {
+        const data = get().data
+        if (!data) return
+        for (const key of [...failedKeys]) {
+          if (key === 'deps') enqueueDependencies(data.sheet.id, data.dependencies)
+          else if (key === 'delete') enqueueDelete([])
+          else if (key.startsWith('tree:')) {
+            const rowId = key.slice('tree:'.length)
+            if (findRow(rowId)) enqueueTree(rowId)
+            else failedKeys.delete(key)
+          } else if (key.startsWith('cell:')) {
+            const rest = key.slice('cell:'.length)
+            const sep = rest.indexOf(':')
+            const rowId = rest.slice(0, sep)
+            const colId = rest.slice(sep + 1)
+            const row = findRow(rowId)
+            if (row) enqueueCell(rowId, colId, row.cells[colId])
+            else failedKeys.delete(key)
+          }
+        }
+        // Rows whose insert never succeeded (whatever job last tried it).
+        for (const id of unpersisted) if (findRow(id) && !queue.some((j) => j.key === `tree:${id}`)) enqueueTree(id)
+        refreshStatus()
       },
 
       dismissNotice(index) {

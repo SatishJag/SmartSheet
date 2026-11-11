@@ -276,9 +276,10 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
       return { version: updated.version }
     },
 
+    /** An upsert on id: retrying after a lost response must not fail with a duplicate key. */
     async insertRow(sheetId, row) {
       const owner = await ownerOf(sheetId)
-      check(await client.from('rows').insert(rowToDb(row, owner)))
+      check(await client.from('rows').upsert(rowToDb(row, owner), { onConflict: 'id' }))
     },
 
     async saveRowTree(rows) {

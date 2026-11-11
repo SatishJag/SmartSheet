@@ -280,3 +280,9 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+.save-failed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

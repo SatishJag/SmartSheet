@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { SheetStoreProvider } from '../../store/SheetStoreContext'
 import { makeTestStore } from '../../test/fixtures'
 import { SaveStatusBadge } from './SaveStatusBadge'
@@ -34,6 +34,19 @@ describe('SaveStatusBadge', () => {
     act(() => store.setState({ saveStatus: 'saved' }))
     expect(screen.getByText('Saved')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('when saving failed, states how many changes failed and offers Retry', async () => {
+    const store = await renderBadge()
+    const retry = vi.spyOn(store.getState(), 'retryFailed').mockImplementation(() => {})
+    act(() => store.setState({ saveStatus: 'failed', failedCount: 3 }))
+    expect(screen.getByRole('alert')).toHaveTextContent('3 changes could not be saved')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(retry).toHaveBeenCalledTimes(1)
+    act(() => store.setState({ failedCount: 1 }))
+    expect(screen.getByRole('alert')).toHaveTextContent('1 change could not be saved')
+    act(() => store.setState({ saveStatus: 'saved', failedCount: 0 }))
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   })
 
   it('renders store notices in a status region that is always present (so additions are announced)', async () => {

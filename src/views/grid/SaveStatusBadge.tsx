@@ -1,4 +1,4 @@
-import { useSheetStore } from '../../store/SheetStoreContext'
+import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
 import type { SaveStatus } from '../../store/sheetStore'
 
 const LABELS: Record<Exclude<SaveStatus, 'failed'>, string> = {
@@ -12,11 +12,21 @@ export function SaveStatusBadge() {
   const status = useSheetStore((s) => s.saveStatus)
   const notices = useSheetStore((s) => s.notices)
   const dismiss = useSheetStore((s) => s.dismissNotice)
+  const failedCount = useSheetStore((s) => s.failedCount)
+  const api = useSheetStoreApi()
+  const retry = () => api.getState().retryFailed()
   return (
     <div className="save-status">
       {status === 'failed' ? (
-        <div role="alert" className="save-failed-banner">
-          Some changes could not be saved
+        <div className="save-failed">
+          <div role="alert" className="save-failed-banner">
+            {failedCount > 0
+              ? `${failedCount} change${failedCount === 1 ? '' : 's'} could not be saved`
+              : 'Some changes could not be saved'}
+          </div>
+          <button type="button" onClick={retry}>
+            Retry
+          </button>
         </div>
       ) : (
         <span className={`save-badge is-${status}`} aria-live="polite">
