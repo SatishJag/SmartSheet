@@ -105,6 +105,37 @@ describe('fakeSupabase tables', () => {
     expect(r.data).toMatchObject({ parent_id: null, cells: {}, version: 0, owner_id: uid })
   })
 
+  it('upserts on id and on the dependency pair, and enforces one dependency per pair and same-sheet endpoints', async () => {
+    const s = await newSheet()
+    const other = await newSheet('Other')
+    const [r1, r2, r3] = [1, 2, 3].map((i) => `00000000-0000-4000-8000-00000000000${i}`)
+    // upsert on id: insert, then the same id again updates instead of failing.
+    expect((await client.from('rows').upsert({ id: r1, sheet_id: s, position: 'a0' }, { onConflict: 'id' })).error).toBeNull()
+    expect((await client.from('rows').upsert({ id: r1, sheet_id: s, position: 'a5' }, { onConflict: 'id' })).error).toBeNull()
+    expect((await client.from('rows').select('position').eq('id', r1)).data).toEqual([{ position: 'a5' }])
+    await client.from('rows').insert([
+      { id: r2, sheet_id: s, position: 'a1' },
+      { id: r3, sheet_id: other, position: 'a0' },
+    ])
+
+    const pair = 'sheet_id,predecessor_row_id,successor_row_id'
+    const dep = { sheet_id: s, predecessor_row_id: r1, successor_row_id: r2, type: 'FS', lag_minutes: 0 }
+    const first = await client.from('dependencies').upsert(dep, { onConflict: pair }).select('id, type')
+    expect(first.error).toBeNull()
+    const again = await client.from('dependencies').upsert({ ...dep, type: 'SS' }, { onConflict: pair }).select('id, type')
+    expect(again.data).toEqual([{ id: (first.data as { id: string }[])[0].id, type: 'SS' }])
+    expect((await client.from('dependencies').select('id')).data).toHaveLength(1)
+
+    const dup = await client.from('dependencies').insert({ ...dep, type: 'FF' })
+    expect(dup.error?.code).toBe('23505')
+    const twice = await client.from('dependencies').upsert([dep, dep], { onConflict: pair })
+    expect(twice.error?.code).toBe('21000')
+    const crossSheet = await client.from('dependencies').insert({ ...dep, successor_row_id: r3 })
+    expect(crossSheet.error?.code).toBe('23503')
+    const crossParent = await client.from('rows').insert({ sheet_id: other, parent_id: r1, position: 'b0' })
+    expect(crossParent.error?.code).toBe('23503')
+  })
+
   it('caps a select without a range at 1000 rows and pages with .range(from, to) like PostgREST', async () => {
     const s = await newSheet()
     const ids = Array.from({ length: 1201 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`)
@@ -253,7 +284,8 @@ describe('fakeSupabase tables', () => {
   it('throws loudly on anything it does not implement', async () => {
     expect(() => client.from('workspaces')).toThrow(/fakeSupabase: unsupported call from\("workspaces"\)/)
     const b = client.from('sheets') as unknown as Record<string, () => unknown>
-    expect(() => b.upsert()).toThrow(/fakeSupabase: unsupported call .*upsert/)
+    expect(() => b.rpc()).toThrow(/fakeSupabase: unsupported call .*rpc/)
+    expect(() => client.from('sheets').upsert({ id: 'x' }, { onConflict: 'name' })).toThrow(/unsupported call .*onConflict/)
     expect(() => (client as unknown as Record<string, unknown>).storage).toThrow(/fakeSupabase: unsupported call client\.storage/)
     expect(() => (client.auth as unknown as Record<string, unknown>).getUser).toThrow(/unsupported call auth\.getUser/)
     expect(() => client.from('sheets').select('*').not('id', 'eq', 'x')).toThrow(/unsupported call/)

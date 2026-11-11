@@ -29,7 +29,7 @@ export interface Persistence {
   insertRow(sheetId: string, row: RowRecord): Promise<void>
   /** Only the rows whose parentId/position changed. */
   saveRowTree(rows: RowNode[]): Promise<void>
-  /** Replace-all semantics for that sheet. */
+  /** Replace-all semantics for that sheet (one dependency per predecessor/successor pair). */
   saveDependencies(sheetId: string, deps: SchedDep[]): Promise<void>
   deleteRows(ids: string[]): Promise<void>
 }
@@ -168,6 +168,13 @@ export function dependencyToDb(
 
 // ---- Supabase implementation ----
 
+/** The dependencies table's unique pair key (0002_hardening.sql), for upserts. */
+const PAIR_CONFLICT = 'sheet_id,predecessor_row_id,successor_row_id'
+const UPSERT_CHUNK = 500
+const DELETE_CHUNK = 100
+
+const pairKey = (d: Pick<SchedDep, 'predecessorId' | 'successorId'>) => `${d.predecessorId}>${d.successorId}`
+
 /** Throws the Supabase error (if any) as an Error, otherwise returns the data. */
 function check<T>(res: { data: T; error: { message: string } | null }): T {
   if (res.error) throw new Error(res.error.message)
@@ -193,6 +200,33 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
     return meta
   }
 
+  // The last dependency set known to be in the database, per sheet, keyed by pair.
+  const persistedDeps = new Map<string, Map<string, { id: string; dep: SchedDep }>>()
+
+  function indexDeps(rows: DbDependency[]): Map<string, { id: string; dep: SchedDep }> {
+    const out = new Map<string, { id: string; dep: SchedDep }>()
+    for (const r of rows) {
+      const dep = dependencyFromDb(r)
+      const k = pairKey(dep)
+      if (!out.has(k)) out.set(k, { id: r.id, dep })
+    }
+    return out
+  }
+
+  const fetchDeps = (sheetId: string) =>
+    fetchAllPages<DbDependency>((from, to) =>
+      client.from('dependencies').select('*').eq('sheet_id', sheetId).order('id').range(from, to),
+    )
+
+  async function persistedDepsOf(sheetId: string) {
+    let known = persistedDeps.get(sheetId)
+    if (!known) {
+      known = indexDeps(await fetchDeps(sheetId))
+      persistedDeps.set(sheetId, known)
+    }
+    return known
+  }
+
   return {
     /**
      * Supabase returns at most 1000 rows per request, so every list is paged with a stable
@@ -205,17 +239,18 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
           client.from('columns').select('*').eq('sheet_id', id).order('position', { ascending: true }).order('id').range(from, to),
         ),
         fetchAllPages<DbRow>((from, to) => client.from('rows').select('*').eq('sheet_id', id).order('id').range(from, to)),
-        fetchAllPages<DbDependency>((from, to) =>
-          client.from('dependencies').select('*').eq('sheet_id', id).order('id').range(from, to),
-        ),
+        fetchDeps(id),
       ])
       const sheet = sheetFromDb(check(sheetRes) as DbSheet)
       owners.set(sheet.id, sheet)
+      // One dependency per pair (data written before 0002_hardening.sql may hold duplicates).
+      const depIndex = indexDeps(deps)
+      persistedDeps.set(sheet.id, depIndex)
       return {
         sheet,
         columns: cols.map(columnFromDb),
         rows: rows.map(rowFromDb),
-        dependencies: deps.map(dependencyFromDb),
+        dependencies: [...depIndex.values()].map((d) => d.dep),
       }
     },
 
@@ -253,14 +288,49 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
       for (const res of results) check(res)
     },
 
-    /** Insert the new set first, then delete the older rows, so a failed insert loses nothing. */
+    /**
+     * Diff-based: compares `deps` with the last persisted set of the sheet (by predecessor/successor
+     * pair), upserts only new or changed pairs (ON CONFLICT on the pair key from
+     * 0002_hardening.sql) and deletes only removed ones, by id, in chunks. Upserting first means a
+     * failed delete loses nothing, and the unique pair key means it can never leave duplicates; a
+     * retry repeats idempotent work. The in-memory persisted set is updated only after success.
+     */
     async saveDependencies(sheetId, deps) {
       const owner = await ownerOf(sheetId)
-      const fresh = deps.map((d) => dependencyToDb(d, owner, crypto.randomUUID()))
-      if (fresh.length > 0) check(await client.from('dependencies').insert(fresh))
-      let del = client.from('dependencies').delete().eq('sheet_id', sheetId)
-      if (fresh.length > 0) del = del.not('id', 'in', `(${fresh.map((d) => d.id).join(',')})`)
-      check(await del)
+      const known = await persistedDepsOf(sheetId)
+      const desired = new Map(deps.map((d) => [pairKey(d), d]))
+      const changed = [...desired].filter(([k, d]) => {
+        const p = known.get(k)
+        return !p || p.dep.type !== d.type || p.dep.lagMinutes !== d.lagMinutes
+      })
+      const removed = [...known].filter(([k]) => !desired.has(k))
+      const next = new Map(known)
+
+      for (let i = 0; i < changed.length; i += UPSERT_CHUNK) {
+        const chunk = changed.slice(i, i + UPSERT_CHUNK)
+        const written = check(
+          await client
+            .from('dependencies')
+            .upsert(
+              chunk.map(([, d]) => {
+                const { id: _id, ...row } = dependencyToDb(d, owner, '')
+                return row
+              }),
+              { onConflict: PAIR_CONFLICT },
+            )
+            .select('id, predecessor_row_id, successor_row_id'),
+        ) as Pick<DbDependency, 'id' | 'predecessor_row_id' | 'successor_row_id'>[]
+        for (const r of written) {
+          const k = pairKey({ predecessorId: r.predecessor_row_id, successorId: r.successor_row_id })
+          next.set(k, { id: r.id, dep: desired.get(k)! })
+        }
+      }
+      for (let i = 0; i < removed.length; i += DELETE_CHUNK) {
+        const chunk = removed.slice(i, i + DELETE_CHUNK)
+        check(await client.from('dependencies').delete().in('id', chunk.map(([, p]) => p.id)))
+        for (const [k] of chunk) next.delete(k)
+      }
+      persistedDeps.set(sheetId, next)
     },
 
     async deleteRows(ids) {

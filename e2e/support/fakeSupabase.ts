@@ -7,7 +7,9 @@
  * What it models:
  * - auth: email + password users, one persisted session, auth state events.
  * - tables `sheets`, `columns`, `rows`, `dependencies` with the schema's defaults, not-null
- *   columns, foreign keys and cascade deletes (supabase/migrations/0001_schema.sql).
+ *   columns, foreign keys and cascade deletes (supabase/migrations/0001_schema.sql), plus
+ *   0002_hardening.sql's same-sheet parents/endpoints and one dependency per pair.
+ * - PostgREST's 1000-row response cap (`.range()` pages), and `upsert` (ON CONFLICT DO UPDATE).
  * - ownership: every read and write is limited to rows owned by the signed-in user, and
  *   inserts/updates must keep `owner_id` = that user and point at the user's own sheet.
  *
@@ -333,6 +335,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
   type Op =
     | { kind: 'select'; columns: string }
     | { kind: 'insert'; rows: DbRecord[] }
+    | { kind: 'upsert'; rows: DbRecord[]; onConflict: string[] }
     | { kind: 'update'; patch: DbRecord }
     | { kind: 'delete' }
 
@@ -379,6 +382,22 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       return this.setOp({ kind: 'insert', rows: Array.isArray(values) ? values : [values] })
     }
 
+    /**
+     * INSERT ... ON CONFLICT (onConflict) DO UPDATE SET <the given columns>, like supabase-js's
+     * upsert. `onConflict` defaults to the primary key `id`; it must name a unique key of the
+     * table (`id`, or for dependencies `sheet_id,predecessor_row_id,successor_row_id`).
+     */
+    upsert(values: DbRecord | DbRecord[], options?: { onConflict?: string }): this {
+      const extra = Object.keys(options ?? {}).filter((k) => k !== 'onConflict')
+      if (extra.length > 0) unsupported(`${this.table}.upsert(..., {${extra.join(', ')}})`)
+      const onConflict = (options?.onConflict ?? 'id').split(',').map((c) => c.trim())
+      const key = onConflict.join(',')
+      if (key !== 'id' && !(this.table === 'dependencies' && key === PAIR_KEY.join(','))) {
+        unsupported(`${this.table}.upsert(..., { onConflict: ${JSON.stringify(key)} })`)
+      }
+      return this.setOp({ kind: 'upsert', rows: Array.isArray(values) ? values : [values], onConflict })
+    }
+
     update(patch: DbRecord, options?: unknown): this {
       if (options !== undefined) unsupported(`${this.table}.update(..., options)`)
       return this.setOp({ kind: 'update', patch })
@@ -390,7 +409,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     }
 
     private needFilterable(name: string): void {
-      if (!this.op || this.op.kind === 'insert') unsupported(`${this.table}.${name}() on ${this.op?.kind ?? 'no operation'}`)
+      if (!this.op || this.op.kind === 'insert' || this.op.kind === 'upsert') unsupported(`${this.table}.${name}() on ${this.op?.kind ?? 'no operation'}`)
     }
 
     eq(col: string, value: unknown): this {
@@ -464,6 +483,9 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
           break
         case 'insert':
           result = this.runInsert(state, uid, this.op.rows)
+          break
+        case 'upsert':
+          result = this.runUpsert(state, uid, this.op.rows, this.op.onConflict)
           break
         case 'update':
           result = this.runUpdate(state, uid, this.op.patch)
@@ -541,8 +563,10 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
         if (sheet.owner_id !== uid) return rlsError(this.table)
       }
+      // 0002_hardening.sql: parents and dependency endpoints must be rows of the SAME sheet.
       const rowExists = (id: unknown) =>
-        state.tables.rows.some((r) => r.id === id) || (this.table === 'rows' && pending.some((r) => r.id === id))
+        state.tables.rows.some((r) => r.id === id && r.sheet_id === row.sheet_id) ||
+        (this.table === 'rows' && pending.some((r) => r.id === id && r.sheet_id === row.sheet_id))
       if (this.table === 'columns') {
         if (!COLUMN_TYPES.includes(String(row.type))) return pgError('new row violates check constraint "columns_type_check"', '23514')
         if (row.role != null && !COLUMN_ROLES.includes(String(row.role))) {
@@ -564,32 +588,75 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       return null
     }
 
-    private runInsert(state: FakeState, uid: string, values: DbRecord[]): FakeResult {
+    /** A new row with the schema's defaults filled in. */
+    private withDefaults(state: FakeState, uid: string, v: DbRecord): DbRecord {
       const now = () => {
         state.clock = Math.max(Date.now(), state.clock + 1)
         return new Date(state.clock).toISOString()
       }
-      const spec = SCHEMA[this.table]
-      const fresh: DbRecord[] = []
-      for (const v of values) {
-        const row: DbRecord = structuredClone(v)
-        for (const [col, s] of Object.entries(spec)) {
-          if (row[col] === undefined && s.default) row[col] = s.default({ uid, now })
-        }
-        fresh.push(row)
+      const row: DbRecord = structuredClone(v)
+      for (const [col, s] of Object.entries(SCHEMA[this.table])) {
+        if (row[col] === undefined && s.default) row[col] = s.default({ uid, now })
       }
+      return row
+    }
+
+    /** Primary key and (dependencies) the one-per-pair unique key. Null when `row` is unique among `others`. */
+    private uniqueError(row: DbRecord, others: DbRecord[]): FakeError | null {
+      if (others.some((r) => r !== row && r.id === row.id)) {
+        return pgError(`duplicate key value violates unique constraint "${this.table}_pkey"`, '23505')
+      }
+      if (this.table === 'dependencies' && others.some((r) => r !== row && samePair(r, row))) {
+        return pgError('duplicate key value violates unique constraint "dependencies_pair_key"', '23505')
+      }
+      return null
+    }
+
+    private runInsert(state: FakeState, uid: string, values: DbRecord[]): FakeResult {
+      const fresh = values.map((v) => this.withDefaults(state, uid, v))
       // The whole statement fails if any row fails (one statement, one transaction).
-      const ids = new Set(state.tables[this.table].map((r) => r.id))
+      const all = [...state.tables[this.table], ...fresh]
       for (const row of fresh) {
-        if (ids.has(row.id)) {
-          return { data: null, error: pgError(`duplicate key value violates unique constraint "${this.table}_pkey"`, '23505') }
-        }
-        ids.add(row.id)
-        const err = this.checkRow(state, uid, row, fresh)
+        const err = this.uniqueError(row, all) ?? this.checkRow(state, uid, row, fresh)
         if (err) return { data: null, error: err }
       }
       state.tables[this.table].push(...fresh)
       return { data: this.returned(fresh), error: null }
+    }
+
+    /** INSERT ... ON CONFLICT (onConflict) DO UPDATE SET <given columns>; all-or-nothing. */
+    private runUpsert(state: FakeState, uid: string, values: DbRecord[], onConflict: string[]): FakeResult {
+      const working = [...state.tables[this.table]]
+      const written: DbRecord[] = []
+      const fresh: DbRecord[] = []
+      for (const v of values) {
+        if (onConflict.some((c) => v[c] === undefined)) unsupported(`${this.table}.upsert() row without ${onConflict.join(',')}`)
+        if (written.some((w) => onConflict.every((c) => w[c] === v[c]))) {
+          return {
+            data: null,
+            error: pgError('ON CONFLICT DO UPDATE command cannot affect row a second time', '21000'),
+          }
+        }
+        const i = working.findIndex((r) => onConflict.every((c) => r[c] === v[c]))
+        let row: DbRecord
+        if (i >= 0) {
+          // The conflicting row must be visible to the caller for the UPDATE (RLS `using`).
+          if (working[i].owner_id !== uid) return { data: null, error: rlsError(this.table) }
+          row = { ...working[i], ...structuredClone(v) }
+          working[i] = row
+        } else {
+          row = this.withDefaults(state, uid, v)
+          working.push(row)
+          fresh.push(row)
+        }
+        written.push(row)
+      }
+      for (const row of written) {
+        const err = this.uniqueError(row, working) ?? this.checkRow(state, uid, row, fresh)
+        if (err) return { data: null, error: err }
+      }
+      state.tables[this.table] = working
+      return { data: this.returned(written), error: null }
     }
 
     private runUpdate(state: FakeState, uid: string, patch: DbRecord): FakeResult {
@@ -616,6 +683,11 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 }
 
 export type FakeSupabaseClient = ReturnType<typeof createFakeSupabase>
+
+/** The dependencies table's one-per-pair unique key (0002_hardening.sql). */
+const PAIR_KEY = ['sheet_id', 'predecessor_row_id', 'successor_row_id'] as const
+
+const samePair = (a: DbRecord, b: DbRecord) => PAIR_KEY.every((c) => a[c] === b[c])
 
 function compare(a: unknown, b: unknown): number {
   if (a === b) return 0

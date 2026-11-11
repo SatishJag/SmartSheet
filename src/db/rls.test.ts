@@ -21,6 +21,30 @@ const CHILD = 'aaaaaaaa-0000-0000-0000-000000000004'
 const DEP = 'aaaaaaaa-0000-0000-0000-000000000005'
 
 const TABLES = ['sheets', 'columns', 'rows', 'dependencies'] as const
+/** Applied in order, as `supabase db reset` would. */
+const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql']
+
+// A second sheet of A's, and B's own sheet and row, for the cross-sheet / cross-user tests.
+const SHEET_A2 = 'aaaaaaaa-0000-0000-0000-000000000011'
+const ROW_A2 = 'aaaaaaaa-0000-0000-0000-000000000012'
+const SHEET_B = 'bbbbbbbb-0000-0000-0000-000000000001'
+const ROW_B = 'bbbbbbbb-0000-0000-0000-000000000002'
+const ROW_B2 = 'bbbbbbbb-0000-0000-0000-000000000003'
+
+async function seedExtra() {
+  await asUser(A)
+  await db.query(`insert into sheets (id, name) values ($1, 'Sheet A2')`, [SHEET_A2])
+  await db.query(`insert into rows (id, sheet_id, position) values ($1, $2, 'a0')`, [ROW_A2, SHEET_A2])
+  await asUser(B)
+  await db.query(`insert into sheets (id, name) values ($1, 'Sheet B')`, [SHEET_B])
+  await db.query(`insert into rows (id, sheet_id, position) values ($1, $2, 'a0'), ($3, $2, 'a1')`, [ROW_B, SHEET_B, ROW_B2])
+}
+
+async function asAnon() {
+  await db.exec('RESET ROLE')
+  await db.query(`select set_config('request.jwt.claim.sub', '', false)`)
+  await db.exec('SET ROLE anon')
+}
 
 let db: PGlite
 
@@ -63,17 +87,21 @@ async function seedAsA() {
 beforeAll(async () => {
   db = new PGlite()
   // What real Supabase already provides:
+  // Supabase also has an `anon` role that, by default privileges, gets ALL on new public tables.
   await db.exec(`
     create schema auth;
     create role authenticated nologin;
+    create role anon nologin;
     create function auth.uid() returns uuid language sql stable as
       $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
-    grant usage on schema public to authenticated;
-    grant usage on schema auth to authenticated;
-    grant execute on function auth.uid() to authenticated;
+    grant usage on schema public to authenticated, anon;
+    grant usage on schema auth to authenticated, anon;
+    grant execute on function auth.uid() to authenticated, anon;
+    alter default privileges in schema public grant all on tables to anon, authenticated;
   `)
-  const migration = readFileSync(resolve(__dirname, '../../supabase/migrations/0001_schema.sql'), 'utf8')
-  await db.exec(migration)
+  for (const file of MIGRATIONS) {
+    await db.exec(readFileSync(resolve(__dirname, '../../supabase/migrations', file), 'utf8'))
+  }
 }, 60_000)
 
 afterAll(async () => {
@@ -225,6 +253,124 @@ describe('cascades', () => {
     expect(await count('rows')).toBe(0)
     expect(await count('dependencies')).toBe(0)
     expect(await count('sheets')).toBe(1)
+  })
+})
+
+describe('hardening (0002)', () => {
+  beforeEach(seedExtra, 30_000)
+
+  it('gives anon no access at all: every read and write is refused', async () => {
+    await asAnon()
+    for (const t of TABLES) {
+      await expect(db.query(`select count(*) from ${t}`)).rejects.toThrow(/permission denied/i)
+    }
+    await expect(db.query(`insert into sheets (name, owner_id) values ('anon', $1)`, [A])).rejects.toThrow(/permission denied/i)
+    await expect(db.query(`update rows set cells = '{}'`)).rejects.toThrow(/permission denied/i)
+    await expect(db.query(`delete from dependencies`)).rejects.toThrow(/permission denied/i)
+  })
+
+  it('rejects a parent_id in another sheet of the same user (insert and update)', async () => {
+    await asUser(A)
+    await expect(
+      db.query(`insert into rows (sheet_id, parent_id, position) values ($1, $2, 'b0')`, [SHEET_A2, PARENT]),
+    ).rejects.toThrow(/foreign key/i)
+    await expect(db.query(`update rows set parent_id = $1 where id = $2`, [PARENT, ROW_A2])).rejects.toThrow(/foreign key/i)
+  })
+
+  it('still accepts a same-sheet parent and a top-level (null parent) row', async () => {
+    await asUser(A)
+    await db.query(`insert into rows (sheet_id, parent_id, position) values ($1, $2, 'a1')`, [SHEET, PARENT])
+    await db.query(`insert into rows (sheet_id, position) values ($1, 'a2')`, [SHEET])
+    expect(await count('rows')).toBe(5)
+  })
+
+  it('rejects a dependency endpoint in another sheet', async () => {
+    await asUser(A)
+    await expect(
+      db.query(
+        `insert into dependencies (sheet_id, predecessor_row_id, successor_row_id, type) values ($1, $2, $3, 'FS')`,
+        [SHEET, ROW_A2, CHILD],
+      ),
+    ).rejects.toThrow(/foreign key/i)
+    await expect(
+      db.query(
+        `insert into dependencies (sheet_id, predecessor_row_id, successor_row_id, type) values ($1, $2, $3, 'FS')`,
+        [SHEET, CHILD, ROW_A2],
+      ),
+    ).rejects.toThrow(/foreign key/i)
+  })
+
+  it("rejects another user's row as a dependency endpoint or parent", async () => {
+    await asUser(B)
+    await expect(
+      db.query(
+        `insert into dependencies (sheet_id, predecessor_row_id, successor_row_id, type) values ($1, $2, $3, 'FS')`,
+        [SHEET_B, CHILD, ROW_B],
+      ),
+    ).rejects.toThrow(/foreign key/i)
+    await expect(
+      db.query(`insert into rows (sheet_id, parent_id, position) values ($1, $2, 'z0')`, [SHEET_B, PARENT]),
+    ).rejects.toThrow(/foreign key/i)
+  })
+
+  it('rejects a second dependency for the same (predecessor, successor) pair, whatever its type', async () => {
+    await asUser(A)
+    await expect(
+      db.query(
+        `insert into dependencies (sheet_id, predecessor_row_id, successor_row_id, type) values ($1, $2, $3, 'SS')`,
+        [SHEET, PARENT, CHILD],
+      ),
+    ).rejects.toThrow(/duplicate key|unique/i)
+  })
+
+  it('supports upsert on the pair (the app saves dependencies that way)', async () => {
+    await asUser(A)
+    await db.query(
+      `insert into dependencies (sheet_id, predecessor_row_id, successor_row_id, type, lag_minutes)
+       values ($1, $2, $3, 'SS', 480)
+       on conflict (sheet_id, predecessor_row_id, successor_row_id)
+       do update set type = excluded.type, lag_minutes = excluded.lag_minutes`,
+      [SHEET, PARENT, CHILD],
+    )
+    const r = await db.query<{ type: string; lag_minutes: number }>(`select type, lag_minutes from dependencies`)
+    expect(r.rows).toEqual([{ type: 'SS', lag_minutes: 480 }])
+  })
+
+  it('rejects workspace_id other than the caller on every table', async () => {
+    await asUser(A)
+    await expect(db.query(`insert into sheets (name, workspace_id) values ('W', $1)`, [B])).rejects.toThrow(/row-level security/i)
+    await expect(
+      db.query(`insert into columns (sheet_id, title, type, position, workspace_id) values ($1, 'x', 'DATE', 5, $2)`, [SHEET, B]),
+    ).rejects.toThrow(/row-level security/i)
+    await expect(
+      db.query(`insert into rows (sheet_id, position, workspace_id) values ($1, 'w0', $2)`, [SHEET, B]),
+    ).rejects.toThrow(/row-level security/i)
+    await expect(db.query(`update rows set workspace_id = $1 where id = $2`, [B, CHILD])).rejects.toThrow(/row-level security/i)
+    await expect(db.query(`update sheets set workspace_id = $1 where id = $2`, [B, SHEET])).rejects.toThrow(/row-level security/i)
+  })
+
+  it("rejects moving a row, column or dependency into another user's sheet via UPDATE sheet_id", async () => {
+    await asUser(A)
+    await expect(db.query(`update columns set sheet_id = $1 where id = $2`, [SHEET_B, COL])).rejects.toThrow(/row-level security/i)
+    await expect(db.query(`update rows set sheet_id = $1 where id = $2`, [SHEET_B, ROW_A2])).rejects.toThrow(/row-level security/i)
+    await expect(db.query(`update dependencies set sheet_id = $1 where id = $2`, [SHEET_B, DEP])).rejects.toThrow(
+      /row-level security|foreign key/i,
+    )
+    await asUser(B)
+    expect(await count('columns')).toBe(0)
+    expect(await count('rows')).toBe(2)
+    expect(await count('dependencies')).toBe(0)
+  })
+
+  it('deleting a sheet still cascades, leaving other sheets alone', async () => {
+    await asUser(A)
+    await db.query(`delete from sheets where id = $1`, [SHEET])
+    expect(await count('sheets')).toBe(1)
+    expect(await count('rows')).toBe(1)
+    expect(await count('columns')).toBe(0)
+    expect(await count('dependencies')).toBe(0)
+    await asUser(B)
+    expect(await count('rows')).toBe(2)
   })
 })
 
