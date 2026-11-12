@@ -7,13 +7,15 @@ export interface InlineRenameProps {
   onSave: (name: string) => Promise<string | null>
   onCancel: () => void
   label?: string
+  /** Validates the typed name (defaults to the sheet-name rules). */
+  validate?: (raw: string) => { ok: true; name: string } | { ok: false; error: string }
 }
 
 /**
  * Inline name editor: Enter validates and saves (staying open with an alert on any error),
  * Escape cancels. Focus moves into the input when it opens.
  */
-export function InlineRename({ initial, onSave, onCancel, label = 'Sheet name' }: InlineRenameProps) {
+export function InlineRename({ initial, onSave, onCancel, label = 'Sheet name', validate = validateSheetName }: InlineRenameProps) {
   const [value, setValue] = useState(initial)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -26,7 +28,7 @@ export function InlineRename({ initial, onSave, onCancel, label = 'Sheet name' }
   }, [])
 
   async function save() {
-    const valid = validateSheetName(value)
+    const valid = validate(value)
     if (!valid.ok) {
       setError(valid.error)
       return

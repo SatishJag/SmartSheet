@@ -20,6 +20,7 @@ import { FilterBar } from './FilterBar'
 import { HierarchyCell } from './HierarchyCell'
 import { PredecessorCell } from './PredecessorCell'
 import { useGridViewState } from './useGridViewState'
+import { useColumnManagement } from './useColumnManagement'
 import { useRowDrag } from './useRowDrag'
 import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow } from './viewModel'
 import { fixedViewport, measuredViewport } from './viewport'
@@ -56,6 +57,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const columns = data?.columns ?? EMPTY_COLUMNS
   const columnDefs = useMemo(() => buildColumnDefs(columns), [columns])
   const { view, toggleCollapsed, expand, cycleSort, setFilter } = useGridViewState()
+  const columnUi = useColumnManagement(columns)
 
   const allRows = useMemo(() => buildGridRows(data, scheduled), [data, scheduled])
   const rows = useMemo<ViewRow[]>(() => {
@@ -173,6 +175,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
     } else if (e.key === 'Delete' && (e.target as HTMLElement).getAttribute('role') === 'gridcell') {
       e.preventDefault()
       requestDelete()
+    } else if ((e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) && (e.target as HTMLElement).getAttribute('role') === 'gridcell') {
+      e.preventDefault()
+      columnUi.openMenu(columns[activeColIdx].id) // the active column's header menu
     }
   }
 
@@ -364,17 +369,18 @@ export function GridView({ viewportHeight }: GridViewProps) {
                 role="columnheader"
                 aria-colindex={i + 1}
                 aria-sort={h.id === ROW_NUMBER_COLUMN_ID ? undefined : view.sort?.colId === h.id ? ARIA_SORT[view.sort.dir] : 'none'}
-                className="grid-header-cell"
+                className={`grid-header-cell${columnUi.renameField(h.id) ? ' is-renaming' : ''}`}
                 style={{ width: h.getSize() }}
               >
                 {h.id === ROW_NUMBER_COLUMN_ID ? (
                   <table.FlexRender header={h} />
-                ) : (
+                ) : (columnUi.renameField(h.id) ?? (
                   // Out of the tab order: the grid keeps a single tab stop.
                   <button type="button" className="sort-button" tabIndex={-1} onClick={() => cycleSort(h.id)}>
                     <table.FlexRender header={h} />
                   </button>
-                )}
+                ))}
+                {h.id !== ROW_NUMBER_COLUMN_ID && columnUi.menuButton(h.id)}
                 {h.column.getCanResize() && (
                   <div
                     role="separator"
@@ -422,6 +428,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
             })}
           </div>
         </div>
+        {columnUi.addColumnButton}
         {rows.length === 0 && <p className="grid-empty">No rows yet</p>}
       </div>
       <div className="grid-toolbar">
@@ -448,6 +455,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
           onCancel={() => setPendingDelete(null)}
         />
       )}
+      {columnUi.dialogs}
     </div>
   )
 }

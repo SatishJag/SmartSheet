@@ -1,0 +1,187 @@
+/* Column management: header menu button, popup menu, add-column button, column dialog. */
+
+.grid-header-cell .sort-button {
+  flex: 1;
+  min-width: 0;
+}
+
+.column-menu-button {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+  margin-right: 2px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: none;
+  color: #52606d;
+  opacity: 0.55;
+}
+
+/* A drawn icon keeps the header's text content equal to the column title. */
+.column-menu-button::before {
+  content: '\22EE';
+  font-weight: 700;
+}
+
+.grid-header-cell:hover .column-menu-button,
+.column-menu-button:focus-visible,
+.column-menu-button[aria-expanded='true'] {
+  opacity: 1;
+  border-color: #9aa5b1;
+  background: #fff;
+}
+
+.column-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 200px;
+  max-width: 260px;
+  padding: 4px 0;
+  border: 1px solid #bcccdc;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.18);
+  font-size: 0.9rem;
+}
+
+.column-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  text-align: left;
+  color: #1f2933;
+}
+
+.column-menu-item:hover,
+.column-menu-item:focus {
+  outline: none;
+  background: #eff8ff;
+}
+
+.column-menu-item.is-danger {
+  color: #b42318;
+}
+
+.column-menu-item[aria-disabled='true'] {
+  color: #9aa5b1;
+  cursor: default;
+}
+
+.column-menu-note {
+  display: block;
+  font-size: 0.75rem;
+  white-space: normal;
+}
+
+/* The add-column button sits after the grid and sticks to the top like the header. */
+.grid-view .grid-scroll {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+}
+
+.grid-view .grid-scroll > .grid {
+  flex: none;
+}
+
+.grid-view .grid-scroll > .grid-empty {
+  position: absolute;
+  top: 32px;
+  left: 0;
+  margin: 0;
+}
+
+.add-column-button {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid #bcccdc;
+  border-radius: 0;
+  background: #f0f4f8;
+  color: #52606d;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.add-column-button:hover,
+.add-column-button:focus-visible {
+  background: #d9e2ec;
+  color: #1f2933;
+}
+
+/* Rename in place: the error may be wider than the header, so let it show below. */
+.grid-header-cell.is-renaming {
+  overflow: visible;
+}
+
+.grid-header-cell .inline-rename {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.grid-header-cell .inline-rename input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-weight: 400;
+}
+
+.grid-header-cell .inline-rename-error {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border: 1px solid #b42318;
+  border-radius: 4px;
+  background: #fef3f2;
+  font-size: 0.8rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.column-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.column-dialog-field input,
+.column-dialog-field select,
+.column-dialog-field textarea {
+  font: inherit;
+  font-weight: 400;
+  padding: 6px 8px;
+  border: 1px solid #9aa5b1;
+  border-radius: 4px;
+}
+
+.column-dialog-hint {
+  font-size: 0.85rem;
+  color: #52606d;
+}
+
+.column-dialog-error {
+  margin: 0 0 12px;
+}
+
+.column-dialog-submit {
+  background: #2f80ed;
+  border-color: #2f80ed;
+  color: #fff;
+}
