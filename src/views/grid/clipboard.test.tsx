@@ -186,6 +186,28 @@ describe('paste', () => {
     expect(cell(2, 'Duration')).toHaveClass('is-active')
   })
 
+  it('writes a whole paste, and a clear, inside one store batch (one reschedule)', async () => {
+    const { store, user, setCell } = await renderGrid()
+    const original = store.getState().batch
+    let callsInside = 0
+    const batch = vi.spyOn(store.getState(), 'batch').mockImplementation((fn) => {
+      const before = setCell.mock.calls.length
+      try {
+        return original(fn)
+      } finally {
+        callsInside += setCell.mock.calls.length - before
+      }
+    })
+    await user.click(cell(2, 'Duration'))
+    await user.paste('4d\t\t50\r\n1d\t\t25\r\n')
+    expect(batch).toHaveBeenCalledTimes(1)
+    expect(setCell.mock.calls.length).toBeGreaterThan(0)
+    expect(callsInside).toBe(setCell.mock.calls.length) // every write happened inside the batch
+    await user.keyboard('{Backspace}')
+    expect(batch).toHaveBeenCalledTimes(2)
+    expect(callsInside).toBe(setCell.mock.calls.length)
+  })
+
   it('skips cells whose value would not change', async () => {
     const { user, setCell } = await renderGrid()
     await user.click(cell(2, 'Task'))

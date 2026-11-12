@@ -64,6 +64,12 @@ export interface SheetState extends ColumnActions {
    */
   retryFailed(): void
   /**
+   * Runs `fn` with rescheduling deferred: actions inside change data at once, and the schedule is
+   * computed once when the outermost batch ends (even if `fn` throws). For bulk edits such as a
+   * paste, which would otherwise reschedule the whole sheet once per cell.
+   */
+  batch<T>(fn: () => T): T
+  /**
    * Validates and sets the sheet's working-day calendar (stored deduped and sorted), re-runs the
    * schedule and saves the sheet's settings. Unchanged input is a no-op.
    */
@@ -359,7 +365,16 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
     }
 
     /** Replace data and recompute the schedule. */
+    /** Depth of nested `batch` calls; while > 0, commits skip rescheduling. */
+    let batchDepth = 0
+    let scheduleStale = false
+
     function commit(data: SheetData, extra: Partial<SheetState> = {}): void {
+      if (batchDepth > 0) {
+        scheduleStale = true
+        set({ data, ...extra })
+        return
+      }
       set({ data, scheduled: computeSchedule(data), ...extra })
     }
 
@@ -702,6 +717,20 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         return { ok: true }
       },
       ...createColumnActions({ p, get, commit, enqueue, failedKeys, unpersisted, retryers }),
+
+      batch(fn) {
+        batchDepth++
+        try {
+          return fn()
+        } finally {
+          batchDepth--
+          if (batchDepth === 0 && scheduleStale) {
+            scheduleStale = false
+            const data = get().data
+            if (data) set({ scheduled: computeSchedule(data) })
+          }
+        }
+      },
 
       dismissNotice(index) {
         const notices = get().notices

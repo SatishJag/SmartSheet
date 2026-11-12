@@ -254,19 +254,22 @@ export function GridView({ viewportHeight }: GridViewProps) {
     e.preventDefault()
     const plan = planPaste(parseTsv(e.clipboardData.getData('text/plain')), selection, rows.length, columns.length)
     const rejected: Rejection[] = []
-    for (const { row: r, col: c, value } of plan.cells) {
-      const row = rows[r]
-      const col = columns[c]
-      const where = `row ${row.rowNumber} ${col.title}`
-      if (!isEditable(col, row)) {
-        // Pasting a block back over itself is not an error for its calculated cells.
-        if (value !== copyText(col, row)) rejected.push({ where, reason: readOnlyReason(col, row) ?? 'read-only' })
-        continue
+    // One reschedule for the whole paste instead of one per cell.
+    api.getState().batch(() => {
+      for (const { row: r, col: c, value } of plan.cells) {
+        const row = rows[r]
+        const col = columns[c]
+        const where = `row ${row.rowNumber} ${col.title}`
+        if (!isEditable(col, row)) {
+          // Pasting a block back over itself is not an error for its calculated cells.
+          if (value !== copyText(col, row)) rejected.push({ where, reason: readOnlyReason(col, row) ?? 'read-only' })
+          continue
+        }
+        if (value === editString(col, row) && !errorByCell.has(`${row.id}:${col.id}`)) continue
+        const result = api.getState().setCell(row.id, col.id, value)
+        if (!result.ok) rejected.push({ where, reason: result.error })
       }
-      if (value === editString(col, row) && !errorByCell.has(`${row.id}:${col.id}`)) continue
-      const result = api.getState().setCell(row.id, col.id, value)
-      if (!result.ok) rejected.push({ where, reason: result.error })
-    }
+    })
     notify(describeRejections(rejected, plan.clipped))
     // The pasted block becomes the selection; the active cell stays at its top-left.
     const { top, left, bottom, right } = plan.range
@@ -277,15 +280,17 @@ export function GridView({ viewportHeight }: GridViewProps) {
   /** Clears every editable cell in the range; read-only cells are skipped silently. */
   function clearCells(range: CellRange, verb = 'cleared') {
     const rejected: Rejection[] = []
-    for (const { row: r, col: c } of rangeCells(range)) {
-      const row = rows[r]
-      const col = columns[c]
-      if (!isEditable(col, row)) continue
-      const empty = col.type === 'CHECKBOX' ? row.record.cells[col.id] !== true : editString(col, row) === ''
-      if (empty && !errorByCell.has(`${row.id}:${col.id}`)) continue
-      const result = api.getState().setCell(row.id, col.id, '')
-      if (!result.ok) rejected.push({ where: `row ${row.rowNumber} ${col.title}`, reason: result.error })
-    }
+    api.getState().batch(() => {
+      for (const { row: r, col: c } of rangeCells(range)) {
+        const row = rows[r]
+        const col = columns[c]
+        if (!isEditable(col, row)) continue
+        const empty = col.type === 'CHECKBOX' ? row.record.cells[col.id] !== true : editString(col, row) === ''
+        if (empty && !errorByCell.has(`${row.id}:${col.id}`)) continue
+        const result = api.getState().setCell(row.id, col.id, '')
+        if (!result.ok) rejected.push({ where: `row ${row.rowNumber} ${col.title}`, reason: result.error })
+      }
+    })
     notify(describeRejections(rejected, 0, verb))
   }
 
