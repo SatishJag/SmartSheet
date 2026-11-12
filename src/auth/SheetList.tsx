@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { DEFAULT_TEMPLATE_ID, TEMPLATES, type TemplateId } from '../templates'
-import { insertSheetFromTemplate } from '../templates/insertTemplate'
+import { MAX_IMPORT_BYTES, sheetFromCsv, sheetNameFromFile } from '../import/sheetFromCsv'
+import { insertSheetData, insertSheetFromTemplate } from '../templates/insertTemplate'
 import { fetchAllPages } from '../store/paging'
 import { ConfirmDialog } from '../views/ConfirmDialog'
 import { InlineRename } from '../views/InlineRename'
@@ -44,6 +45,7 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
   const active = useRef(true)
   const templateGroupId = useId()
   const aiDescId = useId()
+  const importInputId = useId()
 
   /** Loads the whole list (paged: Supabase returns at most 1000 rows per request). */
   const load = useCallback(async () => {
@@ -75,6 +77,24 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
       onOpen(await insertSheetFromTemplate(client, templateId, userId))
     } catch (err) {
       setError(message(err, 'Could not create the sheet'))
+    } finally {
+      inFlight.current = false
+      setCreating(false)
+    }
+  }
+
+  /** Creates a new sheet from the chosen CSV file and opens it. */
+  async function importCsv(file: File | undefined) {
+    if (!file || inFlight.current) return
+    inFlight.current = true
+    setError(null)
+    setCreating(true)
+    try {
+      if (file.size > MAX_IMPORT_BYTES) throw new Error(`"${file.name}" is larger than ${MAX_IMPORT_BYTES / 1024 / 1024} MB`)
+      const data = sheetFromCsv(await file.text(), sheetNameFromFile(file.name), userId)
+      onOpen(await insertSheetData(client, data))
+    } catch (err) {
+      setError(`Could not import "${file.name}": ${message(err, 'unknown error')}`)
     } finally {
       inFlight.current = false
       setCreating(false)
@@ -153,7 +173,21 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
               <Icon name="plus" size={18} />
               New sheet
             </button>
-            <span className="create-hint">Creates a sheet from the selected template.</span>
+            <label htmlFor={importInputId} className={`btn btn-ghost${creating ? ' is-disabled' : ''}`}>
+              Import CSV
+            </label>
+            <input
+              id={importInputId}
+              className="visually-hidden"
+              type="file"
+              accept=".csv,text/csv"
+              disabled={creating}
+              onChange={(e) => {
+                void importCsv(e.target.files?.[0])
+                e.target.value = '' // lets the same file be chosen again after a failure
+              }}
+            />
+            <span className="create-hint">Creates a sheet from the selected template, or from a CSV file.</span>
           </div>
         </div>
         <button

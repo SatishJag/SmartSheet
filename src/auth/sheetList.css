@@ -227,3 +227,8 @@
   .sheet-grid { grid-template-columns: 1fr; }
   .page-intro h2 { font-size: 1.5rem; }
 }
+
+/* The file input is visually hidden; its label is the button, so show the keyboard focus on the label. */
+.create-actions label.btn:has(+ input[type='file']:focus-visible) { box-shadow: var(--ring); border-color: var(--accent); }
+.create-actions label.btn { cursor: pointer; }
+.create-actions label.btn.is-disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }

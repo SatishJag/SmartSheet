@@ -34,6 +34,8 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
   working days (needs dependencies on)
 - **Kanban**: lanes from any picklist column (Status by default), drag cards between lanes
 - **Templates**: Project schedule, Punch list, Simple list, with trade and status presets
+- **Import CSV**: create a sheet from a CSV file (first row = headers; date, checkbox and text columns are
+  detected; up to 5,000 rows and 50 columns)
 - **Saving**: optimistic edits, background save with retry, unsaved-changes guard
 
 ## Getting started
