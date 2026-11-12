@@ -464,10 +464,10 @@ describe('GridView row deletion', () => {
     expect(store.getState().notices).toEqual(['Removed 1 dependency that referenced deleted rows'])
   })
 
-  it('the Delete key deletes the active leaf row and the next row becomes active', async () => {
+  it('the Delete row button deletes the active leaf row and the next row becomes active', async () => {
     const { store, user } = await renderGrid()
     await user.click(cell(2, 'Duration')) // Survey
-    await user.keyboard('{Delete}')
+    await user.click(screen.getByRole('button', { name: 'Delete row' }))
     expect(ids(store)).toEqual(['r-site', 'r-clear', 'r-found'])
     expect(cell(2, 'Task')).toHaveTextContent('Clear site')
     expect(cell(2, 'Duration')).toHaveAttribute('aria-selected', 'true')
@@ -485,7 +485,8 @@ describe('GridView row deletion', () => {
   it('a row with sub-rows asks first in an accessible dialog; Escape cancels and returns focus', async () => {
     const { store, user } = await renderGrid()
     await user.click(cell(1, 'Duration')) // Site preparation, 2 sub-rows
-    await user.keyboard('{Delete}')
+    const deleteButton = screen.getByRole('button', { name: 'Delete row' })
+    await user.click(deleteButton)
     const dialog = screen.getByRole('alertdialog', { name: 'Delete row' })
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(dialog).toHaveAccessibleDescription('Delete this row and its 2 sub-rows?')
@@ -494,7 +495,7 @@ describe('GridView row deletion', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(ids(store)).toHaveLength(4)
-    expect(cell(1, 'Duration')).toHaveFocus()
+    expect(deleteButton).toHaveFocus()
   })
 
   it('confirming deletes the row and its sub-rows', async () => {
@@ -510,9 +511,134 @@ describe('GridView row deletion', () => {
   it('deleting the only row clears the active cell', async () => {
     const { store, user } = await renderGrid(makeSheetData({ rows: [makeRow('only', 'a0', { [COL.task]: 'Only' })], dependencies: [] }))
     await user.click(cell(1, 'Task'))
-    await user.keyboard('{Delete}')
+    await user.click(screen.getByRole('button', { name: 'Delete row' }))
     expect(ids(store)).toEqual([])
     expect(screen.getByRole('button', { name: 'Delete row' })).toBeDisabled()
+  })
+})
+
+const selectedCells = () => screen.getAllByRole('gridcell').filter((c) => c.getAttribute('aria-selected') === 'true')
+const statusText = () => screen.getByRole('status').textContent
+const cellValue = (store: Awaited<ReturnType<typeof renderGrid>>['store'], rowId: string, colId: string) =>
+  store.getState().data!.rows.find((r) => r.id === rowId)!.cells[colId]
+
+describe('GridView range selection', () => {
+  it('Shift+arrows grow a rectangle from the anchor; a plain arrow collapses it', async () => {
+    const { user } = await renderGrid()
+    await user.click(cell(2, 'Task'))
+    await user.keyboard('{Shift>}{ArrowDown}{ArrowRight}{/Shift}')
+    expect(selectedCells()).toEqual([cell(2, 'Task'), cell(2, 'Start'), cell(3, 'Task'), cell(3, 'Start')])
+    expect(cell(3, 'Start')).toHaveFocus()
+    expect(screen.getByRole('grid')).toHaveAttribute('aria-multiselectable', 'true')
+
+    await user.keyboard('{ArrowDown}')
+    expect(selectedCells()).toEqual([cell(4, 'Start')])
+  })
+
+  it('Shift+click selects the rectangle from the active cell; Home and End jump along the row', async () => {
+    const { user } = await renderGrid()
+    await user.click(cell(2, 'Duration'))
+    await user.keyboard('{Shift>}')
+    await user.click(cell(4, 'Predecessors'))
+    await user.keyboard('{/Shift}')
+    expect(selectedCells()).toHaveLength(6) // rows 2-4 x Duration..Predecessors
+
+    await user.keyboard('{End}')
+    expect(selectedCells()).toEqual([cell(4, 'Status')])
+    await user.keyboard('{Home}')
+    expect(selectedCells()).toEqual([cell(4, 'Task')])
+  })
+})
+
+/** Fires a copy event at the focused cell and returns the text the grid put on the clipboard. */
+function copiedText(): string {
+  let text = ''
+  const clipboardData = { setData: (_type: string, data: string) => (text = data) }
+  fireEvent.copy(document.activeElement!, { clipboardData })
+  return text
+}
+
+describe('GridView copy and paste', () => {
+  it('copies the selected range as tab-separated displayed values', async () => {
+    const { user } = await renderGrid()
+    await user.click(cell(2, 'Task'))
+    await user.keyboard('{Shift>}{ArrowDown}{ArrowRight}{ArrowRight}{ArrowRight}{/Shift}')
+    expect(copiedText()).toBe(
+      'Survey\t2026-11-09\t2026-11-10\t2d\nClear site\t2026-11-11\t2026-11-13\t3d',
+    )
+  })
+
+  it('copies a range larger than the rendered window', async () => {
+    const rows = Array.from({ length: 5000 }, (_, i) => makeRow(`r${i}`, `a${String(i).padStart(5, '0')}`, { [COL.task]: `Task ${i + 1}` }))
+    const { user } = await renderGrid(makeSheetData({ rows, dependencies: [] }))
+    await user.click(cell(1, 'Task'))
+    await user.keyboard('{Control>}{Shift>}{End}{/Shift}{/Control}')
+    const lines = copiedText().split('\n')
+    expect(lines).toHaveLength(5000)
+    expect(lines[4999].split('\t')[0]).toBe('Task 5000')
+  })
+
+  it('pastes through setCell: an invalid cell keeps its value and is reported once, the rest pastes', async () => {
+    const { store, setCell, user } = await renderGrid()
+    await user.click(cell(2, 'Status'))
+    await user.paste('Not started\nBogus\nDone')
+    expect(setCell).toHaveBeenCalledTimes(3)
+    expect(cellValue(store, 'r-survey', COL.status)).toBe('Not started')
+    expect(cellValue(store, 'r-clear', COL.status)).toBe('In progress')
+    expect(cellValue(store, 'r-found', COL.status)).toBe('Done')
+    expect(cell(3, 'Status')).toHaveAttribute('aria-invalid', 'true')
+    expect(statusText()).toMatch(/^Pasted 2 cells, 1 skipped: row 3 Status: Choose one of: /)
+    expect(selectedCells()).toHaveLength(3) // the pasted block, active cell at its top-left
+    expect(cell(2, 'Status')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('skips read-only cells and says why, but still pastes the rest', async () => {
+    const { store, user } = await renderGrid()
+    await user.click(cell(2, 'Start'))
+    await user.paste('2026-11-10\n2026-11-20') // row 3 Start is set by its predecessor
+    expect(cellValue(store, 'r-survey', COL.start)).toBe('2026-11-10')
+    expect(cellValue(store, 'r-clear', COL.start)).toBeUndefined()
+    expect(statusText()).toMatch(/^Pasted 1 cell, 1 skipped: row 3 Start: Start date is set by predecessors/)
+  })
+
+  it('clips a block that runs past the last row or column', async () => {
+    const { store, user } = await renderGrid()
+    await user.click(cell(4, 'Status'))
+    await user.paste('Done\tx\nignored')
+    expect(cellValue(store, 'r-found', COL.status)).toBe('Done')
+    expect(statusText()).toBe('Pasted 1 cell, 2 past the edge of the grid ignored')
+  })
+
+  it('reads Excel-style quoted fields and CRLF line ends', async () => {
+    const { store, user } = await renderGrid()
+    await user.click(cell(2, 'Task'))
+    await user.paste('"Say ""hi""\nthere"\r\nNext\r\n')
+    expect(cellValue(store, 'r-survey', COL.task)).toBe('Say "hi"\nthere')
+    expect(cellValue(store, 'r-clear', COL.task)).toBe('Next')
+  })
+
+  it('follows the displayed row order when sorted', async () => {
+    const { store, user } = await renderGrid()
+    await user.click(within(header('Task')).getByRole('button')) // ascending: Foundations, Site preparation, then Clear site, Survey
+    await user.click(cell(3, 'Task'))
+    expect(cell(3, 'Task')).toHaveTextContent('Clear site')
+    await user.paste('A\nB')
+    expect(cellValue(store, 'r-clear', COL.task)).toBe('A')
+    expect(cellValue(store, 'r-survey', COL.task)).toBe('B')
+  })
+
+  it('Delete and Backspace clear the selected cells through setCell, skipping read-only ones', async () => {
+    const { store, user } = await renderGrid()
+    await user.click(cell(2, 'Status'))
+    await user.keyboard('{Shift>}{ArrowDown}{/Shift}{Delete}')
+    expect(cellValue(store, 'r-survey', COL.status)).toBeNull()
+    expect(cellValue(store, 'r-clear', COL.status)).toBeNull()
+    expect(statusText()).toBe('Cleared 2 cells')
+
+    await user.click(cell(3, 'Start'))
+    await user.keyboard('{Backspace}')
+    expect(statusText()).toMatch(/^Cleared 0 cells, 1 skipped: row 3 Start: Start date is set by predecessors/)
+    expect(screen.getAllByRole('row')).toHaveLength(5) // no row was deleted
   })
 })
 
