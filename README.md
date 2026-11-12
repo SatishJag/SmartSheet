@@ -15,6 +15,12 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
   duration, predecessor), inline editing with validation, row hierarchy (Tab / Shift+Tab),
   drag to reorder, collapse, sort and filter, basic formulas (`SUM`, `IF`, arithmetic,
   comparisons, `[Column]` references, `TODAY()`, `NETDAYS()`), virtualized for thousands of rows
+- **Columns**: add, insert, rename (formula references follow), change type, edit dropdown
+  options and delete, from each column header's menu (Shift+F10 on a cell opens it)
+- **Selection and clipboard**: Shift+Arrow / Shift+click range selection; copy, cut and paste as
+  tab-separated text compatible with other spreadsheet apps; Backspace clears a range
+- **Schedule settings**: per-sheet working weekdays, hours per day, non-working dates, and
+  whether dependencies drive dates
 - **Gantt**: bars, milestones, parent summary bars, dependency arrows, drag to move or resize
 - **Kanban**: lanes from any picklist column (Status by default), drag cards between lanes
 - **Templates**: Project schedule, Punch list, Simple list, with trade and status presets
