@@ -292,4 +292,30 @@ describe('fakeSupabase tables', () => {
     expect(() => client.from('sheets').select('id, rows(id)')).toThrow(/unsupported call select/)
     expect(() => client.from('sheets').select('*', { count: 'exact' } as never)).toThrow(/unsupported call/)
   })
+
+  it("rpc delete_column / set_column_cells touch only the caller's own column and rows", async () => {
+    const s = await newSheet()
+    const col = '00000000-0000-4000-8000-0000000000c1'
+    const row = '00000000-0000-4000-8000-0000000000a1'
+    await client.from('columns').insert({ id: col, sheet_id: s, title: 'X', type: 'TEXT_NUMBER', position: 0 })
+    await client.from('rows').insert({ id: row, sheet_id: s, position: 'a0', cells: { [col]: 1, keep: 2 } })
+    await expect(client.rpc('nope')).rejects.toThrow(/unsupported call rpc\("nope"\)/)
+
+    await client.auth.signOut()
+    await client.auth.signUp(B)
+    expect(await client.rpc('set_column_cells', { p_sheet_id: s, p_column_id: col, p_values: { [row]: 'hacked' } })).toEqual({
+      data: null,
+      error: null,
+    })
+    await client.rpc('delete_column', { p_column_id: col })
+    await client.auth.signOut()
+    await client.auth.signInWithPassword(A)
+    expect((await client.from('rows').select('cells').eq('id', row)).data).toEqual([{ cells: { [col]: 1, keep: 2 } }])
+
+    await client.rpc('set_column_cells', { p_sheet_id: s, p_column_id: col, p_values: { [row]: [3] } })
+    expect((await client.from('rows').select('cells').eq('id', row)).data).toEqual([{ cells: { [col]: [3], keep: 2 } }])
+    await client.rpc('delete_column', { p_column_id: col })
+    expect((await client.from('rows').select('cells').eq('id', row)).data).toEqual([{ cells: { keep: 2 } }])
+    expect((await client.from('columns').select('id')).data).toEqual([])
+  })
 })

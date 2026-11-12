@@ -10,6 +10,7 @@
  *   columns, foreign keys and cascade deletes (supabase/migrations/0001_schema.sql), plus
  *   0002_hardening.sql's same-sheet parents/endpoints and one dependency per pair.
  * - PostgREST's 1000-row response cap (`.range()` pages), and `upsert` (ON CONFLICT DO UPDATE).
+ * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`.
  * - ownership: every read and write is limited to rows owned by the signed-in user, and
  *   inserts/updates must keep `owner_id` = that user and point at the user's own sheet.
  *
@@ -678,7 +679,46 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     }
   }
 
-  const client = { auth, from }
+  /**
+   * The database functions of 0003_columns.sql (SECURITY INVOKER, so limited to the caller's own
+   * rows like everything else): `delete_column` and `set_column_cells`.
+   */
+  async function rpc(fn: string, args: Record<string, unknown> = {}): Promise<FakeResult<null>> {
+    await tick()
+    const state = read()
+    const uid = state.sessionUserId
+    if (!uid || !state.users.some((u) => u.id === uid)) {
+      return { data: null, error: pgError(`permission denied for function ${fn}`, '42501') }
+    }
+    const ownRows = (sheetId: unknown) => state.tables.rows.filter((r) => r.owner_id === uid && r.sheet_id === sheetId)
+    if (fn === 'delete_column') {
+      const colId = args.p_column_id
+      const col = state.tables.columns.find((c) => c.id === colId && c.owner_id === uid)
+      if (!col) return { data: null, error: null } // already gone, or not the caller's: a no-op
+      const key = String(colId)
+      for (const r of ownRows(col.sheet_id)) {
+        const cells = r.cells as Record<string, unknown>
+        if (key in cells) delete cells[key]
+      }
+      state.tables.columns = state.tables.columns.filter((c) => c !== col)
+    } else if (fn === 'set_column_cells') {
+      const key = String(args.p_column_id)
+      const values = (args.p_values ?? {}) as Record<string, unknown>
+      const byId = new Map(ownRows(args.p_sheet_id).map((r) => [r.id, r]))
+      for (const [rowId, value] of Object.entries(values)) {
+        const cells = byId.get(rowId)?.cells as Record<string, unknown> | undefined
+        if (!cells) continue
+        if (value === null) delete cells[key]
+        else cells[key] = structuredClone(value)
+      }
+    } else {
+      unsupported(`rpc(${JSON.stringify(fn)})`)
+    }
+    write(state)
+    return { data: null, error: null }
+  }
+
+  const client = { auth, from, rpc }
   return strict(client, 'client')
 }
 
