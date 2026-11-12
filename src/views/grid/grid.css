@@ -1,0 +1,288 @@
+.sheet-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: calc(100vh - 90px);
+}
+
+.sheet-view-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sheet-view-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.sheet-view-header .spacer {
+  flex: 1;
+}
+
+.save-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.save-badge {
+  font-size: 0.85rem;
+  color: #52606d;
+}
+
+.save-badge.is-unsaved {
+  color: #b54708;
+}
+
+.save-failed-banner {
+  padding: 6px 12px;
+  border: 1px solid #b42318;
+  border-radius: 4px;
+  background: #fef3f2;
+  font-weight: 600;
+}
+
+.sheet-notices ul {
+  margin: 0;
+  padding: 4px 12px;
+  list-style: none;
+  font-size: 0.85rem;
+  background: #eff8ff;
+  border: 1px solid #b2ddff;
+  border-radius: 4px;
+}
+
+.sheet-notices li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notice-dismiss {
+  padding: 0 6px;
+  font-size: 0.8rem;
+}
+
+.grid-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+
+.grid-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #d9e2ec;
+}
+
+.grid {
+  font-size: 0.9rem;
+}
+
+.grid-header {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f0f4f8;
+}
+
+.grid-header-cell {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-weight: 600;
+  border-right: 1px solid #d9e2ec;
+  border-bottom: 1px solid #bcccdc;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+
+.col-resizer:hover,
+.col-resizer.is-resizing {
+  background: #2f80ed;
+}
+
+.grid-body {
+  position: relative;
+}
+
+.grid-row {
+  display: flex;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.grid-row.is-parent .cell-text {
+  font-weight: 600;
+}
+
+.grid-cell {
+  box-sizing: border-box;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-right: 1px solid #e4e7eb;
+  border-bottom: 1px solid #e4e7eb;
+  overflow: hidden;
+  white-space: nowrap;
+  outline: none;
+}
+
+.grid-cell .cell-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.grid-cell.is-readonly {
+  background: #f8fafc;
+  color: #52606d;
+}
+
+.grid-cell.is-active {
+  box-shadow: inset 0 0 0 2px #2f80ed;
+}
+
+.grid-cell.has-error {
+  box-shadow: inset 0 0 0 2px #d92d20;
+}
+
+.grid-cell.row-number {
+  justify-content: flex-end;
+  gap: 4px;
+  color: #7b8794;
+  background: #f5f7fa;
+}
+
+.sched-warning {
+  color: #b54708;
+  cursor: help;
+}
+
+.grid-cell.row-number[draggable='true'] {
+  cursor: grab;
+}
+
+.grid-row.is-drop-target {
+  box-shadow: inset 0 -3px 0 #2f80ed;
+}
+
+.sort-button {
+  all: unset;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.grid-header-cell[aria-sort='ascending'] .sort-button::after {
+  content: ' \25B2';
+  font-size: 0.7em;
+}
+
+.grid-header-cell[aria-sort='descending'] .sort-button::after {
+  content: ' \25BC';
+  font-size: 0.7em;
+}
+
+.hierarchy-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  width: 100%;
+  gap: 2px;
+}
+
+.row-toggle,
+.row-toggle-spacer {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.row-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.row-toggle .chevron {
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid #52606d;
+  transition: transform 0.1s;
+}
+
+.row-toggle.is-expanded .chevron {
+  transform: rotate(90deg);
+}
+
+.grid-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.cell-editor {
+  width: 100%;
+  height: 26px;
+  box-sizing: border-box;
+  font: inherit;
+  border: none;
+  outline: none;
+}
+
+.grid-empty {
+  padding: 16px;
+  color: #52606d;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.save-failed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

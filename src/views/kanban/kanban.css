@@ -1,0 +1,133 @@
+.kanban {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.kanban-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+}
+
+.kanban-status {
+  min-height: 1.4em;
+  color: #b54708;
+  font-size: 0.9em;
+}
+
+.kanban-empty {
+  padding: 24px;
+  color: #52606d;
+}
+
+.kanban-lanes {
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  min-height: 0;
+  padding: 4px;
+  overflow-x: auto;
+  align-items: stretch;
+}
+
+.kanban-lane {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 260px;
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 8px;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: #f1f3f5;
+}
+
+.kanban-lane.is-drop-target {
+  border-color: #2b6cb0;
+  background: #e6f0fb;
+}
+
+.kanban-lane-title {
+  margin: 0 0 8px;
+  font-size: 0.95em;
+}
+
+.kanban-lane-empty {
+  margin: 0;
+  color: #7b8794;
+  font-size: 0.9em;
+}
+
+.kanban-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kanban-card {
+  /* Containing block for the card's visually hidden label, so the label stays inside the lane's
+     scroll area instead of being placed relative to the page (which made the page scroll). */
+  position: relative;
+  padding: 8px;
+  border: 1px solid #cbd2d9;
+  border-radius: 4px;
+  background: #fff;
+  cursor: grab;
+}
+
+.kanban-card.is-dragging {
+  opacity: 0.5;
+}
+
+.kanban-card-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.kanban-card-badge {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #fde8c8;
+  color: #7a4100;
+  font-size: 0.8em;
+}
+
+.kanban-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  color: #52606d;
+  font-size: 0.85em;
+}
+
+.kanban-card-move {
+  display: block;
+  margin-top: 6px;
+}
+
+.kanban-card-move select {
+  width: 100%;
+}
+
+.kanban-show-more {
+  margin-top: 8px;
+}
+
+.kanban-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

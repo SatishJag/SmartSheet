@@ -1,0 +1,20 @@
+node_modules
+dist
+dist-ssr
+.superpowers/
+*.local
+*.tsbuildinfo
+npm-debug.log*
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+coverage
+
+.env
+.env.local
+
+# Playwright
+test-results/
+playwright-report/
+e2e/screenshots/

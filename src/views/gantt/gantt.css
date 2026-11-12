@@ -1,0 +1,200 @@
+.gantt {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.gantt-status {
+  min-height: 1.4em;
+  padding: 2px 4px;
+  color: #b54708;
+  font-size: 0.9em;
+}
+
+.gantt-limit-note {
+  margin: 0;
+  padding: 2px 4px;
+  color: #52606d;
+  font-size: 0.9em;
+}
+
+.gantt-empty {
+  padding: 24px;
+  color: #52606d;
+}
+
+.gantt-scroll {
+  position: relative;
+  overflow: auto;
+  flex: 1;
+  min-height: 200px;
+  border: 1px solid #cbd2d9;
+  background: #fff;
+}
+
+.gantt-inner {
+  position: relative;
+}
+
+/* Sticky date header across the top; its corner cell also sticks to the left. */
+.gantt-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  background: #f5f7fa;
+  border-bottom: 1px solid #cbd2d9;
+}
+
+.gantt-corner {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  flex: none;
+  box-sizing: border-box;
+  padding: 10px 8px;
+  font-weight: 600;
+  background: #f5f7fa;
+  border-right: 1px solid #cbd2d9;
+}
+
+.gantt-dates {
+  flex: none;
+  display: block;
+  font-size: 11px;
+  fill: #3e4c59;
+}
+
+.gantt-month {
+  fill: #e4e7eb;
+  stroke: #cbd2d9;
+}
+
+.gantt-day.is-nonworking {
+  fill: #9aa5b1;
+}
+
+.gantt-body {
+  position: relative;
+  display: flex;
+}
+
+/* Sticky label column on the left. */
+.gantt-labels {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex: none;
+  background: #fff;
+  border-right: 1px solid #cbd2d9;
+}
+
+.gantt-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.gantt-label.is-parent {
+  font-weight: 600;
+}
+
+.gantt-toggle {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: none;
+  line-height: 1;
+}
+
+.gantt-toggle-spacer {
+  display: inline-block;
+  width: 20px;
+}
+
+.gantt-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gantt-warning {
+  color: #b54708;
+}
+
+.gantt-timeline {
+  flex: none;
+  display: block;
+}
+
+.gantt-nonworking {
+  fill: #f0f2f5;
+}
+
+.gantt-today {
+  stroke: #d64545;
+  stroke-width: 2;
+}
+
+.gantt-arrows,
+.gantt-arrows * {
+  pointer-events: none;
+}
+
+.gantt-arrow {
+  fill: none;
+  stroke: #616e7c;
+  stroke-width: 1.5;
+}
+
+.gantt-arrowhead {
+  fill: #616e7c;
+}
+
+.gantt-bar .gantt-bar-body {
+  cursor: grab;
+}
+
+.gantt-bar.is-dragging .gantt-bar-body {
+  cursor: grabbing;
+  opacity: 0.8;
+}
+
+.gantt-bar.is-task .gantt-bar-body {
+  fill: #7ba7e1;
+}
+
+.gantt-bar .gantt-bar-progress {
+  fill: #2f6fbe;
+}
+
+.gantt-bar.is-milestone .gantt-bar-body {
+  fill: #3e4c59;
+}
+
+.gantt-bar.is-summary .gantt-bar-body,
+.gantt-summary-tip {
+  fill: #323f4b;
+}
+
+.gantt-bar.is-summary .gantt-bar-progress {
+  fill: #7b8794;
+}
+
+.gantt-bar-handle {
+  fill: transparent;
+  cursor: ew-resize;
+}
+
+.gantt-bar-handle:hover {
+  fill: rgba(31, 41, 51, 0.25);
+}
