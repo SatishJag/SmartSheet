@@ -286,3 +286,11 @@
   align-items: center;
   gap: 8px;
 }
+
+.grid-cell.is-selected {
+  background: #e8f1fd;
+}
+
+.grid-cell.is-selected.is-readonly {
+  background: #dde7f3;
+}
