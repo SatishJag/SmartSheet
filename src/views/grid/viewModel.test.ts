@@ -30,7 +30,7 @@ const data = makeSheetData({
   ],
 })
 
-const NONE: ScheduleResult = { byRow: {}, errors: [] }
+const NONE: ScheduleResult = { byRow: {}, errors: [], critical: [] }
 const view = (v: Partial<ViewState> = {}): ViewState => ({ collapsed: new Set(), sort: null, filter: null, ...v })
 const ids = (rows: DisplayRow[]) => rows.map((r) => r.id)
 const filtered = (filter: FilterSpec, scheduled = NONE) => ids(buildDisplayRows(data, scheduled, view({ filter })))
@@ -76,6 +76,7 @@ describe('buildDisplayRows: sort', () => {
     const scheduled: ScheduleResult = {
       byRow: { c3: { start: '2026-02-15', end: '2026-02-16', durationDays: 2, percentComplete: 0 } },
       errors: [],
+      critical: [],
     }
     const rows = buildDisplayRows(data, scheduled, view({ sort: { colId: COL.start, dir: 'asc' } }))
     expect(ids(rows)).toEqual(['t3', 'p1', 'c3', 'c2', 'c1', 'p2', 'c4'])
@@ -149,6 +150,7 @@ describe('buildDisplayRows: filter', () => {
     const scheduled: ScheduleResult = {
       byRow: { c3: { start: '2026-02-15', end: '2026-02-16', durationDays: 2, percentComplete: 0 } },
       errors: [],
+      critical: [],
     }
     expect(filtered({ colId: COL.start, op: 'contains', value: '2026-02-15' }, scheduled)).toEqual(['p1', 'c3'])
   })

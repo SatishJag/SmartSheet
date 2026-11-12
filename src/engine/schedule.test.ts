@@ -353,4 +353,32 @@ describe('schedule: cycle reporting', () => {
     expect(errors).toContainEqual({ rowId: 'W', message: 'Depends on a row in a dependency cycle' })
     expect(errors.find((e) => e.rowId === 'X')!.message).toMatch(/^Dependency cycle: /)
   })
+
+  describe('critical path', () => {
+    it('is the driving chain to the last finish, not a shorter parallel branch', () => {
+      // A(3d) -> B(2d) is the long branch; A -> C(1d) finishes earlier and has float.
+      const rows = [A, row('B', 2), row('C', 1)]
+      const { critical } = schedule(rows, [dep('A', 'B'), dep('A', 'C')], defaultCalendar)
+      expect(critical).toEqual(['A', 'B'])
+    })
+
+    it('only follows the dependency that sets the start when a task has two predecessors', () => {
+      const rows = [A, row('X', 1, '2026-11-09'), row('B', 1)]
+      const { critical } = schedule(rows, [dep('A', 'B'), dep('X', 'B')], defaultCalendar)
+      expect(critical).toEqual(['A', 'B'])
+    })
+
+    it('marks leaf tasks only, not their summary rows', () => {
+      const rows: SchedRow[] = [{ ...row('P', 1), parentId: null }, { ...A, parentId: 'P' }, { ...row('B', 1), parentId: 'P' }]
+      expect(schedule(rows, [dep('A', 'B')], defaultCalendar).critical).toEqual(['A', 'B'])
+    })
+
+    it('is empty when no tasks are linked', () => {
+      expect(schedule([A, row('B', 1, '2026-11-09')], [], defaultCalendar).critical).toEqual([])
+    })
+
+    it('is empty for an empty sheet', () => {
+      expect(schedule([], [], defaultCalendar).critical).toEqual([])
+    })
+  })
 })

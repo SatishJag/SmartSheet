@@ -95,6 +95,7 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
   const durationCol = data?.columns.find((c) => c.role === 'duration')?.id
   const cal = data?.sheet.calendar
 
+  const criticalIds = useMemo(() => new Set(scheduled.critical), [scheduled.critical])
   const errorById = useMemo(() => new Map(scheduled.errors.map((e) => [e.rowId, e.message])), [scheduled.errors])
   const rows = useMemo(() => (data ? buildRows(data, errorById, collapsed) : []), [data, errorById, collapsed])
   const indexById = useMemo(() => new Map(rows.map((r, i) => [r.id, i])), [rows])
@@ -362,6 +363,7 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
                     width={g.width}
                     rowTop={item.start}
                     dragging={drag.preview?.rowId === row.id}
+                    critical={!row.isParent && criticalIds.has(row.id)}
                     onPointerDown={startDrag}
                   />
                 )

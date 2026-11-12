@@ -78,7 +78,7 @@ export function isStartDriven(data: SheetData, rowId: string): boolean {
 /** Columns whose values on a parent row come from its children. */
 const ROLLUP_ROLES: readonly ColumnRole[] = ['start', 'end', 'duration', 'percentComplete']
 
-const EMPTY_SCHEDULE: ScheduleResult = { byRow: {}, errors: [] }
+const EMPTY_SCHEDULE: ScheduleResult = { byRow: {}, errors: [], critical: [] }
 
 function computeSchedule(data: SheetData): ScheduleResult {
   const input = toSchedInput(data)

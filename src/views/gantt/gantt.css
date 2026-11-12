@@ -177,6 +177,11 @@
   fill: #2f6fbe;
 }
 
+.gantt-bar.is-critical.is-task .gantt-bar-body,
+.gantt-bar.is-critical.is-milestone .gantt-bar-body {
+  fill: #d64545;
+}
+
 .gantt-bar.is-milestone .gantt-bar-body {
   fill: #3e4c59;
 }

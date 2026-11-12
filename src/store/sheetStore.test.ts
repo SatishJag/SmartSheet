@@ -230,9 +230,9 @@ describe('schedule without a start column', () => {
   it('is empty with no errors', async () => {
     const data = sheetData({ columns: columns.filter((c) => c.role !== 'start') })
     const { store } = await loaded(fakePersistence(data))
-    expect(store.getState().scheduled).toEqual({ byRow: {}, errors: [] })
+    expect(store.getState().scheduled).toEqual({ byRow: {}, errors: [], critical: [] })
     store.getState().setCell('r1', 'dur', '5d')
-    expect(store.getState().scheduled).toEqual({ byRow: {}, errors: [] })
+    expect(store.getState().scheduled).toEqual({ byRow: {}, errors: [], critical: [] })
   })
 })
 
