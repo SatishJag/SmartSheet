@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react'
 import { useTable } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Column } from '../../model/validate'
@@ -19,6 +19,7 @@ import {
 import { FilterBar } from './FilterBar'
 import { HierarchyCell } from './HierarchyCell'
 import { PredecessorCell } from './PredecessorCell'
+import { inBounds, mapPaste, parseTsv, rangeBounds, toTsv } from './selection'
 import { useGridViewState } from './useGridViewState'
 import { useRowDrag } from './useRowDrag'
 import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow } from './viewModel'
@@ -96,7 +97,11 @@ export function GridView({ viewportHeight }: GridViewProps) {
   })
 
   const [active, setActive] = useState<ActiveCell | null>(null)
+  /** The other corner of a multi-cell selection; null when only the active cell is selected. */
+  const [anchor, setAnchor] = useState<ActiveCell | null>(null)
   const [editing, setEditing] = useState(false)
+  /** Result of the last paste or clear, announced to screen readers. */
+  const [status, setStatus] = useState('')
   /** A parent row waiting for the user to confirm its deletion. */
   const [pendingDelete, setPendingDelete] = useState<{ rowId: string; subRows: number } | null>(null)
   /** Set when the active cell should take keyboard focus after the next render. */
@@ -107,6 +112,12 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const activeRowIdx = active ? rowIndex.get(active.rowId) : undefined
   const activeColIdx = active ? colIndex.get(active.colId) : undefined
   const activeValid = activeRowIdx !== undefined && activeColIdx !== undefined
+  // The selected rectangle. An anchor whose row was filtered out or whose column is gone is ignored.
+  const anchorRowIdx = anchor ? rowIndex.get(anchor.rowId) : undefined
+  const anchorColIdx = anchor ? colIndex.get(anchor.colId) : undefined
+  const range = activeValid
+    ? rangeBounds({ r: anchorRowIdx ?? activeRowIdx, c: anchorColIdx ?? activeColIdx }, { r: activeRowIdx, c: activeColIdx })
+    : null
 
   useEffect(() => {
     if (!focusRequest.current || !active || editing) return
@@ -116,8 +127,10 @@ export function GridView({ viewportHeight }: GridViewProps) {
     el?.focus()
   }, [active, editing])
 
-  function select(rowId: string, colId: string, focus: boolean) {
+  /** Makes a cell active; `extend` keeps the selection anchor so the range grows to this cell. */
+  function select(rowId: string, colId: string, focus: boolean, extend = false) {
     focusRequest.current = focus
+    setAnchor(extend ? (anchor ?? active) : null)
     setActive({ rowId, colId })
     setEditing(false)
   }
@@ -166,14 +179,85 @@ export function GridView({ viewportHeight }: GridViewProps) {
       const r = clamp(activeRowIdx + dr, rows.length)
       const c = clamp(activeColIdx + dc, columns.length)
       virtualizer.scrollToIndex(r)
-      select(rows[r].id, columns[c].id, true)
+      select(rows[r].id, columns[c].id, true, e.shiftKey)
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault()
+      const first = e.key === 'Home'
+      // Ctrl/Cmd+Home/End jump to the first/last row as well.
+      const r = e.ctrlKey || e.metaKey ? (first ? 0 : rows.length - 1) : activeRowIdx
+      virtualizer.scrollToIndex(r)
+      select(rows[r].id, columns[first ? 0 : columns.length - 1].id, true, e.shiftKey)
+    } else if (e.key === 'Escape' && anchor) {
+      setAnchor(null)
     } else if (e.key === 'Enter' || e.key === 'F2') {
       e.preventDefault()
       startEdit(rows[activeRowIdx], columns[activeColIdx])
-    } else if (e.key === 'Delete' && (e.target as HTMLElement).getAttribute('role') === 'gridcell') {
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && isCellTarget(e)) {
       e.preventDefault()
-      requestDelete()
+      const { r0, r1, c0, c1 } = range!
+      const targets = []
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) targets.push({ row: rows[r], col: columns[c], raw: '' })
+      applyCells(targets, 'Cleared', 0)
     }
+  }
+
+  /** The event came from a grid cell itself, not from an editor or control inside one. */
+  const isCellTarget = (e: { target: EventTarget }) => (e.target as HTMLElement).getAttribute('role') === 'gridcell'
+
+  /**
+   * Writes each raw string through the store's setCell, so validation, scheduling and read-only
+   * rules apply. A cell that cannot take its value keeps the old one; one summary is announced.
+   */
+  // shortcut: one setCell (and reschedule) per cell, upgrade to a batch store action if big pastes feel slow.
+  function applyCells(targets: { row: ViewRow; col: Column; raw: string }[], verb: string, clipped: number) {
+    let done = 0
+    const skipped: string[] = []
+    for (const { row, col, raw } of targets) {
+      let problem: string | undefined
+      if (!isEditable(col, row)) problem = readOnlyReason(col, row) ?? 'is calculated and cannot be edited'
+      else {
+        const result = api.getState().setCell(row.id, col.id, raw)
+        if (!result.ok) problem = result.error
+      }
+      if (problem === undefined) done++
+      else skipped.push(`row ${row.rowNumber} ${col.title}: ${problem}`)
+    }
+    let message = `${verb} ${done} cell${done === 1 ? '' : 's'}`
+    if (skipped.length > 0) {
+      const more = skipped.length > 3 ? `; and ${skipped.length - 3} more` : ''
+      message += `, ${skipped.length} skipped: ${skipped.slice(0, 3).join('; ')}${more}`
+    }
+    if (clipped > 0) message += `, ${clipped} past the edge of the grid ignored`
+    setStatus(message)
+  }
+
+  /** Ctrl/Cmd+C: the selected rectangle's displayed values as tab-separated text. */
+  function onCopy(e: ClipboardEvent<HTMLDivElement>) {
+    if (editing || !range || !isCellTarget(e)) return
+    e.preventDefault()
+    const lines: string[][] = []
+    for (let r = range.r0; r <= range.r1; r++) {
+      lines.push(columns.slice(range.c0, range.c1 + 1).map((col) => displayText(col, rows[r])))
+    }
+    e.clipboardData.setData('text/plain', toTsv(lines))
+  }
+
+  /** Ctrl/Cmd+V: pastes tab/newline separated text with its top-left cell at the active cell. */
+  // shortcut: a single copied value is not repeated across a larger selection, upgrade if users ask for fill-on-paste.
+  function onPaste(e: ClipboardEvent<HTMLDivElement>) {
+    if (editing || !activeValid || !isCellTarget(e)) return
+    e.preventDefault()
+    const block = parseTsv(e.clipboardData.getData('text/plain'))
+    const { cells, clipped } = mapPaste(block, { r: activeRowIdx, c: activeColIdx }, rows.length, columns.length)
+    if (cells.length === 0) return
+    applyCells(
+      cells.map(({ r, c, raw }) => ({ row: rows[r], col: columns[c], raw })),
+      'Pasted',
+      clipped,
+    )
+    // Select what was pasted; the active cell stays at its top-left.
+    const last = { r: Math.max(...cells.map((x) => x.r)), c: Math.max(...cells.map((x) => x.c)) }
+    setAnchor(cells.length > 1 ? { rowId: rows[last.r].id, colId: columns[last.c].id } : null)
   }
 
   /** Collapsing a row that holds the active cell moves the active cell up to that row. */
@@ -260,11 +344,12 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const activeRendered = activeValid && renderedIds.includes(active!.rowId)
   const firstRenderedRowId = renderedIds[0]
 
-  function renderCell(row: ViewRow, col: Column, idx: number) {
+  function renderCell(row: ViewRow, col: Column, idx: number, rowIdx: number) {
     const key = `${row.id}:${col.id}`
     // A validation error from the last edit wins; otherwise a formula that fails to evaluate.
     const error = errorByCell.get(key) ?? formulaError(col, row)
     const isActive = active?.rowId === row.id && active.colId === col.id
+    const isSelected = range !== null && inBounds(range, rowIdx, idx)
     const editable = isEditable(col, row)
     const errorId = error ? `cell-error-${row.id}-${col.id}` : undefined
     const initial = editString(col, row)
@@ -309,10 +394,10 @@ export function GridView({ viewportHeight }: GridViewProps) {
       <div
         key={col.id}
         role="gridcell"
-        className={`grid-cell${isActive ? ' is-active' : ''}${error ? ' has-error' : ''}${editable ? '' : ' is-readonly'}`}
+        className={`grid-cell${isActive ? ' is-active' : ''}${isSelected && !isActive ? ' is-selected' : ''}${error ? ' has-error' : ''}${editable ? '' : ' is-readonly'}`}
         style={{ width: widthOf(col.id) }}
         aria-colindex={idx + 2}
-        aria-selected={isActive}
+        aria-selected={isSelected}
         aria-readonly={editable ? undefined : true}
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
@@ -320,8 +405,12 @@ export function GridView({ viewportHeight }: GridViewProps) {
         tabIndex={isActive || (!activeRendered && row.id === firstRenderedRowId && idx === 0) ? 0 : -1}
         data-row-id={row.id}
         data-col-id={col.id}
-        onClick={() => {
-          if (!(isActive && editing)) select(row.id, col.id, false)
+        // Shift+click must not move focus on mouse-down, or the focus handler would reset the anchor.
+        onMouseDown={(e) => {
+          if (e.shiftKey && !(isActive && editing)) e.preventDefault()
+        }}
+        onClick={(e) => {
+          if (!(isActive && editing)) select(row.id, col.id, e.shiftKey, e.shiftKey)
         }}
         onDoubleClick={() => {
           // A checkbox already toggled once per click of the double-click.
@@ -353,9 +442,12 @@ export function GridView({ viewportHeight }: GridViewProps) {
           role="grid"
           aria-rowcount={rows.length + 1}
           aria-colcount={columns.length + 1}
+          aria-multiselectable="true"
           className="grid"
           style={{ width: totalWidth }}
           onKeyDown={onGridKeyDown}
+          onCopy={onCopy}
+          onPaste={onPaste}
         >
           <div role="row" aria-rowindex={1} className="grid-header" style={{ height: ROW_HEIGHT }}>
             {headers.map((h, i) => (
@@ -416,7 +508,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
                       </span>
                     )}
                   </div>
-                  {columns.map((col, idx) => renderCell(row, col, idx))}
+                  {columns.map((col, idx) => renderCell(row, col, idx, item.index))}
                 </div>
               )
             })}
@@ -438,6 +530,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
           Delete row
         </button>
         <FilterBar columns={columns} filter={view.filter} onChange={setFilter} />
+      </div>
+      <div role="status" className="visually-hidden">
+        {status}
       </div>
       {pendingDelete && (
         <ConfirmDialog
