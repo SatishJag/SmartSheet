@@ -82,10 +82,11 @@ describe('columnLock', () => {
     expect(columnLock(data, 'c-status', 'delete')).toBeNull()
   })
 
-  it('unlocks schedule columns when dependencies are off', () => {
+  it('keeps schedule columns locked when dependencies are off (their role cannot be restored)', () => {
     const data = makeSheetData()
     data.sheet.dependenciesEnabled = false
-    expect(columnLock(data, 'c-start', 'delete')).toBeNull()
+    expect(columnLock(data, 'c-start', 'delete')).toMatch(/used for scheduling/)
+    expect(columnLock(data, 'c-start', 'retype')).toMatch(/used for scheduling/)
     expect(columnLock(data, 'c-task', 'delete')).not.toBeNull()
   })
 })

@@ -148,9 +148,9 @@ describe('deleteColumn', () => {
     expect(p.deleteColumn).not.toHaveBeenCalled()
   })
 
-  it('allows deleting a schedule column when dependencies are off', async () => {
+  it('refuses to delete a schedule column even when dependencies are off', async () => {
     const { store } = await makeTestStore(noDeps())
-    expect(store.getState().deleteColumn(COL.duration)).toEqual({ ok: true })
+    expect(store.getState().deleteColumn(COL.duration)).toMatchObject({ ok: false, error: expect.stringMatching(/used for scheduling/) })
   })
 
   it("clears the column's cell errors and failed saves, and never re-sends them", async () => {
@@ -195,7 +195,7 @@ describe('deleteColumn', () => {
     expect(p.deleteColumn).toHaveBeenCalledWith('sheet-1', COL.status)
   })
 
-  it('deleting a column that was never inserted does not call deleteColumn', async () => {
+  it('deleting a column whose insert failed still deletes it (the insert may have landed)', async () => {
     const { store, persistence: p } = await makeTestStore()
     p.insertColumn.mockRejectedValue(new Error('offline'))
     const { id } = store.getState().addColumn('Cost', 'TEXT_NUMBER') as { id: string }
@@ -203,7 +203,7 @@ describe('deleteColumn', () => {
     store.getState().deleteColumn(id)
     await settled(store)
     expect(store.getState().failedCount).toBe(0)
-    expect(p.deleteColumn).not.toHaveBeenCalled()
+    expect(p.deleteColumn).toHaveBeenCalledWith(expect.any(String), id)
   })
 })
 

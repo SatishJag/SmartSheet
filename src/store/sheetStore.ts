@@ -291,7 +291,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       enqueue({
         key: `cell:${rowId}:${colId}`,
         value,
-        async run(job) {
+        async run() {
           const row = findRow(rowId)
           if (!row) return // row deleted meanwhile; nothing to save
           if (!get().data?.columns.some((c) => c.id === colId)) return // column deleted meanwhile
@@ -299,7 +299,9 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
             await insertNow(rowId) // the insert carries this cell's current value
             return
           }
-          const { version } = await p.saveCell(rowId, colId, job.value, row.version)
+          // Save the value the row holds now, not the one captured at enqueue time: a column-wide
+          // save (rename, retype) may have rewritten this cell after the job was queued.
+          const { version } = await p.saveCell(rowId, colId, row.cells[colId] ?? null, row.version)
           const data = get().data
           if (!data) return
           set({ data: { ...data, rows: data.rows.map((r) => (r.id === rowId ? { ...r, version } : r)) } })
@@ -699,6 +701,9 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (!data) return { ok: false, error: 'Sheet is not loaded' }
         if (data.sheet.dependenciesEnabled === on) return { ok: true }
         if (on) {
+          if (data.dependencies.length > 0 && !data.columns.some((c) => c.role === 'predecessor')) {
+            return { ok: false, error: "Can't turn on dependencies: this sheet has no Predecessors column to show and edit them" }
+          }
           const formula = scheduleFormulaProblem(data)
           if (formula) return { ok: false, error: formula }
           // While off, the tree could change in ways dependencies would not allow (see applyTree).

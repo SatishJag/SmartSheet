@@ -113,8 +113,11 @@ export function columnLock(data: SheetData, colId: string, action: 'delete' | 'r
   const col = data.columns[index]
   const verb = action === 'delete' ? 'be deleted' : 'change type'
   if (index === 0) return `The primary column cannot ${verb}`
-  if (data.sheet.dependenciesEnabled && col.role && SCHEDULE_ROLES.includes(col.role)) {
-    return `"${col.title}" is used for scheduling and cannot ${verb} while dependencies are enabled`
+  // Locked whether or not dependencies are on: the role a schedule column carries cannot be given
+  // back to another column, so retyping or deleting it would stop scheduling (or hide the
+  // dependencies) for good once dependencies are turned on again.
+  if (col.role && SCHEDULE_ROLES.includes(col.role)) {
+    return `"${col.title}" is used for scheduling and cannot ${verb}`
   }
   return null
 }

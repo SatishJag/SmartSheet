@@ -399,7 +399,8 @@ describe('save status across overlapping and failed saves', () => {
     })
     store.getState().setCell('r1', 'name', 'old')
     await settled(store)
-    expect(p.saveCell.mock.calls.map((c) => c[2])).toEqual(['old', 'old', 'old', 'old', 'new'])
+    // Each attempt sends the cell's value at that moment, so retries after the edit carry 'new'.
+    expect(p.saveCell.mock.calls.map((c) => c[2])).toEqual(['old', 'old', 'new', 'new', 'new'])
     expect(cell(store, 'r1', 'name')).toBe('new')
   })
 

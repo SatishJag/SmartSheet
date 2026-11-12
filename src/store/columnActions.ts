@@ -74,6 +74,8 @@ export function createColumnActions(ctx: ColumnActionContext): ColumnActions {
 
   /** Columns added locally whose insert has not succeeded yet. */
   const unpersistedColumns = new Set<string>()
+  /** Unpersisted columns whose insert was sent: it may have reached the database even if it failed. */
+  const insertSent = new Set<string>()
   /** Per column, rows whose value must be written by the next bulk save of that column. */
   const pendingCells = new Map<string, Set<string>>()
 
@@ -89,8 +91,10 @@ export function createColumnActions(ctx: ColumnActionContext): ColumnActions {
         if (!data || index < 0) return // deleted meanwhile
         const col = data.columns[index]
         if (unpersistedColumns.has(colId)) {
+          insertSent.add(colId)
           await p.insertColumn(data.sheet.id, col, index)
           unpersistedColumns.delete(colId)
+          insertSent.delete(colId)
         } else {
           await p.updateColumn(col)
         }
@@ -116,11 +120,14 @@ export function createColumnActions(ctx: ColumnActionContext): ColumnActions {
     enqueue({
       key,
       async run() {
-        if (unpersistedColumns.has(colId)) {
-          unpersistedColumns.delete(colId) // never reached the database
+        if (unpersistedColumns.has(colId) && !insertSent.has(colId)) {
+          unpersistedColumns.delete(colId) // never sent to the database
           return
         }
+        // An insert whose response was lost may still have landed; delete_column is idempotent.
         await p.deleteColumn(sheetId, colId)
+        unpersistedColumns.delete(colId)
+        insertSent.delete(colId)
       },
     })
   }
