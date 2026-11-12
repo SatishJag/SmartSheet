@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { describe, expect, it, vi } from 'vitest'
-import { insertSheetFromTemplate } from './insertTemplate'
+import { sheetFromCsv } from '../import/sheetFromCsv'
+import { insertSheetData, insertSheetFromTemplate } from './insertTemplate'
 
 type Res = { error: { message: string } | null }
 
@@ -68,5 +69,16 @@ describe('insertSheetFromTemplate', () => {
     const { client, calls } = makeClient({ sheetErr: 'sheet boom' })
     await expect(insertSheetFromTemplate(client, 'punch-list', 'u')).rejects.toThrow('sheet boom')
     expect(calls).toEqual(['insert:sheets'])
+  })
+})
+
+describe('insertSheetData rows', () => {
+  it('inserts rows in chunks after the columns', async () => {
+    const { client, calls, inserts } = makeClient()
+    const data = sheetFromCsv('A\n' + '1\n'.repeat(1200), 's', 'u')
+    await insertSheetData(client, data)
+    expect(calls).toEqual(['insert:sheets', 'insert:columns', 'insert:rows', 'insert:rows', 'insert:rows'])
+    expect(inserts.slice(2).map((i) => i.payload.length)).toEqual([500, 500, 200])
+    expect(inserts[2].payload[0]).toMatchObject({ sheet_id: data.sheet.id, owner_id: 'u', parent_id: null })
   })
 })
