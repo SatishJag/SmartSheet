@@ -32,6 +32,16 @@ export interface Persistence {
   /** Replace-all semantics for that sheet (one dependency per predecessor/successor pair). */
   saveDependencies(sheetId: string, deps: SchedDep[]): Promise<void>
   deleteRows(ids: string[]): Promise<void>
+  /** Adds a column at `position` (an upsert on id, so a retry after a lost response is safe). */
+  insertColumn(sheetId: string, col: Column, position: number): Promise<void>
+  /** Writes a column's title, type, options and role. */
+  updateColumn(col: Column): Promise<void>
+  /** Gives each column its index in `colIds` as its position (only changed positions need writing). */
+  saveColumnOrder(sheetId: string, colIds: string[]): Promise<void>
+  /** Deletes a column and removes its values from every row's cells, in one round trip. Idempotent. */
+  deleteColumn(sheetId: string, colId: string): Promise<void>
+  /** Sets one column's value on many rows (row id -> value); undefined or null empties the cell. */
+  saveColumnCells(sheetId: string, colId: string, values: Record<string, unknown>): Promise<void>
 }
 
 // ---- DB row shapes (snake_case, as in supabase/migrations/0001_schema.sql) ----
@@ -337,6 +347,63 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
     async deleteRows(ids) {
       if (ids.length === 0) return
       check(await client.from('rows').delete().in('id', ids))
+    },
+
+    ...columnPersistence(client, ownerOf),
+  }
+}
+
+/** Rows per `set_column_cells` call: keeps each request body small on a 5,000-row sheet. */
+const COLUMN_CELLS_CHUNK = 1000
+
+type ColumnMethods = Pick<Persistence, 'insertColumn' | 'updateColumn' | 'saveColumnOrder' | 'deleteColumn' | 'saveColumnCells'>
+
+/**
+ * Column management against the `columns` table and the database functions of 0003_columns.sql.
+ * Deleting a column and rewriting one column's values are set-based (one call per 1,000 rows at
+ * most) instead of a read-modify-write per row.
+ */
+function columnPersistence(
+  client: SupabaseClient,
+  ownerOf: (sheetId: string) => Promise<Pick<SheetMeta, 'id' | 'ownerId' | 'workspaceId'>>,
+): ColumnMethods {
+  return {
+    async insertColumn(sheetId, col, position) {
+      const owner = await ownerOf(sheetId)
+      check(await client.from('columns').upsert(columnToDb(col, position, owner), { onConflict: 'id' }))
+    },
+
+    async updateColumn(col) {
+      check(
+        await client
+          .from('columns')
+          .update({ title: col.title, type: col.type, options: col.options ?? null, role: col.role ?? null })
+          .eq('id', col.id),
+      )
+    },
+
+    /** Reads the current positions first (a sheet has tens of columns), then updates only those that differ. */
+    async saveColumnOrder(sheetId, colIds) {
+      const current = check(await client.from('columns').select('id, position').eq('sheet_id', sheetId)) as Pick<DbColumn, 'id' | 'position'>[]
+      const known = new Map(current.map((c) => [c.id, c.position]))
+      const changed = colIds.map((id, position) => ({ id, position })).filter((c) => known.get(c.id) !== c.position)
+      const results = await Promise.all(
+        changed.map((c) => client.from('columns').update({ position: c.position }).eq('id', c.id)),
+      )
+      for (const res of results) check(res)
+    },
+
+    async deleteColumn(_sheetId, colId) {
+      check(await client.rpc('delete_column', { p_column_id: colId }))
+    },
+
+    async saveColumnCells(sheetId, colId, values) {
+      const entries = Object.entries(values)
+      for (let i = 0; i < entries.length; i += COLUMN_CELLS_CHUNK) {
+        const chunk = entries.slice(i, i + COLUMN_CELLS_CHUNK)
+        const p_values = Object.fromEntries(chunk.map(([rowId, v]) => [rowId, v === undefined ? null : v]))
+        check(await client.rpc('set_column_cells', { p_sheet_id: sheetId, p_column_id: colId, p_values }))
+      }
     },
   }
 }

@@ -45,6 +45,11 @@ function fakePersistence(data: SheetData = sheetData()) {
     saveRowTree: vi.fn(async () => {}),
     saveDependencies: vi.fn(async () => {}),
     deleteRows: vi.fn(async () => {}),
+    insertColumn: vi.fn(async (_sheetId: string, _col: Column, _position: number) => {}),
+    updateColumn: vi.fn(async (_col: Column) => {}),
+    saveColumnOrder: vi.fn(async (_sheetId: string, _colIds: string[]) => {}),
+    deleteColumn: vi.fn(async (_sheetId: string, _colId: string) => {}),
+    saveColumnCells: vi.fn(async (_sheetId: string, _colId: string, _values: Record<string, unknown>) => {}),
   } satisfies Persistence
 }
 
