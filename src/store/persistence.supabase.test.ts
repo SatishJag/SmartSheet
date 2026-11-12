@@ -186,3 +186,22 @@ describe('supabasePersistence.loadSheet paging', () => {
     expect((await supabasePersistence(client).loadSheet(sheetId)).rows).toHaveLength(1000)
   })
 })
+
+describe('supabasePersistence.saveSheetSettings', () => {
+  it('updates the sheet row so the next load returns the new calendar and flag', async () => {
+    const { client, sheetId } = seeded(1, 0)
+    const p = supabasePersistence(client)
+    const calendar = { workingWeekdays: [1, 2, 3, 4], nonWorkingDates: ['2026-12-25'], hoursPerDay: 10 }
+    await p.saveSheetSettings(sheetId, { calendar, dependenciesEnabled: false })
+    const data = await supabasePersistence(client).loadSheet(sheetId)
+    expect(data.sheet.calendar).toEqual(calendar)
+    expect(data.sheet.dependenciesEnabled).toBe(false)
+    expect(data.sheet.name).toBe('Big') // other fields untouched
+  })
+
+  it('fails when the sheet does not exist (so the store retries and reports it)', async () => {
+    const { client } = seeded(1, 0)
+    const settings = { calendar: { workingWeekdays: [1], nonWorkingDates: [], hoursPerDay: 8 }, dependenciesEnabled: true }
+    await expect(supabasePersistence(client).saveSheetSettings(crypto.randomUUID(), settings)).rejects.toThrow(/not found/)
+  })
+})

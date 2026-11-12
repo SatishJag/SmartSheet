@@ -45,6 +45,7 @@ function fakePersistence(data: SheetData = sheetData()) {
     saveRowTree: vi.fn(async () => {}),
     saveDependencies: vi.fn(async () => {}),
     deleteRows: vi.fn(async () => {}),
+    saveSheetSettings: vi.fn(async () => {}),
   } satisfies Persistence
 }
 

@@ -32,7 +32,12 @@ export interface Persistence {
   /** Replace-all semantics for that sheet (one dependency per predecessor/successor pair). */
   saveDependencies(sheetId: string, deps: SchedDep[]): Promise<void>
   deleteRows(ids: string[]): Promise<void>
+  /** Writes the sheet's calendar and dependencies flag (the `sheets` row). */
+  saveSheetSettings(sheetId: string, settings: SheetSettings): Promise<void>
 }
+
+/** The schedule settings of a sheet that users can change. */
+export type SheetSettings = Pick<SheetMeta, 'calendar' | 'dependenciesEnabled'>
 
 // ---- DB row shapes (snake_case, as in supabase/migrations/0001_schema.sql) ----
 
@@ -337,6 +342,18 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
     async deleteRows(ids) {
       if (ids.length === 0) return
       check(await client.from('rows').delete().in('id', ids))
+    },
+
+    async saveSheetSettings(sheetId, settings) {
+      const updated = check(
+        await client
+          .from('sheets')
+          .update({ calendar: settings.calendar, dependencies_enabled: settings.dependenciesEnabled })
+          .eq('id', sheetId)
+          .select('id'),
+      ) as Pick<DbSheet, 'id'>[]
+      // RLS hides other users' sheets, so a missing (deleted or foreign) sheet updates nothing.
+      if (updated.length === 0) throw new Error(`Sheet ${sheetId} was not found`)
     },
   }
 }
