@@ -124,6 +124,12 @@
   overflow: visible;
 }
 
+.column-rename {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
 .grid-header-cell .inline-rename {
   position: relative;
   flex: 1;

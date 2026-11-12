@@ -104,7 +104,9 @@ export function useColumnManagement(columns: Column[]): ColumnManagement {
       const col = renaming === colId ? byId(colId) : undefined
       if (!col) return null
       return (
-        <InlineRename
+        // Keys typed while renaming must not reach the grid (Enter would open the active cell's editor).
+        <span className="column-rename" onKeyDown={(e) => e.stopPropagation()}>
+          <InlineRename
           initial={col.title}
           label={`Rename column ${col.title}`}
           validate={(raw) => {
@@ -118,7 +120,8 @@ export function useColumnManagement(columns: Column[]): ColumnManagement {
             return null
           }}
           onCancel={() => setRenaming(null)}
-        />
+          />
+        </span>
       )
     },
 

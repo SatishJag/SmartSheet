@@ -110,6 +110,19 @@ describe('column actions from the header', () => {
     expect(headerTitles()).toContain('Stage')
   })
 
+  it('keys typed while renaming do not reach the grid (Enter does not open the active cell)', async () => {
+    const { user } = await renderGrid()
+    const cell = screen.getAllByRole('gridcell').find((c) => c.dataset.rowId === 'r-site' && c.dataset.colId === COL.task)!
+    await user.click(cell)
+    await openMenu(user, 'Status')
+    await user.click(item('Rename column'))
+    await user.keyboard('{ArrowLeft}{ArrowDown}')
+    expect(cell).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Enter}')
+    expect(cell.querySelector('input')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: 'Task' })).not.toBeInTheDocument()
+  })
+
   it('inserts a column to the right through the dialog', async () => {
     const { user } = await renderGrid()
     await openMenu(user, 'Task')

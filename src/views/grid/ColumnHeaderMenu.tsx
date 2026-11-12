@@ -47,8 +47,16 @@ export function ColumnHeaderMenu({ columnTitle, items, open, onOpenChange, onSel
       const t = e.target as Node
       if (!menuRef.current?.contains(t) && !buttonRef.current?.contains(t)) onOpenChange(false)
     }
+    // The menu is placed under the button once; scrolling the grid would leave it behind.
+    const onScroll = (e: Event) => {
+      if (!menuRef.current?.contains(e.target as Node)) onOpenChange(false)
+    }
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    document.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('scroll', onScroll, true)
+    }
   }, [open, onOpenChange])
 
   function close(restore: boolean) {
@@ -103,6 +111,7 @@ export function ColumnHeaderMenu({ columnTitle, items, open, onOpenChange, onSel
         aria-controls={open ? menuId : undefined}
         aria-keyshortcuts="Shift+F10"
         onClick={() => onOpenChange(!open)}
+        onKeyDown={(e) => e.stopPropagation()} // Enter/Space activate the button, not the grid's active cell
       />
       {open &&
         createPortal(
