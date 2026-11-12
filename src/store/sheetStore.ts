@@ -11,6 +11,7 @@ import {
   type RowNode,
 } from '../model/hierarchy'
 import { validateCell, type ColumnRole } from '../model/validate'
+import { createColumnActions, type ColumnActions } from './columnActions'
 import type { Persistence, RowRecord, SheetData } from './persistence'
 import { parsePredecessorInput, rowNumbers } from './predecessors'
 import { toSchedInput } from './scheduleInput'
@@ -25,7 +26,7 @@ export interface CellError {
 
 export type ActionResult = { ok: true } | { ok: false; error: string }
 
-export interface SheetState {
+export interface SheetState extends ColumnActions {
   data: SheetData | null
   scheduled: ScheduleResult
   saveStatus: SaveStatus
@@ -190,6 +191,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
   const unpersisted = new Set<string>()
   /** Row ids to delete in the database; cleared when a delete succeeds. */
   const pendingDeletes = new Set<string>()
+  /** How to re-queue failed column-management jobs, by key (see columnActions.ts). */
+  const retryers = new Map<string, () => void>()
 
   const store = createStore<SheetState>()((set, get) => {
     function refreshStatus(): void {
@@ -272,6 +275,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         async run(job) {
           const row = findRow(rowId)
           if (!row) return // row deleted meanwhile; nothing to save
+          if (!get().data?.columns.some((c) => c.id === colId)) return // column deleted meanwhile
           if (unpersisted.has(rowId)) {
             await insertNow(rowId) // the insert carries this cell's current value
             return
@@ -625,6 +629,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
             else failedKeys.delete(key)
           }
         }
+        for (const key of [...failedKeys]) retryers.get(key)?.()
         // Rows whose insert never succeeded (whatever job last tried it).
         for (const id of unpersisted) if (findRow(id) && !queue.some((j) => j.key === `tree:${id}`)) enqueueTree(id)
         refreshStatus()
@@ -636,6 +641,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         // The schedule does not depend on the name, so it is kept as is.
         set({ data: { ...data, sheet: { ...data.sheet, name } } })
       },
+
+      ...createColumnActions({ p, get, commit, enqueue, failedKeys, unpersisted, retryers }),
 
       dismissNotice(index) {
         const notices = get().notices
