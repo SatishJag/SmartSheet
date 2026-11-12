@@ -14,6 +14,8 @@ import { validateCell, type ColumnRole } from '../model/validate'
 import type { Persistence, RowRecord, SheetData } from './persistence'
 import { parsePredecessorInput, rowNumbers } from './predecessors'
 import { toSchedInput } from './scheduleInput'
+import { normalizeCalendar, sameCalendar, scheduleFormulaProblem } from './sheetSettings'
+import type { Calendar } from '../engine/types'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'failed'
 
@@ -60,6 +62,17 @@ export interface SheetState {
    * the current dependency set, pending deletions) and every row whose insert has not succeeded.
    */
   retryFailed(): void
+  /**
+   * Validates and sets the sheet's working-day calendar (stored deduped and sorted), re-runs the
+   * schedule and saves the sheet's settings. Unchanged input is a no-op.
+   */
+  setCalendar(cal: Calendar): ActionResult
+  /**
+   * Turns dependencies on or off. Off keeps the dependency rows but stops them driving dates.
+   * On is refused while a schedule column holds a formula, or when the dependencies kept while
+   * off no longer fit the row tree (a cycle through a parent, or a summary row with predecessors).
+   */
+  setDependenciesEnabled(on: boolean): ActionResult
 }
 
 export interface SheetStoreOptions {
@@ -325,6 +338,18 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
           if (batch.length === 0) return
           await p.deleteRows(batch)
           for (const id of batch) pendingDeletes.delete(id)
+        },
+      })
+    }
+
+    /** Persist the sheet's current calendar and dependencies flag (the latest state wins). */
+    function enqueueSettings(sheetId: string): void {
+      enqueue({
+        key: 'settings',
+        async run() {
+          const sheet = get().data?.sheet
+          if (!sheet || sheet.id !== sheetId) return
+          await p.saveSheetSettings(sheetId, { calendar: sheet.calendar, dependenciesEnabled: sheet.dependenciesEnabled })
         },
       })
     }
@@ -610,6 +635,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (!data) return
         for (const key of [...failedKeys]) {
           if (key === 'deps') enqueueDependencies(data.sheet.id, data.dependencies)
+          else if (key === 'settings') enqueueSettings(data.sheet.id)
           else if (key === 'delete') enqueueDelete([])
           else if (key.startsWith('tree:')) {
             const rowId = key.slice('tree:'.length)
@@ -635,6 +661,40 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (!data) return
         // The schedule does not depend on the name, so it is kept as is.
         set({ data: { ...data, sheet: { ...data.sheet, name } } })
+      },
+
+      setCalendar(cal) {
+        const data = get().data
+        if (!data) return { ok: false, error: 'Sheet is not loaded' }
+        const norm = normalizeCalendar(cal)
+        if (!norm.ok) return norm
+        if (sameCalendar(norm.calendar, data.sheet.calendar)) return { ok: true }
+        commit({ ...data, sheet: { ...data.sheet, calendar: norm.calendar } })
+        enqueueSettings(data.sheet.id)
+        return { ok: true }
+      },
+
+      setDependenciesEnabled(on) {
+        const data = get().data
+        if (!data) return { ok: false, error: 'Sheet is not loaded' }
+        if (data.sheet.dependenciesEnabled === on) return { ok: true }
+        if (on) {
+          const formula = scheduleFormulaProblem(data)
+          if (formula) return { ok: false, error: formula }
+          // While off, the tree could change in ways dependencies would not allow (see applyTree).
+          const cycle = cycleError(data, data.dependencies)
+          if (cycle) return { ok: false, error: `Can't turn on dependencies: ${cycle}` }
+          const summary = data.dependencies.find((d) => isParent(data, d.successorId))
+          if (summary) {
+            const n = rowNumbers(data).get(summary.successorId)
+            return { ok: false, error: `Can't turn on dependencies: row ${n} is a summary row with predecessors; remove them first` }
+          }
+        }
+        // A refused Start on a row that is no longer driven would be a stale error.
+        const errors = on ? get().errors : get().errors.filter((e) => e.message !== START_SET_BY_PREDECESSORS)
+        commit({ ...data, sheet: { ...data.sheet, dependenciesEnabled: on } }, { errors })
+        enqueueSettings(data.sheet.id)
+        return { ok: true }
       },
 
       dismissNotice(index) {
