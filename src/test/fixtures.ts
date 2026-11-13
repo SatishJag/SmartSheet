@@ -3,7 +3,7 @@ import type { StoreApi } from 'zustand/vanilla'
 import { defaultCalendar } from '../engine/calendar'
 import type { SchedDep } from '../engine/schedule'
 import type { Column } from '../model/validate'
-import type { Persistence, RowRecord, SheetData } from '../store/persistence'
+import type { Persistence, RowRecord, SheetData, SheetSettings } from '../store/persistence'
 import { createSheetStore, type SheetState, type SheetStoreOptions } from '../store/sheetStore'
 
 /** Column ids of the fixture sheet, so tests do not depend on titles. */
@@ -89,6 +89,12 @@ export function makeFakePersistence(data: SheetData = makeSheetData()) {
     saveRowTree: vi.fn(async () => {}),
     saveDependencies: vi.fn(async () => {}),
     deleteRows: vi.fn(async () => {}),
+    saveSheetSettings: vi.fn(async (_sheetId: string, _settings: SheetSettings) => {}),
+    insertColumn: vi.fn(async (_sheetId: string, _col: Column, _position: number) => {}),
+    updateColumn: vi.fn(async (_col: Column) => {}),
+    saveColumnOrder: vi.fn(async (_sheetId: string, _colIds: string[]) => {}),
+    deleteColumn: vi.fn(async (_sheetId: string, _colId: string) => {}),
+    saveColumnCells: vi.fn(async (_sheetId: string, _colId: string, _values: Record<string, unknown>) => {}),
   } satisfies Persistence
 }
 

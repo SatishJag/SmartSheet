@@ -429,7 +429,7 @@ describe('GridView formulas', () => {
   it('sorts and filters by the evaluated value', async () => {
     // Raw text would sort =1+3, =2*100, =50-20; the values are 30, 4, 200.
     const { store, user } = await renderGrid(formulaSheet(['=50-20', '=1+3', '=2*100']))
-    await user.click(within(header('Calc')).getByRole('button'))
+    await user.click(within(header('Calc')).getByRole('button', { name: 'Calc' }))
     const order = () =>
       screen
         .getAllByRole('row')

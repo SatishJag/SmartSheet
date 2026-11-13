@@ -18,7 +18,10 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   reporter: [['list']],
   use: {
-    channel: 'msedge',
+    // Microsoft Edge by default; set PW_CHROMIUM_PATH to run on a plain Chromium binary instead.
+    ...(process.env.PW_CHROMIUM_PATH
+      ? { launchOptions: { executablePath: process.env.PW_CHROMIUM_PATH } }
+      : { channel: 'msedge' }),
     headless: true,
     baseURL: `http://localhost:${PORT}`,
     viewport: { width: 1280, height: 800 },

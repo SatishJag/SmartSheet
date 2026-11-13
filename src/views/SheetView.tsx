@@ -6,6 +6,7 @@ import { SheetStoreProvider, useSheetStore, useSheetStoreApi } from '../store/Sh
 import { createSheetStore, type SaveStatus, type SheetState } from '../store/sheetStore'
 import { ConfirmDialog } from './ConfirmDialog'
 import { InlineRename } from './InlineRename'
+import { ScheduleSettingsButton } from './ScheduleSettingsDialog'
 import { GanttView } from './gantt/GanttView'
 import { GridView } from './grid/GridView'
 import { SaveStatusBadge } from './grid/SaveStatusBadge'
@@ -211,6 +212,7 @@ function SheetContent({
           Back to sheets
         </button>
         {data && <SheetName client={client} sheetId={sheetId} name={data.sheet.name} />}
+        {data && <ScheduleSettingsButton />}
         <span className="spacer" />
         {data && <SaveStatusBadge />}
       </header>

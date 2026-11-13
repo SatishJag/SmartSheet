@@ -22,7 +22,7 @@ const DEP = 'aaaaaaaa-0000-0000-0000-000000000005'
 
 const TABLES = ['sheets', 'columns', 'rows', 'dependencies'] as const
 /** Applied in order, as `supabase db reset` would. */
-const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql']
+const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql', '0003_columns.sql']
 
 // A second sheet of A's, and B's own sheet and row, for the cross-sheet / cross-user tests.
 const SHEET_A2 = 'aaaaaaaa-0000-0000-0000-000000000011'
@@ -405,5 +405,67 @@ describe('defaults', () => {
 
     const d = await db.query<{ lag_minutes: number }>(`select lag_minutes from dependencies where id = $1`, [DEP])
     expect(d.rows[0].lag_minutes).toBe(0)
+  })
+})
+
+describe('column management (0003)', () => {
+  beforeEach(seedExtra, 30_000)
+
+  const cellsOf = async (id: string) =>
+    (await db.query<{ cells: Record<string, unknown> }>(`select cells from rows where id = $1`, [id])).rows[0]?.cells
+
+  async function seedCells() {
+    await asUser(A)
+    await db.query(`update rows set cells = jsonb_build_object($1::text, 'x', 'other', 1) where sheet_id = $2`, [COL, SHEET])
+  }
+
+  it('lets the owner insert, update and delete columns directly', async () => {
+    await asUser(A)
+    const id = 'aaaaaaaa-0000-0000-0000-000000000099'
+    await db.query(`insert into columns (id, sheet_id, title, type, position) values ($1, $2, 'Cost', 'TEXT_NUMBER', 1)`, [id, SHEET])
+    const upd = await db.query(`update columns set title = 'Price', type = 'PICKLIST', options = '["A"]', position = 2 where id = $1`, [id])
+    expect(upd.affectedRows).toBe(1)
+    const del = await db.query(`delete from columns where id = $1`, [id])
+    expect(del.affectedRows).toBe(1)
+  })
+
+  it('delete_column removes the column and its key from every row of the sheet, leaving other keys', async () => {
+    await seedCells()
+    await db.query(`select delete_column($1)`, [COL])
+    expect(await count('columns')).toBe(0)
+    expect(await cellsOf(PARENT)).toEqual({ other: 1 })
+    expect(await cellsOf(CHILD)).toEqual({ other: 1 })
+    // Idempotent: a retried call is a no-op.
+    await db.query(`select delete_column($1)`, [COL])
+  })
+
+  it("delete_column by user B leaves A's column and cells alone", async () => {
+    await seedCells()
+    await asUser(B)
+    await db.query(`select delete_column($1)`, [COL])
+    await asUser(A)
+    expect(await count('columns')).toBe(1)
+    expect(await cellsOf(PARENT)).toEqual({ [COL]: 'x', other: 1 })
+  })
+
+  it('set_column_cells sets and (with null) removes one key on the given rows only', async () => {
+    await seedCells()
+    await db.query(`select set_column_cells($1, $2, $3)`, [SHEET, COL, JSON.stringify({ [PARENT]: ['a', 'b'], [CHILD]: null })])
+    expect(await cellsOf(PARENT)).toEqual({ [COL]: ['a', 'b'], other: 1 })
+    expect(await cellsOf(CHILD)).toEqual({ other: 1 })
+  })
+
+  it("set_column_cells cannot touch another user's rows", async () => {
+    await seedCells()
+    await asUser(B)
+    await db.query(`select set_column_cells($1, $2, $3)`, [SHEET, COL, JSON.stringify({ [PARENT]: 'hacked' })])
+    await asUser(A)
+    expect(await cellsOf(PARENT)).toEqual({ [COL]: 'x', other: 1 })
+  })
+
+  it('anon cannot call either function', async () => {
+    await asAnon()
+    await expect(db.query(`select delete_column($1)`, [COL])).rejects.toThrow(/permission denied/i)
+    await expect(db.query(`select set_column_cells($1, $2, '{}')`, [SHEET, COL])).rejects.toThrow(/permission denied/i)
   })
 })

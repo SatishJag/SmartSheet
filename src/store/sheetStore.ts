@@ -11,9 +11,12 @@ import {
   type RowNode,
 } from '../model/hierarchy'
 import { validateCell, type ColumnRole } from '../model/validate'
+import { createColumnActions, type ColumnActions } from './columnActions'
 import type { Persistence, RowRecord, SheetData } from './persistence'
 import { parsePredecessorInput, rowNumbers } from './predecessors'
 import { toSchedInput } from './scheduleInput'
+import { normalizeCalendar, sameCalendar, scheduleFormulaProblem } from './sheetSettings'
+import type { Calendar } from '../engine/types'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'failed'
 
@@ -25,7 +28,7 @@ export interface CellError {
 
 export type ActionResult = { ok: true } | { ok: false; error: string }
 
-export interface SheetState {
+export interface SheetState extends ColumnActions {
   data: SheetData | null
   scheduled: ScheduleResult
   saveStatus: SaveStatus
@@ -60,6 +63,23 @@ export interface SheetState {
    * the current dependency set, pending deletions) and every row whose insert has not succeeded.
    */
   retryFailed(): void
+  /**
+   * Runs `fn` with rescheduling deferred: actions inside change data at once, and the schedule is
+   * computed once when the outermost batch ends (even if `fn` throws). For bulk edits such as a
+   * paste, which would otherwise reschedule the whole sheet once per cell.
+   */
+  batch<T>(fn: () => T): T
+  /**
+   * Validates and sets the sheet's working-day calendar (stored deduped and sorted), re-runs the
+   * schedule and saves the sheet's settings. Unchanged input is a no-op.
+   */
+  setCalendar(cal: Calendar): ActionResult
+  /**
+   * Turns dependencies on or off. Off keeps the dependency rows but stops them driving dates.
+   * On is refused while a schedule column holds a formula, or when the dependencies kept while
+   * off no longer fit the row tree (a cycle through a parent, or a summary row with predecessors).
+   */
+  setDependenciesEnabled(on: boolean): ActionResult
 }
 
 export interface SheetStoreOptions {
@@ -190,6 +210,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
   const unpersisted = new Set<string>()
   /** Row ids to delete in the database; cleared when a delete succeeds. */
   const pendingDeletes = new Set<string>()
+  /** How to re-queue failed column-management jobs, by key (see columnActions.ts). */
+  const retryers = new Map<string, () => void>()
 
   const store = createStore<SheetState>()((set, get) => {
     function refreshStatus(): void {
@@ -269,14 +291,17 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       enqueue({
         key: `cell:${rowId}:${colId}`,
         value,
-        async run(job) {
+        async run() {
           const row = findRow(rowId)
           if (!row) return // row deleted meanwhile; nothing to save
+          if (!get().data?.columns.some((c) => c.id === colId)) return // column deleted meanwhile
           if (unpersisted.has(rowId)) {
             await insertNow(rowId) // the insert carries this cell's current value
             return
           }
-          const { version } = await p.saveCell(rowId, colId, job.value, row.version)
+          // Save the value the row holds now, not the one captured at enqueue time: a column-wide
+          // save (rename, retype) may have rewritten this cell after the job was queued.
+          const { version } = await p.saveCell(rowId, colId, row.cells[colId] ?? null, row.version)
           const data = get().data
           if (!data) return
           set({ data: { ...data, rows: data.rows.map((r) => (r.id === rowId ? { ...r, version } : r)) } })
@@ -329,8 +354,29 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       })
     }
 
+    /** Persist the sheet's current calendar and dependencies flag (the latest state wins). */
+    function enqueueSettings(sheetId: string): void {
+      enqueue({
+        key: 'settings',
+        async run() {
+          const sheet = get().data?.sheet
+          if (!sheet || sheet.id !== sheetId) return
+          await p.saveSheetSettings(sheetId, { calendar: sheet.calendar, dependenciesEnabled: sheet.dependenciesEnabled })
+        },
+      })
+    }
+
     /** Replace data and recompute the schedule. */
+    /** Depth of nested `batch` calls; while > 0, commits skip rescheduling. */
+    let batchDepth = 0
+    let scheduleStale = false
+
     function commit(data: SheetData, extra: Partial<SheetState> = {}): void {
+      if (batchDepth > 0) {
+        scheduleStale = true
+        set({ data, ...extra })
+        return
+      }
       set({ data, scheduled: computeSchedule(data), ...extra })
     }
 
@@ -610,6 +656,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (!data) return
         for (const key of [...failedKeys]) {
           if (key === 'deps') enqueueDependencies(data.sheet.id, data.dependencies)
+          else if (key === 'settings') enqueueSettings(data.sheet.id)
           else if (key === 'delete') enqueueDelete([])
           else if (key.startsWith('tree:')) {
             const rowId = key.slice('tree:'.length)
@@ -625,6 +672,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
             else failedKeys.delete(key)
           }
         }
+        for (const key of [...failedKeys]) retryers.get(key)?.()
         // Rows whose insert never succeeded (whatever job last tried it).
         for (const id of unpersisted) if (findRow(id) && !queue.some((j) => j.key === `tree:${id}`)) enqueueTree(id)
         refreshStatus()
@@ -635,6 +683,58 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (!data) return
         // The schedule does not depend on the name, so it is kept as is.
         set({ data: { ...data, sheet: { ...data.sheet, name } } })
+      },
+
+      setCalendar(cal) {
+        const data = get().data
+        if (!data) return { ok: false, error: 'Sheet is not loaded' }
+        const norm = normalizeCalendar(cal)
+        if (!norm.ok) return norm
+        if (sameCalendar(norm.calendar, data.sheet.calendar)) return { ok: true }
+        commit({ ...data, sheet: { ...data.sheet, calendar: norm.calendar } })
+        enqueueSettings(data.sheet.id)
+        return { ok: true }
+      },
+
+      setDependenciesEnabled(on) {
+        const data = get().data
+        if (!data) return { ok: false, error: 'Sheet is not loaded' }
+        if (data.sheet.dependenciesEnabled === on) return { ok: true }
+        if (on) {
+          if (data.dependencies.length > 0 && !data.columns.some((c) => c.role === 'predecessor')) {
+            return { ok: false, error: "Can't turn on dependencies: this sheet has no Predecessors column to show and edit them" }
+          }
+          const formula = scheduleFormulaProblem(data)
+          if (formula) return { ok: false, error: formula }
+          // While off, the tree could change in ways dependencies would not allow (see applyTree).
+          const cycle = cycleError(data, data.dependencies)
+          if (cycle) return { ok: false, error: `Can't turn on dependencies: ${cycle}` }
+          const summary = data.dependencies.find((d) => isParent(data, d.successorId))
+          if (summary) {
+            const n = rowNumbers(data).get(summary.successorId)
+            return { ok: false, error: `Can't turn on dependencies: row ${n} is a summary row with predecessors; remove them first` }
+          }
+        }
+        // A refused Start on a row that is no longer driven would be a stale error.
+        const errors = on ? get().errors : get().errors.filter((e) => e.message !== START_SET_BY_PREDECESSORS)
+        commit({ ...data, sheet: { ...data.sheet, dependenciesEnabled: on } }, { errors })
+        enqueueSettings(data.sheet.id)
+        return { ok: true }
+      },
+      ...createColumnActions({ p, get, commit, enqueue, failedKeys, unpersisted, retryers }),
+
+      batch(fn) {
+        batchDepth++
+        try {
+          return fn()
+        } finally {
+          batchDepth--
+          if (batchDepth === 0 && scheduleStale) {
+            scheduleStale = false
+            const data = get().data
+            if (data) set({ scheduled: computeSchedule(data) })
+          }
+        }
       },
 
       dismissNotice(index) {
