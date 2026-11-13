@@ -38,7 +38,7 @@ describe('SheetView', () => {
 
     render(
       <StrictMode>
-        <SheetView client={client} sheetId="sheet-1" onBack={onBack} />
+        <SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={onBack} />
       </StrictMode>,
     )
     expect(screen.getByText('Loading sheet…')).toBeInTheDocument()
@@ -59,7 +59,7 @@ describe('SheetView', () => {
 
   it('shows the Grid tab by default and switches to Gantt by click, unmounting the grid', async () => {
     vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
-    render(<SheetView client={client} sheetId="sheet-1" onBack={() => {}} />)
+    render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} />)
 
     expect(await screen.findByRole('grid')).toBeInTheDocument()
     const tabs = screen.getAllByRole('tab')
@@ -82,7 +82,7 @@ describe('SheetView', () => {
 
   it('switches tabs with the arrow keys and moves focus', async () => {
     vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
-    render(<SheetView client={client} sheetId="sheet-1" onBack={() => {}} />)
+    render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} />)
     await screen.findByRole('grid')
 
     const user = userEvent.setup()
@@ -116,7 +116,7 @@ describe('SheetView', () => {
 
   it('switches to Kanban by click, unmounting the previous view', async () => {
     vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
-    render(<SheetView client={client} sheetId="sheet-1" onBack={() => {}} />)
+    render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} />)
     await screen.findByRole('grid')
 
     const user = userEvent.setup()
@@ -137,7 +137,7 @@ describe('SheetView', () => {
       const { store } = await makeTestStore()
       vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
       const view = render(
-        <SheetView client={client} sheetId="sheet-1" onBack={onBack} store={store} onSaveStatusChange={onSaveStatusChange} />,
+        <SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={onBack} store={store} onSaveStatusChange={onSaveStatusChange} />,
       )
       await screen.findByRole('grid')
       const retry = vi.spyOn(store.getState(), 'retryFailed').mockImplementation(() => {})
@@ -232,7 +232,7 @@ describe('SheetView', () => {
       const { client: c, from, update, eq } = clientWithUpdate({ error: null })
       vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
       const { store } = await makeTestStore()
-      render(<SheetView client={c} sheetId="sheet-1" onBack={() => {}} store={store} />)
+      render(<SheetView client={c} userId="user-1" sheetId="sheet-1" onBack={() => {}} store={store} />)
       await screen.findByRole('grid')
       const user = userEvent.setup()
       await user.click(screen.getByRole('button', { name: 'Rename sheet' }))
@@ -251,7 +251,7 @@ describe('SheetView', () => {
       const { client: c } = clientWithUpdate({ error: { message: 'rename boom' } })
       vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
       const { store } = await makeTestStore()
-      render(<SheetView client={c} sheetId="sheet-1" onBack={() => {}} store={store} />)
+      render(<SheetView client={c} userId="user-1" sheetId="sheet-1" onBack={() => {}} store={store} />)
       await screen.findByRole('grid')
       const user = userEvent.setup()
       await user.click(screen.getByRole('button', { name: 'Rename sheet' }))
@@ -267,10 +267,66 @@ describe('SheetView', () => {
     const persistence = makeFakePersistence()
     persistence.loadSheet.mockRejectedValue(new Error('permission denied for table sheets'))
     vi.mocked(supabasePersistence).mockReturnValue(persistence)
-    render(<SheetView client={client} sheetId="sheet-1" onBack={() => {}} />)
+    render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('permission denied for table sheets')
     expect(screen.queryByRole('grid')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Back to sheets' })).toBeInTheDocument()
+  })
+
+  describe('sharing roles', () => {
+    /** A client whose sheet_members lookup answers with `role` (or nothing). */
+    function memberClient(role: string | null) {
+      const eq2 = vi.fn().mockResolvedValue({ data: role ? [{ role }] : [], error: null })
+      const eq1 = vi.fn().mockReturnValue({ eq: eq2 })
+      const select = vi.fn().mockReturnValue({ eq: eq1 })
+      return { client: { from: vi.fn().mockReturnValue({ select }) } as unknown as SupabaseClient, select }
+    }
+
+    it('the owner can rename and share, and the sheet is editable', async () => {
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const { store } = await makeTestStore()
+      render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} store={store} />)
+      await screen.findByRole('grid')
+      expect(screen.getByRole('button', { name: 'Share' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Rename sheet' })).toBeInTheDocument()
+      expect(store.getState().readOnly).toBe(false)
+    })
+
+    it('a viewer gets a read-only sheet with no rename, share or add-row', async () => {
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const { store } = await makeTestStore()
+      const { client: c } = memberClient('viewer')
+      render(<SheetView client={c} userId="someone-else" sheetId="sheet-1" onBack={() => {}} store={store} />)
+      await screen.findByRole('grid')
+      expect(await screen.findByText('View only')).toBeInTheDocument()
+      expect(store.getState().readOnly).toBe(true)
+      expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Rename sheet' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Add row' })).toBeDisabled()
+    })
+
+    it('an editor can edit but not rename or share', async () => {
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const { store } = await makeTestStore()
+      const { client: c } = memberClient('editor')
+      render(<SheetView client={c} userId="someone-else" sheetId="sheet-1" onBack={() => {}} store={store} />)
+      await screen.findByRole('grid')
+      expect(await screen.findByText(/can edit/)).toBeInTheDocument()
+      expect(store.getState().readOnly).toBe(false)
+      expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Rename sheet' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Add row' })).toBeEnabled()
+    })
+
+    it('stays read-only when the role lookup finds nothing', async () => {
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const { store } = await makeTestStore()
+      const { client: c } = memberClient(null)
+      render(<SheetView client={c} userId="someone-else" sheetId="sheet-1" onBack={() => {}} store={store} />)
+      await screen.findByRole('grid')
+      expect(await screen.findByText('View only')).toBeInTheDocument()
+      expect(store.getState().readOnly).toBe(true)
+    })
   })
 })

@@ -11,6 +11,7 @@ interface SheetRow {
   id: string
   name: string
   created_at: string
+  owner_id: string
 }
 
 interface SheetListProps {
@@ -37,7 +38,7 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
   const load = useCallback(async () => {
     try {
       const rows = await fetchAllPages<SheetRow>((from, to) =>
-        client.from('sheets').select('id,name,created_at').order('created_at', { ascending: false }).order('id').range(from, to),
+        client.from('sheets').select('id,name,created_at,owner_id').order('created_at', { ascending: false }).order('id').range(from, to),
       )
       if (active.current) setSheets(rows)
     } catch (err) {
@@ -164,15 +165,23 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
               ) : (
                 <button type="button" className="sheet-item" onClick={() => onOpen(sheet.id)}>
                   <span>{sheet.name}</span>
-                  <small>{new Date(sheet.created_at).toLocaleDateString()}</small>
+                  <small>
+                    {sheet.owner_id !== userId && 'Shared with you · '}
+                    {new Date(sheet.created_at).toLocaleDateString()}
+                  </small>
                 </button>
               )}
-              <button type="button" aria-label={`Rename ${sheet.name}`} onClick={() => setRenamingId(sheet.id)}>
-                Rename
-              </button>
-              <button type="button" aria-label={`Delete ${sheet.name}`} onClick={() => setDeleting(sheet)}>
-                Delete
-              </button>
+              {/* Only the owner can rename or delete a sheet. */}
+              {sheet.owner_id === userId && (
+                <>
+                  <button type="button" aria-label={`Rename ${sheet.name}`} onClick={() => setRenamingId(sheet.id)}>
+                    Rename
+                  </button>
+                  <button type="button" aria-label={`Delete ${sheet.name}`} onClick={() => setDeleting(sheet)}>
+                    Delete
+                  </button>
+                </>
+              )}
             </li>
           ))}
         </ul>

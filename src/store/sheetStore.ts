@@ -35,8 +35,11 @@ export interface SheetState {
   errors: CellError[]
   notices: string[]
   loadError: string | null
+  /** True for a viewer: every edit is refused (the database refuses their writes too). */
+  readOnly: boolean
 
   load(id: string): Promise<void>
+  setReadOnly(readOnly: boolean): void
   setCell(rowId: string, colId: string, raw: string): ActionResult
   addRow(afterId?: string | null, parentId?: string | null): string
   indentRow(id: string): void
@@ -74,6 +77,8 @@ export const START_SET_BY_PREDECESSORS = 'Start date is set by predecessors — 
 export function isStartDriven(data: SheetData, rowId: string): boolean {
   return data.sheet.dependenciesEnabled && data.dependencies.some((d) => d.successorId === rowId)
 }
+
+export const READ_ONLY_MESSAGE = 'You have view-only access to this sheet'
 
 /** Columns whose values on a parent row come from its children. */
 const ROLLUP_ROLES: readonly ColumnRole[] = ['start', 'end', 'duration', 'percentComplete']
@@ -427,6 +432,11 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       errors: [],
       notices: [],
       loadError: null,
+      readOnly: false,
+
+      setReadOnly(readOnly) {
+        set({ readOnly })
+      },
 
       async load(id) {
         set({ loadError: null })
@@ -439,6 +449,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       setCell(rowId, colId, raw) {
+        if (get().readOnly) return { ok: false, error: READ_ONLY_MESSAGE }
         const data = get().data
         if (!data) return { ok: false, error: 'Sheet is not loaded' }
         const row = data.rows.find((r) => r.id === rowId)
@@ -475,6 +486,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       addRow(afterId, parentId) {
+        if (get().readOnly) throw new Error(READ_ONLY_MESSAGE)
         const data = get().data
         if (!data) throw new Error('Sheet is not loaded')
         const after = afterId ? data.rows.find((r) => r.id === afterId) : undefined
@@ -499,18 +511,22 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       indentRow(id) {
+        if (get().readOnly) return
         applyTree('indent', (rows) => indent(rows, id))
       },
 
       outdentRow(id) {
+        if (get().readOnly) return
         applyTree('outdent', (rows) => outdent(rows, id))
       },
 
       moveRow(id, afterId, newParentId) {
+        if (get().readOnly) return
         applyTree('move', (rows) => moveRowInTree(rows, id, afterId, newParentId))
       },
 
       deleteRow(id) {
+        if (get().readOnly) return
         const data = get().data
         if (!data) return
         const { rows, removedIds } = deleteWithChildren(data.rows, id)
@@ -540,6 +556,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       addDependency(dep) {
+        if (get().readOnly) return { ok: false, error: READ_ONLY_MESSAGE }
         const data = get().data
         if (!data) return { ok: false, error: 'Sheet is not loaded' }
         const ids = new Set(data.rows.map((r) => r.id))
@@ -559,6 +576,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       setPredecessors(rowId, raw) {
+        if (get().readOnly) return { ok: false, error: READ_ONLY_MESSAGE }
         const data = get().data
         if (!data) return { ok: false, error: 'Sheet is not loaded' }
         if (!data.rows.some((r) => r.id === rowId)) return { ok: false, error: `Unknown row ${rowId}` }
@@ -597,6 +615,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       removeDependency(predecessorId, successorId) {
+        if (get().readOnly) return
         const data = get().data
         if (!data) return
         const deps = data.dependencies.filter((d) => !(d.predecessorId === predecessorId && d.successorId === successorId))

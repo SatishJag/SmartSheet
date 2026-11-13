@@ -157,7 +157,7 @@ describe('SheetList', () => {
     expect(await screen.findByText('No sheets yet')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New sheet' })).toBeInTheDocument()
     expect(from).toHaveBeenCalledWith('sheets')
-    expect(select).toHaveBeenCalledWith('id,name,created_at')
+    expect(select).toHaveBeenCalledWith('id,name,created_at,owner_id')
     expect(order).toHaveBeenCalledWith('created_at', { ascending: false })
   })
 

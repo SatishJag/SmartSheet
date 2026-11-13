@@ -293,3 +293,69 @@ describe('fakeSupabase tables', () => {
     expect(() => client.from('sheets').select('*', { count: 'exact' } as never)).toThrow(/unsupported call/)
   })
 })
+
+describe('fakeSupabase sharing', () => {
+  let client: ReturnType<typeof createFakeSupabase>
+  let ids: { a: string; b: string; sheet: string }
+
+  async function as(creds: { email: string; password: string }) {
+    await client.auth.signOut()
+    await client.auth.signInWithPassword(creds)
+  }
+
+  beforeEach(async () => {
+    client = createFakeSupabase({ storage: memoryStorage() })
+    const b = await client.auth.signUp(B)
+    const a = await client.auth.signUp(A) // A is signed in
+    const sheet = await client.from('sheets').insert({ name: 'S' }).select('id').single()
+    ids = { a: a.data.user!.id, b: b.data.user!.id, sheet: (sheet.data as { id: string }).id }
+    await client.from('rows').insert({ sheet_id: ids.sheet, position: 'a0', owner_id: ids.a })
+  })
+
+  const share = (role: string, email = B.email) => client.rpc('share_sheet', { p_sheet: ids.sheet, p_email: email, p_role: role })
+
+  it('hides a sheet until it is shared, then shows it with its rows', async () => {
+    await as(B)
+    expect((await client.from('sheets').select('id')).data).toEqual([])
+    await as(A)
+    expect((await share('viewer')).error).toBeNull()
+    await as(B)
+    expect((await client.from('sheets').select('id')).data).toEqual([{ id: ids.sheet }])
+    expect((await client.from('rows').select('id')).data).toHaveLength(1)
+  })
+
+  it('lets a viewer read only, and an editor edit rows but not rename, delete or share', async () => {
+    await share('viewer')
+    await as(B)
+    const row = { sheet_id: ids.sheet, position: 'a1', owner_id: ids.a }
+    expect((await client.from('rows').insert(row)).error?.message).toMatch(/row-level security/)
+    expect((await client.from('rows').update({ cells: { x: 1 } }).eq('sheet_id', ids.sheet).select('id')).data).toEqual([])
+    await as(A)
+    await share('editor')
+    await as(B)
+    expect((await client.from('rows').insert(row)).error).toBeNull()
+    expect((await client.from('rows').insert({ ...row, position: 'a2', owner_id: ids.b })).error?.message).toMatch(/row-level security/)
+    expect((await client.from('sheets').update({ name: 'X' }).eq('id', ids.sheet).select('id')).data).toEqual([])
+    expect((await client.from('sheets').delete().eq('id', ids.sheet).select('id')).data).toEqual([])
+    expect((await share('viewer', A.email)).error?.message).toMatch(/Only the sheet owner/)
+  })
+
+  it('validates share_sheet input and lets members be listed and removed by the owner', async () => {
+    expect((await share('boss')).error?.message).toMatch(/viewer or editor/)
+    expect((await share('viewer', 'nobody@example.com')).error?.message).toMatch(/No account found/)
+    expect((await share('viewer', A.email)).error?.message).toMatch(/already own/)
+    await share('viewer')
+    await share('editor')
+    expect((await client.from('sheet_members').select('email,role')).data).toEqual([{ email: B.email, role: 'editor' }])
+    expect((await client.from('sheet_members').insert({ sheet_id: ids.sheet, user_id: ids.b, email: 'x@y.zz', role: 'editor' })).error).not.toBeNull()
+    await client.from('sheet_members').delete().eq('user_id', ids.b)
+    await as(B)
+    expect((await client.from('sheets').select('id')).data).toEqual([])
+  })
+
+  it('removes memberships with the sheet', async () => {
+    await share('viewer')
+    await client.from('sheets').delete().eq('id', ids.sheet)
+    expect((await client.from('sheet_members').select('email')).data).toEqual([])
+  })
+})

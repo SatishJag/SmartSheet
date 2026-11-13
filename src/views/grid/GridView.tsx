@@ -3,6 +3,7 @@ import { useTable } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Column } from '../../model/validate'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
+import { READ_ONLY_MESSAGE } from '../../store/sheetStore'
 import { ConfirmDialog } from '../ConfirmDialog'
 import { CellEditor, CheckboxCell, type CommitReason } from './cellEditors'
 import {
@@ -53,6 +54,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const data = useSheetStore((s) => s.data)
   const scheduled = useSheetStore((s) => s.scheduled)
   const errors = useSheetStore((s) => s.errors)
+  const viewOnly = useSheetStore((s) => s.readOnly)
 
   const columns = data?.columns ?? EMPTY_COLUMNS
   const columnDefs = useMemo(() => buildColumnDefs(columns), [columns])
@@ -136,7 +138,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
   }
 
   function startEdit(row: GridRow, col: Column) {
-    if (!isEditable(col, row)) return
+    if (viewOnly || !isEditable(col, row)) return
     if (col.type === 'CHECKBOX') {
       toggleCheckbox(row, col)
       return
@@ -210,6 +212,10 @@ export function GridView({ viewportHeight }: GridViewProps) {
    */
   // shortcut: one setCell (and reschedule) per cell, upgrade to a batch store action if big pastes feel slow.
   function applyCells(targets: { row: ViewRow; col: Column; raw: string }[], verb: string, clipped: number) {
+    if (viewOnly) {
+      setStatus(READ_ONLY_MESSAGE)
+      return
+    }
     let done = 0
     const skipped: string[] = []
     for (const { row, col, raw } of targets) {
@@ -350,7 +356,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
     const error = errorByCell.get(key) ?? formulaError(col, row)
     const isActive = active?.rowId === row.id && active.colId === col.id
     const isSelected = range !== null && inBounds(range, rowIdx, idx)
-    const editable = isEditable(col, row)
+    const editable = !viewOnly && isEditable(col, row)
     const errorId = error ? `cell-error-${row.id}-${col.id}` : undefined
     const initial = editString(col, row)
     let content
@@ -517,16 +523,16 @@ export function GridView({ viewportHeight }: GridViewProps) {
         {rows.length === 0 && <p className="grid-empty">No rows yet</p>}
       </div>
       <div className="grid-toolbar">
-        <button type="button" onClick={addRow}>
+        <button type="button" disabled={viewOnly} onClick={addRow}>
           Add row
         </button>
-        <button type="button" disabled={!activeValid} onClick={() => shiftActiveRow('indent')}>
+        <button type="button" disabled={viewOnly || !activeValid} onClick={() => shiftActiveRow('indent')}>
           Indent
         </button>
-        <button type="button" disabled={!activeValid} onClick={() => shiftActiveRow('outdent')}>
+        <button type="button" disabled={viewOnly || !activeValid} onClick={() => shiftActiveRow('outdent')}>
           Outdent
         </button>
-        <button type="button" disabled={!activeValid} onClick={requestDelete}>
+        <button type="button" disabled={viewOnly || !activeValid} onClick={requestDelete}>
           Delete row
         </button>
         <FilterBar columns={columns} filter={view.filter} onChange={setFilter} />

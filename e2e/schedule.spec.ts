@@ -10,11 +10,12 @@ async function expectBars(page: Page, task1: string, task2: string) {
   await expect(bar2(page)).toHaveAttribute('aria-label', task2)
 }
 
-const T1_3D = 'Task 1: 2026-11-09 to 2026-11-11, 3 days, 0% complete'
-const T2_AFTER_3D = 'Task 2: 2026-11-12 to 2026-11-13, 2 days, 0% complete'
-const T1_4D = 'Task 1: 2026-11-09 to 2026-11-12, 4 days, 0% complete'
+// Tasks 1 and 2 are linked and task 2 finishes last, so both bars are on the critical path.
+const T1_3D = 'Task 1: 2026-11-09 to 2026-11-11, 3 days, 0% complete, critical path'
+const T2_AFTER_3D = 'Task 2: 2026-11-12 to 2026-11-13, 2 days, 0% complete, critical path'
+const T1_4D = 'Task 1: 2026-11-09 to 2026-11-12, 4 days, 0% complete, critical path'
 // Task 1 now ends Thursday the 12th, so task 2 runs Friday the 13th and Monday the 16th.
-const T2_AFTER_4D = 'Task 2: 2026-11-13 to 2026-11-16, 2 days, 0% complete'
+const T2_AFTER_4D = 'Task 2: 2026-11-13 to 2026-11-16, 2 days, 0% complete, critical path'
 
 test('predecessors drive the Gantt chart, invalid input is flagged, and everything persists', async ({ page }) => {
   await signUp(page, USER_A)

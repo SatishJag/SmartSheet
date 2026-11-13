@@ -74,6 +74,7 @@ function Shell({ client, userId, email }: { client: SupabaseClient; userId: stri
         ) : (
           <SheetView
             client={client}
+            userId={userId}
             sheetId={openSheetId}
             onSaveStatusChange={setSheetStatus}
             onBack={() => {

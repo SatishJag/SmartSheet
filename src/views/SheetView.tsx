@@ -5,6 +5,7 @@ import { supabasePersistence } from '../store/persistence'
 import { SheetStoreProvider, useSheetStore, useSheetStoreApi } from '../store/SheetStoreContext'
 import { createSheetStore, type SaveStatus, type SheetState } from '../store/sheetStore'
 import { ConfirmDialog } from './ConfirmDialog'
+import { ShareDialog } from './ShareDialog'
 import { InlineRename } from './InlineRename'
 import { GanttView } from './gantt/GanttView'
 import { GridView } from './grid/GridView'
@@ -13,6 +14,8 @@ import { KanbanView } from './kanban/KanbanView'
 
 export interface SheetViewProps {
   client: SupabaseClient
+  /** The signed-in user: decides whether they own the sheet or have been given a role on it. */
+  userId: string
   sheetId: string
   onBack: () => void
   /** Told whenever the sheet's save status changes (the app guards Sign out with it). */
@@ -31,7 +34,7 @@ export function SheetView(props: SheetViewProps) {
   return <SheetViewForSheet key={props.sheetId} {...props} />
 }
 
-function SheetViewForSheet({ client, sheetId, onBack, onSaveStatusChange, store: given }: SheetViewProps) {
+function SheetViewForSheet({ client, userId, sheetId, onBack, onSaveStatusChange, store: given }: SheetViewProps) {
   // Created once per mounted sheet; useState's initializer is safe under StrictMode.
   const [store] = useState(() => given ?? createSheetStore(supabasePersistence(client)))
   const loadStarted = useRef(false)
@@ -44,7 +47,7 @@ function SheetViewForSheet({ client, sheetId, onBack, onSaveStatusChange, store:
 
   return (
     <SheetStoreProvider store={store}>
-      <SheetContent client={client} sheetId={sheetId} onBack={onBack} onSaveStatusChange={onSaveStatusChange} />
+      <SheetContent client={client} userId={userId} sheetId={sheetId} onBack={onBack} onSaveStatusChange={onSaveStatusChange} />
     </SheetStoreProvider>
   )
 }
@@ -150,8 +153,46 @@ function useSaveGuards(onSaveStatusChange?: (status: SaveStatus) => void): SaveS
   return status
 }
 
-/** The sheet's name as the page heading, with an inline Rename that saves to the sheets table. */
-function SheetName({ client, sheetId, name }: { client: SupabaseClient; sheetId: string; name: string }) {
+type SheetRole = 'owner' | 'editor' | 'viewer'
+
+/**
+ * The user's role on the open sheet. Anyone who is not the owner is a viewer until their
+ * membership row says editor (fail closed: a failed lookup leaves the sheet read-only).
+ * Applies the viewer's read-only flag to the store.
+ */
+function useSheetRole(client: SupabaseClient, userId: string, sheetId: string): SheetRole | null {
+  const api = useSheetStoreApi()
+  const ownerId = useSheetStore((s) => s.data?.sheet.ownerId)
+  const [member, setMember] = useState<{ sheetId: string; role: SheetRole } | null>(null)
+  const isOwner = ownerId === userId
+
+  useEffect(() => {
+    if (ownerId === undefined || isOwner) return
+    let live = true
+    void client
+      .from('sheet_members')
+      .select('role')
+      .eq('sheet_id', sheetId)
+      .eq('user_id', userId)
+      .then(({ data }) => {
+        const role = (data as { role: string }[] | null)?.[0]?.role
+        if (live) setMember({ sheetId, role: role === 'editor' ? 'editor' : 'viewer' })
+      })
+    return () => {
+      live = false
+    }
+  }, [client, userId, sheetId, ownerId, isOwner])
+
+  const role: SheetRole | null = ownerId === undefined ? null : isOwner ? 'owner' : member?.sheetId === sheetId ? member.role : 'viewer'
+  const readOnly = ownerId !== undefined && role !== 'owner' && role !== 'editor'
+  useEffect(() => {
+    api.getState().setReadOnly(readOnly)
+  }, [api, readOnly])
+  return role
+}
+
+/** The sheet's name as the page heading, with an inline Rename (owners only) that saves to the sheets table. */
+function SheetName({ client, sheetId, name, canRename }: { client: SupabaseClient; sheetId: string; name: string; canRename: boolean }) {
   const api = useSheetStoreApi()
   const [editing, setEditing] = useState(false)
 
@@ -168,20 +209,24 @@ function SheetName({ client, sheetId, name }: { client: SupabaseClient; sheetId:
   ) : (
     <>
       <h2>{name}</h2>
-      <button type="button" aria-label="Rename sheet" onClick={() => setEditing(true)}>
-        Rename
-      </button>
+      {canRename && (
+        <button type="button" aria-label="Rename sheet" onClick={() => setEditing(true)}>
+          Rename
+        </button>
+      )}
     </>
   )
 }
 
 function SheetContent({
   client,
+  userId,
   sheetId,
   onBack,
   onSaveStatusChange,
 }: {
   client: SupabaseClient
+  userId: string
   sheetId: string
   onBack: () => void
   onSaveStatusChange?: (status: SaveStatus) => void
@@ -190,6 +235,8 @@ function SheetContent({
   const loadError = useSheetStore((s) => s.loadError)
   const status = useSaveGuards(onSaveStatusChange)
   const [confirmBack, setConfirmBack] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  const role = useSheetRole(client, userId, sheetId)
 
   return (
     <section className="sheet-view">
@@ -206,11 +253,19 @@ function SheetContent({
           onCancel={() => setConfirmBack(false)}
         />
       )}
+      {sharing && data && <ShareDialog client={client} sheetId={sheetId} sheetName={data.sheet.name} onClose={() => setSharing(false)} />}
       <header className="sheet-view-header">
         <button type="button" onClick={() => (status === 'saved' ? onBack() : setConfirmBack(true))}>
           Back to sheets
         </button>
-        {data && <SheetName client={client} sheetId={sheetId} name={data.sheet.name} />}
+        {data && <SheetName client={client} sheetId={sheetId} name={data.sheet.name} canRename={role === 'owner'} />}
+        {role === 'owner' && (
+          <button type="button" onClick={() => setSharing(true)}>
+            Share
+          </button>
+        )}
+        {role === 'viewer' && <span className="role-badge">View only</span>}
+        {role === 'editor' && <span className="role-badge">Shared with you · can edit</span>}
         <span className="spacer" />
         {data && <SaveStatusBadge />}
       </header>
