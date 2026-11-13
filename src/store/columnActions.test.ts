@@ -246,6 +246,20 @@ describe('changeColumnType', () => {
     expect(Object.keys(p.saveColumnCells.mock.calls[0][2])).toEqual(['r-survey', 'r-clear'])
   })
 
+  it('clears formulas when the new type is a checkbox (it cannot show or edit one), and counts them', async () => {
+    const data = noDeps()
+    data.columns = [...data.columns, { id: 'c-ok', title: 'OK', type: 'TEXT_NUMBER' }]
+    data.rows[0].cells['c-ok'] = '=1+2'
+    data.rows[1].cells['c-ok'] = 'true'
+    const { store, persistence: p } = await makeTestStore(data)
+    expect(store.getState().changeColumnType('c-ok', 'CHECKBOX')).toEqual({ ok: true })
+    expect('c-ok' in cells(store, 'r-site')).toBe(false)
+    expect(cells(store, 'r-survey')['c-ok']).toBe(true)
+    expect(store.getState().notices).toEqual(['Changed "OK" to Checkbox: cleared 1 value that did not fit'])
+    await settled(store)
+    expect(p.saveColumnCells).toHaveBeenCalledWith('sheet-1', 'c-ok', { 'r-site': undefined, 'r-survey': true })
+  })
+
   it('normalizes values for the new type (text to dropdown)', async () => {
     const data = noDeps()
     data.columns = [...data.columns, { id: 'c-trade', title: 'Trade', type: 'TEXT_NUMBER' }]

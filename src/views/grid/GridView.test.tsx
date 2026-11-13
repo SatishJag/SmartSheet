@@ -399,6 +399,19 @@ describe('GridView formulas', () => {
     expect(cell(1, 'Calc')).toHaveTextContent(/^5$/)
   })
 
+  it('a formula in a date cell opens as text and survives leaving the editor unchanged', async () => {
+    const data = formulaSheet(['x'])
+    data.columns = data.columns.map((c) => (c.id === 'calc' ? { ...c, type: 'DATE' as const } : c))
+    data.rows[0].cells.calc = '=TODAY()'
+    const { store, user, setCell } = await renderGrid(data)
+    await user.dblClick(cell(1, 'Calc'))
+    const editor = screen.getByRole('textbox', { name: 'Calc' }) // not a native date input, which cannot hold a formula
+    expect(editor).toHaveValue('=TODAY()')
+    await user.tab() // blur commits the unchanged text
+    expect(setCell).not.toHaveBeenCalledWith('f0', 'calc', '')
+    expect(store.getState().data!.rows[0].cells.calc).toBe('=TODAY()')
+  })
+
   it.each([
     ['=1/0', 'Division by zero'],
     ['=FOO(1)', "Unknown function 'FOO'"],
