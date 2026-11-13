@@ -299,7 +299,7 @@ export function createColumnActions(ctx: ColumnActionContext): ColumnActions {
         const v = r.cells[colId]
         let value: unknown
         if (isEmptyValue(v)) value = undefined
-        else if (isFormula(v)) value = v
+        else if (isFormula(v) && type !== 'CHECKBOX') value = v // a checkbox cannot hold one: validateCell clears it
         else {
           const res = validateCell(next, asTyped(v), {
             rowCount: data.rows.length,
