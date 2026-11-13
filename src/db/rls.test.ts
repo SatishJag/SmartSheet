@@ -22,7 +22,7 @@ const DEP = 'aaaaaaaa-0000-0000-0000-000000000005'
 
 const TABLES = ['sheets', 'columns', 'rows', 'dependencies'] as const
 /** Applied in order, as `supabase db reset` would. */
-const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql']
+const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql', '0003_sharing.sql']
 
 // A second sheet of A's, and B's own sheet and row, for the cross-sheet / cross-user tests.
 const SHEET_A2 = 'aaaaaaaa-0000-0000-0000-000000000011'
@@ -92,6 +92,11 @@ beforeAll(async () => {
     create schema auth;
     create role authenticated nologin;
     create role anon nologin;
+    create table auth.users (id uuid primary key, email text);
+    insert into auth.users values
+      ('11111111-1111-1111-1111-111111111111', 'a@example.com'),
+      ('22222222-2222-2222-2222-222222222222', 'b@example.com'),
+      ('33333333-3333-3333-3333-333333333333', 'c@example.com');
     create function auth.uid() returns uuid language sql stable as
       $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
     grant usage on schema public to authenticated, anon;
@@ -405,5 +410,99 @@ describe('defaults', () => {
 
     const d = await db.query<{ lag_minutes: number }>(`select lag_minutes from dependencies where id = $1`, [DEP])
     expect(d.rows[0].lag_minutes).toBe(0)
+  })
+})
+
+describe('sharing (0003)', () => {
+  const C = '33333333-3333-3333-3333-333333333333'
+  const share = (email: string, role: string) => db.query(`select share_sheet($1, $2, $3)`, [SHEET, email, role])
+  const rowCount = async () => (await db.query<{ n: number }>(`select count(*)::int n from rows where sheet_id = $1`, [SHEET])).rows[0].n
+
+  it('keeps a sheet private until it is shared, then lets the member read it', async () => {
+    await asUser(B)
+    expect(await count('sheets')).toBe(0)
+    await asUser(A)
+    await share(' B@Example.com ', 'viewer')
+    await asUser(B)
+    for (const t of TABLES) expect(await count(t)).toBeGreaterThan(0)
+    await asUser(C)
+    expect(await count('sheets')).toBe(0)
+  })
+
+  it('a viewer cannot write, rename, delete or share', async () => {
+    await asUser(A)
+    await share('b@example.com', 'viewer')
+    await asUser(B)
+    await expect(db.query(`insert into rows (sheet_id, position, owner_id) values ($1, 'z0', $2)`, [SHEET, A])).rejects.toThrow(/row-level security/i)
+    expect((await db.query(`update rows set cells = '{"x":1}' where id = $1`, [CHILD])).affectedRows).toBe(0)
+    expect((await db.query(`delete from rows where id = $1`, [CHILD])).affectedRows).toBe(0)
+    expect((await db.query(`update sheets set name = 'mine' where id = $1`, [SHEET])).affectedRows).toBe(0)
+    expect((await db.query(`delete from sheets where id = $1`, [SHEET])).affectedRows).toBe(0)
+    await expect(share('c@example.com', 'viewer')).rejects.toThrow(/Only the sheet owner/)
+  })
+
+  it('an editor can edit cells, add and delete rows, columns and dependencies, but not rename, delete or share', async () => {
+    await asUser(A)
+    await share('b@example.com', 'editor')
+    await asUser(B)
+    expect((await db.query(`update rows set cells = '{"x":1}' where id = $1`, [CHILD])).affectedRows).toBe(1)
+    await db.query(`insert into rows (sheet_id, position, owner_id, workspace_id) values ($1, 'z0', $2, $2)`, [SHEET, A])
+    await db.query(`insert into columns (sheet_id, title, type, position, owner_id, workspace_id) values ($1, 'x', 'DATE', 9, $2, $2)`, [SHEET, A])
+    expect(await rowCount()).toBe(3)
+    expect((await db.query(`delete from rows where position = 'z0'`)).affectedRows).toBe(1)
+    expect((await db.query(`update sheets set name = 'mine' where id = $1`, [SHEET])).affectedRows).toBe(0)
+    expect((await db.query(`delete from sheets where id = $1`, [SHEET])).affectedRows).toBe(0)
+    await expect(share('c@example.com', 'editor')).rejects.toThrow(/Only the sheet owner/)
+  })
+
+  it('an editor cannot claim rows, or move them to a sheet they cannot edit', async () => {
+    await asUser(A)
+    await share('b@example.com', 'editor')
+    await asUser(B)
+    await expect(db.query(`insert into rows (sheet_id, position) values ($1, 'z1')`, [SHEET])).rejects.toThrow(/row-level security/i)
+    await expect(db.query(`update rows set owner_id = $1 where id = $2`, [B, CHILD])).rejects.toThrow(/row-level security/i)
+    await asUser(A)
+    await db.query(`insert into sheets (id, name) values ($1, 'Other')`, [SHEET_A2])
+    await asUser(B)
+    await expect(db.query(`update rows set sheet_id = $1 where id = $2`, [SHEET_A2, CHILD])).rejects.toThrow()
+  })
+
+  it('share_sheet changes a role, rejects unknown users, bad roles and yourself, and stops at removal', async () => {
+    await asUser(A)
+    await share('b@example.com', 'viewer')
+    await share('b@example.com', 'editor')
+    expect((await db.query<{ role: string }>(`select role from sheet_members`)).rows).toEqual([{ role: 'editor' }])
+    await expect(share('nobody@example.com', 'viewer')).rejects.toThrow(/No account found/)
+    await expect(share('b@example.com', 'owner')).rejects.toThrow(/viewer or editor/)
+    await expect(share('a@example.com', 'viewer')).rejects.toThrow(/already own/)
+    expect((await db.query(`delete from sheet_members where user_id = $1`, [B])).affectedRows).toBe(1)
+    await asUser(B)
+    expect(await count('sheets')).toBe(0)
+  })
+
+  it('members cannot add or promote themselves, and only see their own membership', async () => {
+    await asUser(A)
+    await share('b@example.com', 'viewer')
+    await share('c@example.com', 'editor')
+    await asUser(B)
+    await expect(db.query(`insert into sheet_members (sheet_id, user_id, email, role) values ($1, $2, 'b@example.com', 'editor')`, [SHEET, B])).rejects.toThrow()
+    await expect(db.query(`update sheet_members set role = 'editor' where user_id = $1`, [B])).rejects.toThrow()
+    expect(await count('sheet_members')).toBe(1)
+    expect((await db.query(`delete from sheet_members where user_id = $1`, [C])).affectedRows).toBe(0)
+    expect((await db.query(`delete from sheet_members where user_id = $1`, [B])).affectedRows).toBe(1) // leaving
+    expect(await count('sheets')).toBe(0)
+  })
+
+  it('anon cannot call share_sheet or read members', async () => {
+    await asAnon()
+    await expect(share('b@example.com', 'viewer')).rejects.toThrow()
+    await expect(count('sheet_members')).rejects.toThrow()
+  })
+
+  it('deleting the sheet removes its memberships', async () => {
+    await asUser(A)
+    await share('b@example.com', 'viewer')
+    await db.query(`delete from sheets where id = $1`, [SHEET])
+    expect(await count('sheet_members')).toBe(0)
   })
 })
