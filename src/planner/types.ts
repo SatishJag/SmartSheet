@@ -109,3 +109,15 @@ export interface PlannerOptions {
   /** Equipment types with history, per schedule type id. */
   equipmentTypes: Record<string, string[]>
 }
+
+/**
+ * Read access to the planner's history. The server builds one per request from a Supabase client
+ * that carries the user's token, so row-level security applies. Implemented by
+ * `createSupabaseHistorySource` in src/planner/history.ts.
+ */
+export interface HistorySource {
+  options(): Promise<PlannerOptions>
+  catalog(scheduleType: string): Promise<CatalogActivity[]>
+  /** equipmentType null: statistics over every equipment type of the schedule type. */
+  summary(scheduleType: string, equipmentType: string | null): Promise<HistorySummary>
+}
