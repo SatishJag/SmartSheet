@@ -29,6 +29,8 @@ function e2eFakeSupabase(): Plugin {
 
 export default defineConfig(({ mode }) => ({
   plugins: [react(), ...(mode === 'e2e' ? [e2eFakeSupabase()] : [])],
+  // The planning server (`npm run dev:server`, port 8787; set PLANNER_SERVER_PORT if you move it).
+  server: { proxy: { '/api': `http://localhost:${process.env.PLANNER_SERVER_PORT ?? 8787}` } },
   test: {
     environment: 'jsdom',
     globals: false,

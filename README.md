@@ -31,7 +31,7 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
 
 ## Getting started
 
-Requirements: Node 20+ and a Supabase project.
+Requirements: Node 22.12+ and a Supabase project.
 
 ```bash
 npm install
@@ -55,7 +55,10 @@ npm run dev
 | --- | --- |
 | `npm run dev` | Vite dev server |
 | `npm test` | Unit, component and database (PGlite) tests with Vitest |
-| `npm run build` | Type-check, production build, bundle check |
+| `npm run build` | Type-check, production build, bundle check, then `build:server` |
+| `npm run build:server` | Compile the planning server to `dist-server/` |
+| `npm start` | Production: the planning server, serving `dist/` and `/api` |
+| `npm run dev:server` | Planning server in watch mode on port 8787 (`npm run dev` proxies `/api` to it) |
 | `npm run test:e2e` | Playwright end-to-end tests against an in-memory fake Supabase |
 
 The e2e suite uses Microsoft Edge by default. To use another Chromium binary:
@@ -74,9 +77,33 @@ src/store/       Zustand sheet store and Supabase persistence
 src/auth/        sign-in and sheet list
 src/views/       grid, Gantt and Kanban views
 src/templates/   construction templates and picklist presets
+src/planner/     AI planner contract, draft validation, history-only drafts
+server/          planning server (Node): auth, planner API, Claude drafting, static SPA
 supabase/        migrations (schema, RLS)
 e2e/             Playwright specs and the fake Supabase used by them
 ```
+
+## Planning server and deployment
+
+The AI planner's server (`server/`) verifies the user's Supabase session, reads the activity
+catalog and duration history with the user's token (row-level security applies), asks Claude
+for a draft through one `propose_plan` tool call, validates it, and falls back to a
+history-only draft when the AI is not configured, fails, or returns an invalid plan twice. In
+production the same process serves the built SPA, so the app and `/api` share one origin.
+
+Environment variables:
+
+| Variable | When | Purpose |
+| --- | --- | --- |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | build | Baked into the browser bundle |
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY` | runtime | Server-side token checks and history reads (default to the `VITE_` values) |
+| `ANTHROPIC_API_KEY` | runtime | Enables AI drafting; server-side only, never `VITE_`-prefixed. Without it drafts use history only |
+| `ANTHROPIC_MODEL` | runtime, optional | Defaults to `claude-opus-5-5` |
+| `PORT` | runtime | Set by Railway; 8787 locally |
+
+Railway: `railway.json` builds with `npm run build` (Railpack) and starts
+`node dist-server/server/main.js` with a health check on `/api/health`. Set the variables above
+on the service; Railway exposes them to the build too, which the `VITE_` ones need.
 
 ## Not yet included
 
