@@ -294,3 +294,10 @@
 .grid-cell.is-selected.is-readonly {
   background: #dde7f3;
 }
+
+/* Critical path view: the row number of a critical row is flagged. */
+.grid-row.is-critical .grid-cell.row-number {
+  color: #b42318;
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 #d64545;
+}

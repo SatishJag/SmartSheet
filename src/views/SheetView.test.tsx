@@ -273,4 +273,36 @@ describe('SheetView', () => {
     expect(screen.queryByRole('grid')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Back to sheets' })).toBeInTheDocument()
   })
+
+  describe('critical path toggle', () => {
+    async function open(data = makeSheetData()) {
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const { store } = await makeTestStore(data)
+      render(<SheetView client={client} sheetId="sheet-1" onBack={() => {}} store={store} />)
+      await screen.findByRole('grid')
+      return { store, user: userEvent.setup() }
+    }
+
+    it('flags critical rows in the grid once switched on, and stops when switched off', async () => {
+      const { user } = await open()
+      const toggle = screen.getByRole('checkbox', { name: 'Critical path' })
+      expect(toggle).toBeEnabled()
+      expect(toggle).not.toBeChecked()
+      expect(document.querySelector('.grid-row.is-critical')).toBeNull()
+      await user.click(toggle)
+      expect(toggle).toBeChecked()
+      expect(document.querySelector('.grid-row.is-critical')).not.toBeNull()
+      await user.click(toggle)
+      expect(document.querySelector('.grid-row.is-critical')).toBeNull()
+    })
+
+    it('is disabled, with a reason, while dependencies are off', async () => {
+      const data = makeSheetData()
+      data.sheet.dependenciesEnabled = false
+      await open(data)
+      const toggle = screen.getByRole('checkbox', { name: 'Critical path' })
+      expect(toggle).toBeDisabled()
+      expect(toggle.closest('label')).toHaveAttribute('title', expect.stringMatching(/Schedule settings/))
+    })
+  })
 })

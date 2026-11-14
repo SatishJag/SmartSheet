@@ -50,17 +50,25 @@ interface DependencyArrowsProps {
   /** True when the row lies in the rendered (virtual) window. */
   inWindow(rowId: string): boolean
   rowNumber(rowId: string): number | undefined
+  /** `depKey(pred, succ)` of the links to draw as critical. */
+  criticalKeys?: ReadonlySet<string>
 }
 
 /** Dependency arrows, drawn under the bars and never intercepting their pointer events. */
-export function DependencyArrows({ deps, edgesOf, inWindow, rowNumber }: DependencyArrowsProps) {
+export function DependencyArrows({ deps, edgesOf, inWindow, rowNumber, criticalKeys }: DependencyArrowsProps) {
   const markerId = `gantt-arrowhead-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
+  const criticalMarkerId = `${markerId}-critical`
   return (
     <g className="gantt-arrows" pointerEvents="none">
       <defs>
         <marker id={markerId} viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto">
           <path d="M 0 0 L 8 4 L 0 8 z" className="gantt-arrowhead" />
         </marker>
+        {criticalKeys && criticalKeys.size > 0 && (
+          <marker id={criticalMarkerId} viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" orient="auto">
+            <path d="M 0 0 L 8 4 L 0 8 z" className="gantt-arrowhead is-critical" />
+          </marker>
+        )}
       </defs>
       {deps.map((d) => {
         if (!inWindow(d.predecessorId) && !inWindow(d.successorId)) return null
@@ -68,7 +76,8 @@ export function DependencyArrows({ deps, edgesOf, inWindow, rowNumber }: Depende
         const to = edgesOf(d.successorId)
         if (!from || !to) return null
         const { a, b } = anchors(d.type, from, to)
-        const label = `Row ${rowNumber(d.predecessorId)} to Row ${rowNumber(d.successorId)} (${d.type})`
+        const critical = criticalKeys?.has(`${d.predecessorId}->${d.successorId}`) ?? false
+        const label = `Row ${rowNumber(d.predecessorId)} to Row ${rowNumber(d.successorId)} (${d.type})${critical ? ', critical' : ''}`
         return (
           <path
             key={`${d.predecessorId}|${d.successorId}`}
@@ -76,9 +85,10 @@ export function DependencyArrows({ deps, edgesOf, inWindow, rowNumber }: Depende
             data-dep-type={d.type}
             role="img"
             aria-label={label}
-            className="gantt-arrow"
+            data-critical={critical ? 'true' : undefined}
+            className={critical ? 'gantt-arrow is-critical' : 'gantt-arrow'}
             d={elbowPath(a, b)}
-            markerEnd={`url(#${markerId})`}
+            markerEnd={`url(#${critical ? criticalMarkerId : markerId})`}
           />
         )
       })}

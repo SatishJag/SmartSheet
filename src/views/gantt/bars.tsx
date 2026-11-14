@@ -14,10 +14,11 @@ export function barKind(s: Scheduled, isParent: boolean): BarKind {
   return s.durationDays === 0 ? 'milestone' : 'task'
 }
 
-export function barLabel(name: string, s: Scheduled, kind: BarKind): string {
-  if (kind === 'milestone') return `${name}: milestone on ${s.start}`
+export function barLabel(name: string, s: Scheduled, kind: BarKind, floatNote?: string): string {
+  const note = floatNote ? `. ${floatNote}` : ''
+  if (kind === 'milestone') return `${name}: milestone on ${s.start}${note}`
   const days = `${s.durationDays} ${s.durationDays === 1 ? 'day' : 'days'}`
-  return `${name}: ${s.start} to ${s.end}, ${days}, ${s.percentComplete}% complete`
+  return `${name}: ${s.start} to ${s.end}, ${days}, ${s.percentComplete}% complete${note}`
 }
 
 interface GanttBarProps {
@@ -32,16 +33,20 @@ interface GanttBarProps {
   /** Top of the row, in timeline coordinates. */
   rowTop: number
   dragging: boolean
+  /** Critical-path view: drawn in the critical colour. */
+  critical?: boolean
+  /** Critical-path view: the float sentence added to the bar's label and tooltip. */
+  floatNote?: string
   onPointerDown(e: ReactPointerEvent, rowId: string, mode: DragMode): void
 }
 
 const clampPct = (p: number) => Math.min(100, Math.max(0, p))
 
 /** One row's bar: a task bar, a milestone diamond or a summary bracket, with progress overlay. */
-export function GanttBar({ rowId, name, kind, sched, x, width, rowTop, dragging, onPointerDown }: GanttBarProps) {
-  const label = barLabel(name, sched, kind)
+export function GanttBar({ rowId, name, kind, sched, x, width, rowTop, dragging, critical, floatNote, onPointerDown }: GanttBarProps) {
+  const label = barLabel(name, sched, kind, floatNote)
   const move = (e: ReactPointerEvent) => onPointerDown(e, rowId, 'move')
-  const cls = `gantt-bar is-${kind}${dragging ? ' is-dragging' : ''}`
+  const cls = `gantt-bar is-${kind}${dragging ? ' is-dragging' : ''}${critical ? ' is-critical' : ''}`
   const progress = (width * clampPct(sched.percentComplete)) / 100
 
   if (kind === 'milestone') {
