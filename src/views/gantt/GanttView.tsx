@@ -9,6 +9,8 @@ import { rowNumbers } from '../../store/predecessors'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
 import { START_SET_BY_PREDECESSORS } from '../../store/sheetStore'
 import { fixedViewport, measuredViewport } from '../grid/viewport'
+import { useCriticalPath } from '../../store/useCriticalPath'
+import { floatBadge, floatDescription, useShowCriticalPath } from '../criticalPathContext'
 import { DependencyArrows, type BarEdges } from './arrows'
 import { barKind, GanttBar, ROW_HEIGHT } from './bars'
 import {
@@ -87,6 +89,8 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
   const api = useSheetStoreApi()
   const data = useSheetStore((s) => s.data)
   const scheduled = useSheetStore((s) => s.scheduled)
+  const critical = useCriticalPath(useShowCriticalPath())
+  const criticalKeys = useMemo(() => new Set(critical?.criticalDeps ?? []), [critical])
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
   const [status, setStatus] = useState('')
   const todayIso = today ?? utcToday()
@@ -319,6 +323,14 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
                       <span className="gantt-toggle-spacer" aria-hidden="true" />
                     )}
                     <span className="gantt-label-text">{row.name}</span>
+                    {critical?.byRow[row.id] && (
+                      <span
+                        className={`gantt-float${critical.byRow[row.id].critical ? ' is-critical' : ''}`}
+                        title={floatDescription(critical.byRow[row.id])}
+                      >
+                        {floatBadge(critical.byRow[row.id])}
+                      </span>
+                    )}
                     {row.error && (
                       <span className="gantt-warning" role="img" aria-label={`Scheduling error: ${row.error}`} title={row.error}>
                         ⚠
@@ -345,6 +357,7 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
                 edgesOf={edgesOf}
                 inWindow={inWindow}
                 rowNumber={(id) => numbers.get(id)}
+                criticalKeys={criticalKeys}
               />
               {items.map((item) => {
                 const row = rows[item.index]
@@ -362,6 +375,8 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
                     width={g.width}
                     rowTop={item.start}
                     dragging={drag.preview?.rowId === row.id}
+                    critical={critical?.byRow[row.id]?.critical}
+                    floatNote={critical?.byRow[row.id] ? floatDescription(critical.byRow[row.id]) : undefined}
                     onPointerDown={startDrag}
                   />
                 )

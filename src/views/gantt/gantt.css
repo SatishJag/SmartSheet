@@ -198,3 +198,40 @@
 .gantt-bar-handle:hover {
   fill: rgba(31, 41, 51, 0.25);
 }
+
+/* Critical path view */
+.gantt-arrow.is-critical {
+  stroke: #d64545;
+  stroke-width: 2;
+}
+
+.gantt-arrowhead.is-critical {
+  fill: #d64545;
+}
+
+.gantt-bar.is-critical.is-task .gantt-bar-body {
+  fill: #ef8a8a;
+}
+
+.gantt-bar.is-critical .gantt-bar-progress {
+  fill: #b42318;
+}
+
+.gantt-bar.is-critical.is-milestone .gantt-bar-body,
+.gantt-bar.is-critical.is-summary .gantt-bar-body,
+.gantt-bar.is-critical .gantt-summary-tip {
+  fill: #b42318;
+}
+
+.gantt-float {
+  margin-left: auto;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #52606d;
+}
+
+.gantt-float.is-critical {
+  color: #b42318;
+  font-weight: 600;
+}

@@ -5,6 +5,7 @@ import { supabasePersistence } from '../store/persistence'
 import { SheetStoreProvider, useSheetStore, useSheetStoreApi } from '../store/SheetStoreContext'
 import { createSheetStore, type SaveStatus, type SheetState } from '../store/sheetStore'
 import { ConfirmDialog } from './ConfirmDialog'
+import { ShowCriticalPathProvider } from './criticalPathContext'
 import { InlineRename } from './InlineRename'
 import { ScheduleSettingsButton } from './ScheduleSettingsDialog'
 import { GanttView } from './gantt/GanttView'
@@ -191,6 +192,8 @@ function SheetContent({
   const loadError = useSheetStore((s) => s.loadError)
   const status = useSaveGuards(onSaveStatusChange)
   const [confirmBack, setConfirmBack] = useState(false)
+  const [showCritical, setShowCritical] = useState(false)
+  const dependenciesOn = data?.sheet.dependenciesEnabled ?? false
 
   return (
     <section className="sheet-view">
@@ -213,13 +216,29 @@ function SheetContent({
         </button>
         {data && <SheetName client={client} sheetId={sheetId} name={data.sheet.name} />}
         {data && <ScheduleSettingsButton />}
+        {data && (
+          <label
+            className="critical-toggle"
+            title={dependenciesOn ? undefined : 'Turn on dependencies in Schedule settings to see the critical path'}
+          >
+            <input
+              type="checkbox"
+              checked={showCritical && dependenciesOn}
+              disabled={!dependenciesOn}
+              onChange={(e) => setShowCritical(e.currentTarget.checked)}
+            />{' '}
+            Critical path
+          </label>
+        )}
         <span className="spacer" />
         {data && <SaveStatusBadge />}
       </header>
       {loadError ? (
         <p role="alert">Could not load the sheet: {loadError}</p>
       ) : data ? (
-        <SheetTabs />
+        <ShowCriticalPathProvider value={showCritical && dependenciesOn}>
+          <SheetTabs />
+        </ShowCriticalPathProvider>
       ) : (
         <p>Loading sheet…</p>
       )}

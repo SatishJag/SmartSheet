@@ -22,6 +22,9 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
 - **Schedule settings**: per-sheet working weekdays, hours per day, non-working dates, and
   whether dependencies drive dates
 - **Gantt**: bars, milestones, parent summary bars, dependency arrows, drag to move or resize
+- **Critical path and float**: the "Critical path" switch in the sheet header highlights critical
+  rows and links on the Gantt and in the grid and shows each row's total and free float in
+  working days (needs dependencies on)
 - **Kanban**: lanes from any picklist column (Status by default), drag cards between lanes
 - **Templates**: Project schedule, Punch list, Simple list, with trade and status presets
 - **Saving**: optimistic edits, background save with retry, unsaved-changes guard
@@ -77,5 +80,5 @@ e2e/             Playwright specs and the fake Supabase used by them
 
 ## Not yet included
 
-Real-time collaboration and sharing, dashboards and reports, automation and forms, critical
-path, and an importer from other tools.
+Real-time collaboration and sharing, dashboards and reports, automation and forms, baselines,
+date constraints, resource loading, and an importer from other tools.

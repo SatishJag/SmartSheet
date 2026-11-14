@@ -56,3 +56,11 @@ export function addWorkingDays(cal: Calendar, iso: string, n: number): string {
   }
   return current
 }
+
+/** Returns iso itself if it is a working day, otherwise the closest working day before it. */
+export function previousWorkingDay(cal: Calendar, iso: string): string {
+  assertHasWorkingWeekdays(cal)
+  let current = iso
+  while (!isWorkingDay(cal, current)) current = shiftIso(current, -1)
+  return current
+}

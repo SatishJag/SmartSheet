@@ -3,6 +3,8 @@ import { useTable } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Column } from '../../model/validate'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
+import { useCriticalPath } from '../../store/useCriticalPath'
+import { floatDescription, useShowCriticalPath } from '../criticalPathContext'
 import { ConfirmDialog } from '../ConfirmDialog'
 import { CellEditor, CheckboxCell, type CommitReason } from './cellEditors'
 import {
@@ -70,6 +72,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const columnDefs = useMemo(() => buildColumnDefs(columns), [columns])
   const { view, toggleCollapsed, expand, cycleSort, setFilter } = useGridViewState()
   const columnUi = useColumnManagement(columns)
+  const critical = useCriticalPath(useShowCriticalPath())
 
   const allRows = useMemo(() => buildGridRows(data, scheduled), [data, scheduled])
   const rows = useMemo<ViewRow[]>(() => {
@@ -540,7 +543,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
                   aria-rowindex={item.index + 2}
                   aria-level={row.depth + 1}
                   aria-expanded={row.hasChildren ? row.expanded : undefined}
-                  className={`grid-row${row.isParent ? ' is-parent' : ''}${rowDrag.overId === row.id ? ' is-drop-target' : ''}`}
+                  className={`grid-row${row.isParent ? ' is-parent' : ''}${rowDrag.overId === row.id ? ' is-drop-target' : ''}${critical?.byRow[row.id]?.critical ? ' is-critical' : ''}`}
                   style={{ height: ROW_HEIGHT, transform: `translateY(${item.start}px)` }}
                   {...rowDrag.rowProps(row.id)}
                 >
@@ -548,6 +551,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
                     role="rowheader"
                     aria-colindex={1}
                     className="grid-cell row-number"
+                    title={critical?.byRow[row.id] ? floatDescription(critical.byRow[row.id]) : undefined}
                     style={{ width: widthOf(ROW_NUMBER_COLUMN_ID) }}
                     {...rowDrag.handleProps(row.id)}
                   >
