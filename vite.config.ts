@@ -29,13 +29,15 @@ function e2eFakeSupabase(): Plugin {
 
 export default defineConfig(({ mode }) => ({
   plugins: [react(), ...(mode === 'e2e' ? [e2eFakeSupabase()] : [])],
+  // The planning server (`npm run dev:server`, port 8787; set PLANNER_SERVER_PORT if you move it).
+  server: { proxy: { '/api': `http://localhost:${process.env.PLANNER_SERVER_PORT ?? 8787}` } },
   test: {
     environment: 'jsdom',
     globals: false,
     setupFiles: ['./src/test/setup.ts'],
     // The Playwright specs (e2e/*.spec.ts) run under `npx playwright test`, not Vitest; only the
     // fake backend's own unit tests run here.
-    include: ['src/**/*.test.{ts,tsx}', 'e2e/support/fakeSupabase.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts', 'e2e/support/fakeSupabase.test.ts'],
     exclude: ['**/node_modules/**', 'e2e/*.spec.ts'],
   },
 }))
