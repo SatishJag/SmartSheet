@@ -5,6 +5,7 @@ import { insertSheetFromTemplate } from '../templates/insertTemplate'
 import { fetchAllPages } from '../store/paging'
 import { ConfirmDialog } from '../views/ConfirmDialog'
 import { InlineRename } from '../views/InlineRename'
+import { PlannerWizard } from '../planner/PlannerWizard'
 
 interface SheetRow {
   id: string
@@ -27,6 +28,7 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
   const [templateId, setTemplateId] = useState<TemplateId>(DEFAULT_TEMPLATE_ID)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<SheetRow | null>(null)
+  const [planning, setPlanning] = useState(false)
   const inFlight = useRef(false)
   const active = useRef(true)
   const templateSelectId = useId()
@@ -115,8 +117,22 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
           <button type="button" onClick={createSheet} disabled={creating}>
             New sheet
           </button>
+          <button type="button" onClick={() => setPlanning(true)} disabled={creating}>
+            Plan with AI
+          </button>
         </div>
       </div>
+      {planning && (
+        <PlannerWizard
+          client={client}
+          userId={userId}
+          onClose={() => setPlanning(false)}
+          onCreated={(sheetId) => {
+            setPlanning(false)
+            onOpen(sheetId)
+          }}
+        />
+      )}
       {error && <p role="alert">{error}</p>}
       {sheets === null && !error && <p>Loading sheets...</p>}
       {sheets !== null && sheets.length === 0 && <p>No sheets yet</p>}
