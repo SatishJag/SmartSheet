@@ -1,16 +1,14 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { PGlite } from '@electric-sql/pglite'
+import type { PGlite } from '@electric-sql/pglite'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createSupabaseLikeDb } from './supabaseTestDb'
 
 // PGlite boots a WASM Postgres; under a loaded full-suite run (many parallel jsdom
 // files) that can exceed vitest's 10 s default hook timeout. Scoped to this file only.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 })
 
-// NOTE: verified against PGlite (Postgres in WASM), not a real Supabase instance.
-// Real Supabase provides the `auth` schema, `auth.uid()` and the `authenticated`
-// role; the setup below recreates just those so the migration can run unchanged.
+// NOTE: verified against PGlite (Postgres in WASM), not a real Supabase instance; see
+// supabaseTestDb.ts for the Supabase pieces it recreates so the migrations run unchanged.
 
 const A = '11111111-1111-1111-1111-111111111111'
 const B = '22222222-2222-2222-2222-222222222222'
@@ -21,9 +19,6 @@ const CHILD = 'aaaaaaaa-0000-0000-0000-000000000004'
 const DEP = 'aaaaaaaa-0000-0000-0000-000000000005'
 
 const TABLES = ['sheets', 'columns', 'rows', 'dependencies'] as const
-/** Applied in order, as `supabase db reset` would. */
-const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql', '0003_columns.sql']
-
 // A second sheet of A's, and B's own sheet and row, for the cross-sheet / cross-user tests.
 const SHEET_A2 = 'aaaaaaaa-0000-0000-0000-000000000011'
 const ROW_A2 = 'aaaaaaaa-0000-0000-0000-000000000012'
@@ -85,23 +80,8 @@ async function seedAsA() {
 }
 
 beforeAll(async () => {
-  db = new PGlite()
-  // What real Supabase already provides:
-  // Supabase also has an `anon` role that, by default privileges, gets ALL on new public tables.
-  await db.exec(`
-    create schema auth;
-    create role authenticated nologin;
-    create role anon nologin;
-    create function auth.uid() returns uuid language sql stable as
-      $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
-    grant usage on schema public to authenticated, anon;
-    grant usage on schema auth to authenticated, anon;
-    grant execute on function auth.uid() to authenticated, anon;
-    alter default privileges in schema public grant all on tables to anon, authenticated;
-  `)
-  for (const file of MIGRATIONS) {
-    await db.exec(readFileSync(resolve(__dirname, '../../supabase/migrations', file), 'utf8'))
-  }
+  // Every migration, in order, as `supabase db reset` would (later ones must not break these).
+  db = await createSupabaseLikeDb()
 }, 60_000)
 
 afterAll(async () => {
