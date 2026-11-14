@@ -24,7 +24,7 @@ export function buildHistoryDraft({ request, catalog, history, assumptions }: Hi
     const s = stats.get(a.code)
     if (isMilestone(a)) return { ...base, durationDays: 0, basis: 'default', reason: 'Milestone: takes no time.' }
     if (!s) {
-      return { ...base, durationDays: a.defaultDays, basis: 'default', reason: `No history for this activity; catalog default of ${a.defaultDays} days.` }
+      return { ...base, durationDays: a.defaultDays, basis: 'default', reason: `No history for this activity; catalog default of ${a.defaultDays} days (remove it if it does not apply).` }
     }
     const p50 = Math.round(s.p50)
     const projects = `${s.n} historical project${s.n === 1 ? '' : 's'}`

@@ -35,7 +35,7 @@ export default defineConfig(({ mode }) => ({
     setupFiles: ['./src/test/setup.ts'],
     // The Playwright specs (e2e/*.spec.ts) run under `npx playwright test`, not Vitest; only the
     // fake backend's own unit tests run here.
-    include: ['src/**/*.test.{ts,tsx}', 'e2e/support/fakeSupabase.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts', 'e2e/support/fakeSupabase.test.ts'],
     exclude: ['**/node_modules/**', 'e2e/*.spec.ts'],
   },
 }))
