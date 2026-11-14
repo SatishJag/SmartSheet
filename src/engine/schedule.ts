@@ -37,23 +37,23 @@ export interface ScheduleResult {
 }
 
 /** Day count for a row: calendar days if elapsed, else working days. 0 minutes is a milestone. */
-function durationDaysOf(row: SchedRow, cal: Calendar): number {
+export function durationDaysOf(row: SchedRow, cal: Calendar): number {
   if (row.durationMinutes <= 0) return 0
   return Math.max(1, toWorkingDays({ minutes: row.durationMinutes, elapsed: row.elapsed }, cal.hoursPerDay))
 }
 
-function lagDaysOf(dep: SchedDep, cal: Calendar): number {
+export function lagDaysOf(dep: SchedDep, cal: Calendar): number {
   return Math.round(dep.lagMinutes / (cal.hoursPerDay * 60))
 }
 
 /** End date for a row of durationDays starting on start (a working day). */
-function endFromStart(start: string, durationDays: number, elapsed: boolean, cal: Calendar): string {
+export function endFromStart(start: string, durationDays: number, elapsed: boolean, cal: Calendar): string {
   if (durationDays <= 1) return start
   return elapsed ? shiftIso(start, durationDays - 1) : addWorkingDays(cal, start, durationDays - 1)
 }
 
 /** Start date for a row of durationDays ending on end (a working day). */
-function startFromEnd(end: string, durationDays: number, elapsed: boolean, cal: Calendar): string {
+export function startFromEnd(end: string, durationDays: number, elapsed: boolean, cal: Calendar): string {
   if (durationDays <= 1) return end
   return elapsed ? shiftIso(end, -(durationDays - 1)) : addWorkingDays(cal, end, -(durationDays - 1))
 }
