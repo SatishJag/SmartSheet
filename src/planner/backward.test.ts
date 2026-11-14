@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { defaultCalendar, isWorkingDay } from '../engine/calendar'
 import { schedule } from '../engine/schedule'
 import type { Calendar, DepType } from '../engine/types'
-import { activity, link, lleDraft, makeDraft } from '../test/plannerFixtures'
+import { activity, catalogDraft, link, lleDraft, makeDraft } from '../test/plannerFixtures'
 import { assessFeasibility, daysToMinutes, planBackward, todayIso, uniqueLinks, workingDaysFrom } from './backward'
 import type { DraftActivity, DraftLink } from './types'
 
@@ -174,6 +174,29 @@ describe('planBackward: the realistic LLE draft', () => {
     for (const x of plan.activities) expect(forward.byRow[x.code]).toMatchObject({ start: x.start, end: x.end })
     expect(a.ONSITE.critical).toBe(true)
     expect(a.FAB.critical).toBe(true)
+  })
+})
+
+describe('planBackward: the server-shaped LLE catalog draft', () => {
+  it('lands ONSITE on the date through the SS links and lags', () => {
+    const plan = planBackward(catalogDraft('2027-09-30'), cal, TODAY) // a Thursday
+    const a = byCode(plan)
+    expect(a.ONSITE).toMatchObject({ start: '2027-09-30', end: '2027-09-30', critical: true })
+    // RAWMAT starts 5 working days after DWGAPP starts.
+    expect(workingDaysFrom(cal, a.DWGAPP.start, a.RAWMAT.start)).toBe(5)
+    // MFG waits for both: 15 working days after RAWMAT starts (the later) and after DWGAPP ends.
+    expect(workingDaysFrom(cal, a.RAWMAT.start, a.MFG.start)).toBe(15)
+    expect(a.MFG.start > a.DWGAPP.end).toBe(true)
+    expect(plan.mustStartBy).toBe(a.SPEC.start)
+    expect(plan.iterations).toBeLessThanOrEqual(2)
+    for (const code of ['SPEC', 'AWARD', 'RAWMAT', 'MFG', 'SHIP', 'CUSTOMS', 'DELIVER']) expect(a[code].critical).toBe(true)
+  })
+
+  it('a draft without the optional CUSTOMS step can start 7 working days later', () => {
+    const intl = planBackward(catalogDraft('2027-09-30'), cal, TODAY)
+    const domestic = planBackward(catalogDraft('2027-09-30', { domestic: true }), cal, TODAY)
+    expect(domestic.activities.map((x) => x.code)).not.toContain('CUSTOMS')
+    expect(workingDaysFrom(cal, intl.mustStartBy, domestic.mustStartBy)).toBe(7)
   })
 })
 

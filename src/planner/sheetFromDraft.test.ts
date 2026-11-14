@@ -37,6 +37,7 @@ describe('basisText', () => {
     expect(basisText(activity('FAB', 110, { basis: 'p80' }), history)).toBe('p80 of 7 projects')
     expect(basisText(activity('OTHER', 5, { basis: 'p50' }), history)).toBe('p50 of 9 projects')
     expect(basisText(activity('ONE', 5, { basis: 'p50' }), sampleHistory({ projectCount: 1 }))).toBe('p50 of 1 project')
+    expect(basisText(activity('NONE', 5, { basis: 'p50' }), sampleHistory({ projectCount: 0 }))).toBe('p50')
   })
   it('marks defaults, adjustments and sample data', () => {
     expect(basisText(activity('X', 5, { basis: 'default' }), history)).toBe('default (no history)')

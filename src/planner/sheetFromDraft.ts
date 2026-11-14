@@ -29,6 +29,7 @@ export function basisText(activity: DraftActivity, history: HistorySummary): str
     case 'p50':
     case 'p80': {
       const n = history.stats.find((s) => s.code === activity.code)?.n ?? history.projectCount
+      if (n === 0) return `${activity.basis}${sample}`
       return `${activity.basis} of ${n} project${n === 1 ? '' : 's'}${sample}`
     }
     case 'default':

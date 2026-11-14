@@ -92,3 +92,61 @@ export function lleDraft(requiredDate = '2027-06-30', overrides: Partial<PlanDra
     ...overrides,
   })
 }
+
+/**
+ * A draft in the shape the planning server returns for the LLE catalog: 14 activities ending in the
+ * ONSITE milestone, with RAWMAT SS+5 after DWGAPP and MFG both FS after DWGAPP and SS+15 after
+ * RAWMAT. `domestic` drops CUSTOMS (an optional activity) and links SHIP straight to DELIVER.
+ */
+export function catalogDraft(requiredDate = '2027-09-30', opts: { domestic?: boolean; overrides?: Partial<PlanDraft> } = {}): PlanDraft {
+  const rows: [string, string, string, number, DraftActivity['basis']][] = [
+    ['SPEC', 'Technical specification', 'Engineering', 10, 'p50'],
+    ['RFQ', 'Request for quotation', 'Tendering', 15, 'p50'],
+    ['BIDEVAL', 'Bid evaluation', 'Tendering', 10, 'p80'],
+    ['AWARD', 'Purchase order award', 'Award', 5, 'p50'],
+    ['DWGSUB', 'Vendor drawing submission', 'Engineering', 20, 'p80'],
+    ['DWGAPP', 'Drawing approval', 'Engineering', 10, 'p50'],
+    ['RAWMAT', 'Raw material procurement', 'Manufacturing', 30, 'p80'],
+    ['MFG', 'Manufacturing', 'Manufacturing', 120, 'adjusted'],
+    ['FAT', 'Factory acceptance test', 'Manufacturing', 5, 'p50'],
+    ['RELEASE', 'Release for shipment', 'Logistics', 3, 'default'],
+    ['SHIP', 'Shipping', 'Logistics', 30, 'p80'],
+    ['CUSTOMS', 'Customs clearance', 'Logistics', 7, 'p50'],
+    ['DELIVER', 'Delivery to site', 'Logistics', 5, 'p50'],
+    ['ONSITE', 'On site', 'Logistics', 0, 'default'],
+  ]
+  const kept = rows.filter(([code]) => !(opts.domestic && code === 'CUSTOMS'))
+  const activities = kept.map(([code, name, phase, days, basis]) =>
+    activity(code, days, {
+      name,
+      phase,
+      basis,
+      reason:
+        basis === 'adjusted'
+          ? 'p80 is 110 days; raised 10 days because the vendor is at capacity.'
+          : basis === 'default'
+            ? 'No history; catalog default.'
+            : `${basis} of 9 projects is ${days} days.`,
+    }),
+  )
+  const chain = (codes: string[]) => codes.slice(1).map((c, i) => link(codes[i], c))
+  const tail = ['MFG', 'FAT', 'RELEASE', 'SHIP', ...(opts.domestic ? [] : ['CUSTOMS']), 'DELIVER', 'ONSITE']
+  const links: DraftLink[] = [
+    ...chain(['SPEC', 'RFQ', 'BIDEVAL', 'AWARD', 'DWGSUB', 'DWGAPP']),
+    link('DWGAPP', 'RAWMAT', 'SS', 5),
+    link('DWGAPP', 'MFG'),
+    link('RAWMAT', 'MFG', 'SS', 15),
+    ...chain(tail),
+  ]
+  return makeDraft(activities, links, 'ONSITE', requiredDate, {
+    summary: 'Procurement of a 400 MVA power transformer from specification to on-site delivery.',
+    assumptions: ['Specification is ready to issue.', 'Two qualified vendors respond.'],
+    risks: ['Manufacturing slots are scarce this year.', 'Port congestion can add a week to shipping.'],
+    history: sampleHistory({
+      stats: kept
+        .filter(([, , , days]) => days > 0)
+        .map(([code, , , days]) => ({ code, n: 9, p50: days, p80: Math.round(days * 1.2), min: Math.round(days * 0.7), max: Math.round(days * 1.5) })),
+    }),
+    ...opts.overrides,
+  })
+}
