@@ -22,6 +22,8 @@ export interface PlannerConfig {
   aiTimeoutMs: number
   aiDeadlineMs: number
   log: Logger
+  /** Aborted when the client disconnects: the AI call stops instead of running on unseen. */
+  signal?: AbortSignal
 }
 
 const FALLBACK_NOTES: Record<'unconfigured' | Exclude<AiOutcome, { ok: true }>['reason'], string> = {
@@ -86,6 +88,7 @@ export async function createDraft(source: HistorySource, request: PlanRequest, c
     timeoutMs: config.aiTimeoutMs,
     deadlineMs: config.aiDeadlineMs,
     log: config.log,
+    signal: config.signal,
   })
   if (!outcome.ok) return historyOnly(FALLBACK_NOTES[outcome.reason])
   return {

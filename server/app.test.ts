@@ -88,7 +88,7 @@ afterEach(async () => {
 async function start(deps: Partial<AppDeps> = {}): Promise<string> {
   server = createApp({
     staticDir: staticRoot,
-    authenticate: async (token) => (token === 'good-token' ? fakeSource() : null),
+    authenticate: async (token) => (token === 'good-token' ? { userId: 'user-1', history: fakeSource() } : null),
     anthropic: null,
     log: (event, detail) => logs.push({ event, detail }),
     ...deps,
@@ -309,7 +309,7 @@ describe('drafting', () => {
   it('uses the whole schedule type history when the equipment has fewer than 3 projects', async () => {
     const thin: HistorySummary = { ...HISTORY, projectCount: 2 }
     const summary = vi.fn(async (_t: string, equipment: string | null) => (equipment === null ? ALL_HISTORY : thin))
-    const base = await start({ authenticate: async () => fakeSource({ summary }) })
+    const base = await start({ authenticate: async () => ({ userId: 'user-1', history: fakeSource({ summary }) }) })
     const draft = await draftOf(await postDraft(base, REQUEST))
     expect(summary).toHaveBeenCalledWith('lle-procurement', null)
     expect(draft.history.equipmentType).toBeNull()
@@ -317,7 +317,7 @@ describe('drafting', () => {
   })
 
   it('answers 502 without details when the history cannot be read', async () => {
-    const base = await start({ authenticate: async () => fakeSource({ catalog: async () => Promise.reject(new Error('relation does not exist')) }) })
+    const base = await start({ authenticate: async () => ({ userId: 'user-1', history: fakeSource({ catalog: async () => Promise.reject(new Error('relation does not exist')) }) }) })
     const res = await postDraft(base, REQUEST)
     expect(res.status).toBe(502)
     expect(await res.text()).not.toMatch(/relation/)
@@ -356,4 +356,69 @@ describe('static files', () => {
       expect(res.body).not.toContain('SECRET=1')
     },
   )
+})
+
+describe('draft limits and cancellation (security review)', () => {
+  it('a second draft from the same user while one is running gets 429 with Retry-After', async () => {
+    const ai = fakeAnthropic('hang')
+    const base = await start({ anthropic: ai.client, aiDeadlineMs: 5_000 })
+    const first = postDraft(base, REQUEST).catch(() => null)
+    await vi.waitFor(() => expect(ai.create).toHaveBeenCalledTimes(1))
+    const second = await postDraft(base, REQUEST)
+    expect(second.status).toBe(429)
+    expect(second.headers.get('retry-after')).toBeTruthy()
+    expect(((await second.json()) as DraftResponse).ok).toBe(false)
+    server!.closeAllConnections()
+    await first
+  })
+
+  it('caps drafts per user per hour', async () => {
+    const base = await start({ draftLimits: { perUserPerHour: 2, perUserInFlight: 1, globalInFlight: 8 } })
+    await draftOf(await postDraft(base, REQUEST))
+    await draftOf(await postDraft(base, REQUEST))
+    const third = await postDraft(base, REQUEST)
+    expect(third.status).toBe(429)
+    expect(((await third.json()) as { error: string }).error).toMatch(/2 drafts per hour/)
+  })
+
+  it('a bad request does not use up the hourly quota', async () => {
+    const base = await start({ draftLimits: { perUserPerHour: 1, perUserInFlight: 1, globalInFlight: 8 } })
+    expect((await postDraft(base, { ...REQUEST, requiredDate: 'soon' })).status).toBe(400)
+    await draftOf(await postDraft(base, REQUEST))
+  })
+
+  it('aborts the AI call when the client disconnects, and frees the slot', async () => {
+    const ai = fakeAnthropic('hang')
+    const base = await start({ anthropic: ai.client, aiDeadlineMs: 60_000 })
+    const controller = new AbortController()
+    const pending = fetch(`${base}/api/planner/draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auth },
+      body: JSON.stringify(REQUEST),
+      signal: controller.signal,
+    }).catch(() => null)
+    await vi.waitFor(() => expect(ai.create).toHaveBeenCalledTimes(1))
+    const signal = (ai.create.mock.calls[0][1] as { signal: AbortSignal }).signal
+    expect(signal.aborted).toBe(false)
+    controller.abort()
+    await pending
+    await vi.waitFor(() => expect(signal.aborted).toBe(true))
+    await vi.waitFor(() => expect(logs.some((l) => l.event === 'planner.ai.cancelled')).toBe(true))
+    // The same server frees the user's slot: the next draft is served (the fake has no more AI
+    // replies, so it falls back to history).
+    const next = await draftOf(await postDraft(base, REQUEST))
+    expect(next.source).toBe('history')
+  })
+})
+
+describe('anti-framing headers', () => {
+  it('pages and assets may not be framed by another site', async () => {
+    const base = await start()
+    for (const p of ['/', '/assets/app-123.js', '/some/client/route']) {
+      const res = await fetch(`${base}${p}`)
+      expect(res.headers.get('x-frame-options'), p).toBe('DENY')
+      expect(res.headers.get('content-security-policy'), p).toBe("frame-ancestors 'none'")
+      expect(res.headers.get('referrer-policy'), p).toBe('strict-origin-when-cross-origin')
+    }
+  })
 })

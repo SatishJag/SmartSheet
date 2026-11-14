@@ -5,20 +5,32 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { DraftResponse, HistorySource } from '../src/planner/types'
 import { DEFAULT_MODEL, type AnthropicLike } from './ai'
+import { createDraftLimiter, type DraftLimits } from './limits'
 import { consoleLogger, type Logger } from './log'
 import { createDraft, PlannerError } from './planner'
 import { parsePlanRequest } from './request'
 import { serveStatic } from './static'
 
+/** A verified caller: who they are (for limits) and the history as they may read it. */
+export interface AuthenticatedUser {
+  userId: string
+  history: HistorySource
+}
+
+/** Defaults for the AI draft limits (one server instance). */
+export const DEFAULT_DRAFT_LIMITS: DraftLimits = { perUserPerHour: 10, perUserInFlight: 1, globalInFlight: 8 }
+
 export interface AppDeps {
   /** Directory of the built SPA (vite build output). */
   staticDir: string
   /**
-   * Verifies a Supabase access token. Returns the history as that user sees it (row-level
-   * security applies), or null when the token is invalid. Throws when verification itself fails.
-   * Null when the server has no Supabase configuration: the planner API then answers 503.
+   * Verifies a Supabase access token. Returns the user's id and the history as that user sees it
+   * (row-level security applies), or null when the token is invalid. Throws when verification
+   * itself fails. Null when the server has no Supabase configuration: the planner API then answers 503.
    */
-  authenticate: ((token: string) => Promise<HistorySource | null>) | null
+  authenticate: ((token: string) => Promise<AuthenticatedUser | null>) | null
+  /** Limits on drafts; defaults to DEFAULT_DRAFT_LIMITS. */
+  draftLimits?: DraftLimits
   /** Null when no API key is configured: drafts come from history only. */
   anthropic: AnthropicLike | null
   model?: string
@@ -37,6 +49,7 @@ class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly headers: Record<string, string> = {},
   ) {
     super(message)
   }
@@ -94,25 +107,26 @@ export function createApp(deps: AppDeps): Server {
     log,
   }
   const maxBody = deps.maxBodyBytes ?? 16 * 1024
+  const limiter = createDraftLimiter(deps.draftLimits ?? DEFAULT_DRAFT_LIMITS)
 
-  /** The caller's history source, or throws an HttpError (401/503). */
-  async function authorize(req: IncomingMessage): Promise<HistorySource> {
+  /** The verified caller, or throws an HttpError (401/503). */
+  async function authorize(req: IncomingMessage): Promise<AuthenticatedUser> {
     if (!deps.authenticate) throw new HttpError(503, 'The planner is not configured on this server.')
     const token = bearerToken(req)
     if (!token) throw new HttpError(401, 'Sign in to use the planner (missing bearer token).')
-    let source: HistorySource | null
+    let user: AuthenticatedUser | null
     try {
-      source = await deps.authenticate(token)
+      user = await deps.authenticate(token)
     } catch (err) {
       log('auth.error', { error: (err as Error).message })
       throw new HttpError(503, 'Could not verify your session. Try again shortly.')
     }
-    if (!source) throw new HttpError(401, 'Your session is invalid or has expired. Sign in again.')
-    return source
+    if (!user) throw new HttpError(401, 'Your session is invalid or has expired. Sign in again.')
+    return user
   }
 
   async function options(req: IncomingMessage, res: ServerResponse) {
-    const source = await authorize(req)
+    const { history: source } = await authorize(req)
     try {
       json(res, 200, await source.options())
     } catch (err) {
@@ -122,7 +136,7 @@ export function createApp(deps: AppDeps): Server {
   }
 
   async function draft(req: IncomingMessage, res: ServerResponse) {
-    const source = await authorize(req)
+    const { userId, history: source } = await authorize(req)
     const type = (req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
     if (type !== 'application/json') throw new HttpError(415, 'Send the request as application/json.')
     let body: unknown
@@ -134,14 +148,36 @@ export function createApp(deps: AppDeps): Server {
     }
     const parsed = parsePlanRequest(body)
     if (!parsed.ok) throw new HttpError(400, parsed.error)
+
+    const slot = limiter.acquire(userId)
+    if (!slot.ok) {
+      log('planner.draft.limited', { status: slot.status })
+      throw new HttpError(slot.status, slot.message, { 'Retry-After': String(slot.retryAfterSeconds) })
+    }
+    // Stop paying for a draft nobody is waiting for: abort the AI call when the client goes away.
+    const disconnected = new AbortController()
+    const onClose = () => {
+      if (!res.writableFinished) disconnected.abort()
+    }
+    res.on('close', onClose)
     try {
-      const result: DraftResponse = { ok: true, draft: await createDraft(source, parsed.value, plannerConfig) }
+      const result: DraftResponse = {
+        ok: true,
+        draft: await createDraft(source, parsed.value, { ...plannerConfig, signal: disconnected.signal }),
+      }
+      if (disconnected.signal.aborted) {
+        log('planner.draft.abandoned', { scheduleType: parsed.value.scheduleType })
+        return
+      }
       log('planner.draft', { scheduleType: parsed.value.scheduleType, source: result.draft.source })
       json(res, 200, result)
     } catch (err) {
       if (err instanceof PlannerError) throw new HttpError(err.status, err.message)
       log('planner.draft.error', { error: (err as Error).message })
       throw new HttpError(502, 'Could not read the planner history.')
+    } finally {
+      res.off('close', onClose)
+      slot.release()
     }
   }
 
@@ -173,7 +209,8 @@ export function createApp(deps: AppDeps): Server {
         const status = err instanceof HttpError ? err.status : 500
         if (!(err instanceof HttpError)) log('server.error', { path: pathname, error: (err as Error).message })
         const message = err instanceof HttpError ? err.message : 'Internal server error.'
-        const headers: Record<string, string> = status === 401 ? { 'WWW-Authenticate': 'Bearer' } : {}
+        const headers: Record<string, string> = { ...(err instanceof HttpError ? err.headers : {}) }
+        if (status === 401) headers['WWW-Authenticate'] = 'Bearer'
         if (status === 413) headers.Connection = 'close'
         json(res, status, { ok: false, error: message }, headers)
       }

@@ -43,6 +43,8 @@ export interface AiDraftInput {
   /** For the whole draft, both attempts included. */
   deadlineMs: number
   log: Logger
+  /** Aborts the draft early (the client went away). */
+  signal?: AbortSignal
 }
 
 export const SYSTEM_PROMPT = `You are an experienced construction master scheduler. You draft the first-cut logic and durations of a schedule from an activity catalog and duration statistics from completed historical projects. A planner reviews your draft; a scheduling engine computes all dates afterwards, working backwards from the date the target activity must finish.
@@ -165,6 +167,7 @@ export async function draftWithAi(input: AiDraftInput): Promise<AiOutcome> {
   const tool = proposePlanTool(catalog)
   const messages: BetaMessageParam[] = [{ role: 'user', content: buildUserPrompt(input) }]
   const deadline = AbortSignal.timeout(input.deadlineMs)
+  const signal = input.signal ? AbortSignal.any([deadline, input.signal]) : deadline
   const useFallbacks = REFUSAL_FALLBACK_MODELS.has(model)
 
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -181,9 +184,13 @@ export async function draftWithAi(input: AiDraftInput): Promise<AiOutcome> {
           messages,
           ...(useFallbacks ? { betas: [REFUSAL_FALLBACK_BETA], fallbacks: 'default' as const } : {}),
         },
-        { timeout: input.timeoutMs, maxRetries: 1, signal: deadline },
+        { timeout: input.timeoutMs, maxRetries: 1, signal },
       )
     } catch (err) {
+      if (input.signal?.aborted) {
+        log('planner.ai.cancelled', { attempt, model })
+        return { ok: false, reason: 'error' }
+      }
       const timedOut = isTimeout(err) || (isAbort(err) && deadline.aborted)
       log('planner.ai.error', { attempt, model, timedOut, ...describeError(err) })
       return { ok: false, reason: timedOut ? 'timeout' : 'error' }

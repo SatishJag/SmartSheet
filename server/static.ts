@@ -51,6 +51,10 @@ async function send(req: IncomingMessage, res: ServerResponse, file: string, cac
     'Content-Length': info.size,
     'Cache-Control': cache,
     'X-Content-Type-Options': 'nosniff',
+    // The app keeps its session in this origin's storage: never let another site frame it.
+    'X-Frame-Options': 'DENY',
+    'Content-Security-Policy': "frame-ancestors 'none'",
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
   })
   if (req.method === 'HEAD') {
     res.end()

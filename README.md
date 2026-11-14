@@ -100,6 +100,13 @@ Environment variables:
 | `ANTHROPIC_API_KEY` | runtime | Enables AI drafting; server-side only, never `VITE_`-prefixed. Without it drafts use history only |
 | `ANTHROPIC_MODEL` | runtime, optional | Defaults to `claude-opus-5-5` |
 | `PORT` | runtime | Set by Railway; 8787 locally |
+| `PLANNER_DRAFTS_PER_HOUR` | runtime, optional | AI drafts each user may request per rolling hour (default 10) |
+| `PLANNER_MAX_CONCURRENT_DRAFTS` | runtime, optional | Drafts in progress across all users (default 8); each user may have one at a time |
+
+Each AI draft can cost several large model calls, so the server limits drafts per user and in
+total, and stops the AI call when the browser disconnects. The limits are per user account,
+so before going live also, in the Supabase dashboard, turn off open sign-ups (or restrict them
+to your company's email domain), and set a monthly spend limit on the Anthropic key.
 
 Railway: `railway.json` builds with `npm run build` (Railpack) and starts
 `node dist-server/server/main.js` with a health check on `/api/health`. Set the variables above

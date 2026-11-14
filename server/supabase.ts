@@ -1,7 +1,7 @@
 /** Production auth: verify the user's Supabase access token, then read history as that user. */
 import { createClient, type SupabaseClientOptions } from '@supabase/supabase-js'
 import { createSupabaseHistorySource } from '../src/planner/history'
-import type { HistorySource } from '../src/planner/types'
+import type { AuthenticatedUser } from './app'
 
 const serverAuth: SupabaseClientOptions<'public'>['auth'] = {
   persistSession: false,
@@ -9,7 +9,7 @@ const serverAuth: SupabaseClientOptions<'public'>['auth'] = {
   detectSessionInUrl: false,
 }
 
-export function createSupabaseAuthenticator(url: string, anonKey: string): (token: string) => Promise<HistorySource | null> {
+export function createSupabaseAuthenticator(url: string, anonKey: string): (token: string) => Promise<AuthenticatedUser | null> {
   const authClient = createClient(url, anonKey, { auth: serverAuth })
   return async (token) => {
     const { data, error } = await authClient.auth.getUser(token)
@@ -24,6 +24,6 @@ export function createSupabaseAuthenticator(url: string, anonKey: string): (toke
       auth: serverAuth,
       global: { headers: { Authorization: `Bearer ${token}` } },
     })
-    return createSupabaseHistorySource(userClient)
+    return { userId: data.user.id, history: createSupabaseHistorySource(userClient) }
   }
 }

@@ -7,11 +7,13 @@
  *   SUPABASE_URL          falls back to VITE_SUPABASE_URL
  *   SUPABASE_ANON_KEY     falls back to VITE_SUPABASE_ANON_KEY
  *   STATIC_DIR            optional, default ./dist
+ *   PLANNER_DRAFTS_PER_HOUR       optional, per user, default 10
+ *   PLANNER_MAX_CONCURRENT_DRAFTS optional, all users together, default 8
  */
 import path from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
 import { DEFAULT_MODEL } from './ai'
-import { createApp } from './app'
+import { createApp, DEFAULT_DRAFT_LIMITS } from './app'
 import { consoleLogger as log } from './log'
 import { createSupabaseAuthenticator } from './supabase'
 
@@ -32,6 +34,11 @@ const server = createApp({
   anthropic: apiKey ? new Anthropic({ apiKey }) : null,
   model,
   log,
+  draftLimits: {
+    ...DEFAULT_DRAFT_LIMITS,
+    perUserPerHour: Number(env.PLANNER_DRAFTS_PER_HOUR) || DEFAULT_DRAFT_LIMITS.perUserPerHour,
+    globalInFlight: Number(env.PLANNER_MAX_CONCURRENT_DRAFTS) || DEFAULT_DRAFT_LIMITS.globalInFlight,
+  },
 })
 
 server.listen(port, () => log('server.listening', { port, staticDir, model, ai: Boolean(apiKey) }))
