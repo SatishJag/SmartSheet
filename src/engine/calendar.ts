@@ -64,3 +64,19 @@ export function previousWorkingDay(cal: Calendar, iso: string): string {
   while (!isWorkingDay(cal, current)) current = shiftIso(current, -1)
   return current
 }
+
+/**
+ * Working days in (from, to]: how many working days later `to` is than `from`. Negative when `to`
+ * is before `from` (then the working days in (to, from], negated); 0 when they are the same day.
+ */
+export function workingDaysBetween(cal: Calendar, from: string, to: string): number {
+  if (from === to) return 0
+  assertHasWorkingWeekdays(cal)
+  const forward = to > from
+  const [lo, hi] = forward ? [from, to] : [to, from]
+  let count = 0
+  for (let day = shiftIso(lo, 1); day <= hi; day = shiftIso(day, 1)) {
+    if (isWorkingDay(cal, day)) count++
+  }
+  return forward ? count : -count
+}
