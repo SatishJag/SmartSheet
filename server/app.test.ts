@@ -7,7 +7,15 @@ import path from 'node:path'
 import type Anthropic from '@anthropic-ai/sdk'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { CATALOG, HISTORY, REQUEST, validProposal } from '../src/planner/__fixtures__/lle'
-import type { DraftResponse, HistorySource, HistorySummary, PlannerOptions } from '../src/planner/types'
+import type {
+  BatchDraftResponse,
+  BatchItemResult,
+  BatchPlanRequest,
+  DraftResponse,
+  HistorySource,
+  HistorySummary,
+  PlannerOptions,
+} from '../src/planner/types'
 import type { AnthropicLike } from './ai'
 import { createApp, type AppDeps } from './app'
 
@@ -408,6 +416,241 @@ describe('draft limits and cancellation (security review)', () => {
     // replies, so it falls back to history).
     const next = await draftOf(await postDraft(base, REQUEST))
     expect(next.source).toBe('history')
+  })
+})
+
+const BATCH: BatchPlanRequest = {
+  scheduleType: 'lle-procurement',
+  notes: 'Shared note',
+  items: [
+    { equipmentType: 'Power transformer', equipmentName: '400 MVA transformer, Substation B', requiredDate: '2027-09-01' },
+    { equipmentType: 'Switchgear', equipmentName: '132 kV GIS', requiredDate: '2027-11-15', notes: 'Indoor type' },
+    { equipmentType: 'Chiller', equipmentName: '2 MW chiller', requiredDate: '2027-12-01' },
+  ],
+}
+
+function postBatch(base: string, body: unknown, headers: Record<string, string> = auth) {
+  return fetch(`${base}/api/planner/draft-batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  })
+}
+async function resultsOf(res: Response): Promise<BatchItemResult[]> {
+  expect(res.status).toBe(200)
+  const body = (await res.json()) as BatchDraftResponse
+  if (!body.ok) throw new Error(body.error)
+  return body.results
+}
+const okDraft = (r: BatchItemResult) => {
+  if (!r.ok) throw new Error(r.error)
+  return r.draft
+}
+
+describe('POST /api/planner/draft-batch', () => {
+  it('needs the same auth as /draft', async () => {
+    const base = await start()
+    expect((await postBatch(base, BATCH, {})).status).toBe(401)
+    expect((await postBatch(base, BATCH, { Authorization: 'Bearer nope' })).status).toBe(401)
+    await new Promise((r) => server!.close(r))
+    const unconfigured = await start({ authenticate: null })
+    expect((await postBatch(unconfigured, BATCH)).status).toBe(503)
+    const get = await fetch(`${unconfigured}/api/planner/draft-batch`, { headers: auth })
+    expect(get.status).toBe(405)
+  })
+
+  it('drafts every item in order, with shared and per-item notes, from history when no AI is configured', async () => {
+    const base = await start({ anthropic: null })
+    const results = await resultsOf(await postBatch(base, BATCH))
+    expect(results).toHaveLength(3)
+    const drafts = results.map(okDraft)
+    expect(drafts.map((d) => d.request.equipmentName)).toEqual(['400 MVA transformer, Substation B', '132 kV GIS', '2 MW chiller'])
+    expect(drafts.map((d) => d.request.requiredDate)).toEqual(['2027-09-01', '2027-11-15', '2027-12-01'])
+    expect(drafts.map((d) => d.request.notes)).toEqual(['Shared note', 'Shared note\nIndoor type', 'Shared note'])
+    expect(drafts.every((d) => d.source === 'history' && d.request.scheduleType === 'lle-procurement')).toBe(true)
+    expect(logs.find((l) => l.event === 'planner.batch')?.detail).toMatchObject({ items: 3, failed: 0 })
+  })
+
+  it('one AI call per item, at most two at a time', async () => {
+    let running = 0
+    let peak = 0
+    const create = vi.fn(async (_body: CreateParams) => {
+      running++
+      peak = Math.max(peak, running)
+      await new Promise((r) => setTimeout(r, 25))
+      running--
+      return toolCall(validProposal())
+    })
+    const client: AnthropicLike = { beta: { messages: { create } } }
+    const base = await start({ anthropic: client })
+    const results = await resultsOf(await postBatch(base, { ...BATCH, items: [...BATCH.items, ...BATCH.items] }))
+    expect(results.map(okDraft).every((d) => d.source === 'ai')).toBe(true)
+    expect(create).toHaveBeenCalledTimes(6)
+    expect(peak).toBe(2)
+  })
+
+  it('the concurrency is configurable', async () => {
+    let running = 0
+    let peak = 0
+    const create = vi.fn(async () => {
+      running++
+      peak = Math.max(peak, running)
+      await new Promise((r) => setTimeout(r, 25))
+      running--
+      return toolCall(validProposal())
+    })
+    const base = await start({ anthropic: { beta: { messages: { create } } }, batchConcurrency: 3 })
+    await resultsOf(await postBatch(base, BATCH))
+    expect(peak).toBe(3)
+  })
+
+  it('one failing item does not lose the others', async () => {
+    const source = fakeSource({
+      summary: async (_t, equipment) => {
+        if (equipment === 'Switchgear') throw new Error('relation does not exist')
+        return equipment === null ? ALL_HISTORY : HISTORY
+      },
+    })
+    const base = await start({ authenticate: async () => ({ userId: 'user-1', history: source }) })
+    const results = await resultsOf(await postBatch(base, BATCH))
+    expect(results.map((r) => r.ok)).toEqual([true, false, true])
+    const failed = results[1]
+    expect(!failed.ok && failed.error).toBe('Could not read the planner history.')
+    expect(JSON.stringify(results)).not.toMatch(/relation/)
+    expect(logs.find((l) => l.event === 'planner.batch')?.detail).toMatchObject({ failed: 1 })
+  })
+
+  it('an item whose AI draft is invalid falls back to history on its own', async () => {
+    const bad = { ...validProposal(), targetCode: 'SHIP' }
+    // Item order is not guaranteed across concurrent workers, so answer by the equipment in the prompt.
+    const create = vi.fn(async (body: CreateParams) => {
+      const prompt = JSON.stringify(body.messages[0].content)
+      return toolCall(prompt.includes('132 kV GIS') ? bad : validProposal())
+    })
+    const base = await start({ anthropic: { beta: { messages: { create } } } })
+    const drafts = (await resultsOf(await postBatch(base, BATCH))).map(okDraft)
+    expect(drafts.map((d) => d.source)).toEqual(['ai', 'history', 'ai'])
+  })
+
+  const invalid: [string, unknown, RegExp][] = [
+    ['no items', { ...BATCH, items: [] }, /items/],
+    ['items not a list', { ...BATCH, items: 'x' }, /items/],
+    ['7 items', { ...BATCH, items: Array.from({ length: 7 }, () => BATCH.items[0]) }, /at most 6/],
+    ['an item that is not an object', { ...BATCH, items: [BATCH.items[0], 5] }, /items\[1\] must be an object/],
+    ['a blank equipment name', { ...BATCH, items: [BATCH.items[0], { ...BATCH.items[1], equipmentName: ' ' }] }, /items\[1\]: equipmentName/],
+    ['an impossible date', { ...BATCH, items: [{ ...BATCH.items[0], requiredDate: '2027-02-30' }] }, /items\[0\]: requiredDate/],
+    ['a non-string equipment type', { ...BATCH, items: [{ ...BATCH.items[0], equipmentType: 4 }] }, /items\[0\]: equipmentType/],
+    ['control characters in a name', { ...BATCH, items: [{ ...BATCH.items[0], equipmentName: 'a\u0000b' }] }, /control characters/],
+    ['overlong item notes', { ...BATCH, items: [{ ...BATCH.items[0], notes: 'x'.repeat(2001) }] }, /items\[0\]: notes/],
+    ['missing schedule type', { items: BATCH.items }, /scheduleType/],
+    ['overlong shared notes', { ...BATCH, notes: 'x'.repeat(2001) }, /notes/],
+    ['array body', [BATCH], /object/],
+    ['invalid JSON', '{"items":', /JSON/],
+  ]
+  it.each(invalid)('rejects %s with 400', async (_name, body, pattern) => {
+    const base = await start()
+    const res = await postBatch(base, body)
+    expect(res.status).toBe(400)
+    const json = (await res.json()) as BatchDraftResponse
+    expect(json.ok).toBe(false)
+    if (!json.ok) expect(json.error).toMatch(pattern)
+  })
+
+  it('rejects an unknown schedule type with 400 before spending any quota', async () => {
+    const base = await start({ draftLimits: { perUserPerHour: 3, perUserInFlight: 1, globalInFlight: 8 } })
+    const res = await postBatch(base, { ...BATCH, scheduleType: 'rocket-launch' })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: string }).error).toMatch(/schedule type/i)
+    expect((await resultsOf(await postBatch(base, BATCH))).length).toBe(3) // the whole quota is still there
+  })
+
+  it('answers 415 for a non-JSON content type and 413 for a body over 16 KiB', async () => {
+    const base = await start()
+    const text = await fetch(`${base}/api/planner/draft-batch`, { method: 'POST', headers: { ...auth, 'Content-Type': 'text/plain' }, body: 'hi' })
+    expect(text.status).toBe(415)
+    const big = await postBatch(base, { ...BATCH, notes: 'x'.repeat(40_000) })
+    expect(big.status).toBe(413)
+  })
+
+  it('answers 502 without details when the schedule types cannot be read', async () => {
+    const source = fakeSource({ options: async () => Promise.reject(new Error('relation does not exist')) })
+    const base = await start({ authenticate: async () => ({ userId: 'user-1', history: source }) })
+    const res = await postBatch(base, BATCH)
+    expect(res.status).toBe(502)
+    expect(await res.text()).not.toMatch(/relation/)
+  })
+
+  it('a batch uses ONE slot in flight: a second request from the same user gets 429', async () => {
+    const ai = fakeAnthropic('hang', 'hang', 'hang')
+    const base = await start({ anthropic: ai.client, aiDeadlineMs: 5_000 })
+    const first = postBatch(base, BATCH).catch(() => null)
+    await vi.waitFor(() => expect(ai.create).toHaveBeenCalledTimes(2)) // two of three items in flight
+    const second = await postBatch(base, BATCH)
+    expect(second.status).toBe(429)
+    expect(second.headers.get('retry-after')).toBeTruthy()
+    const single = await postDraft(base, REQUEST)
+    expect(single.status).toBe(429)
+    server!.closeAllConnections()
+    await first
+  })
+
+  it('each item counts against the per-user hourly quota; a batch over it is refused whole', async () => {
+    const base = await start({ draftLimits: { perUserPerHour: 5, perUserInFlight: 1, globalInFlight: 8 } })
+    await resultsOf(await postBatch(base, BATCH)) // 3 of 5
+    const refused = await postBatch(base, BATCH) // would be 6
+    expect(refused.status).toBe(429)
+    expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect(((await refused.json()) as { error: string }).error).toMatch(/needs 3 drafts and you have 2 left/)
+    // Nothing was partially spent: the 2 left still work, as a batch or as single drafts.
+    const two = await resultsOf(await postBatch(base, { ...BATCH, items: BATCH.items.slice(0, 2) }))
+    expect(two).toHaveLength(2)
+    expect((await postDraft(base, REQUEST)).status).toBe(429)
+  })
+
+  it('a single /draft counts one unit of the same quota', async () => {
+    const base = await start({ draftLimits: { perUserPerHour: 4, perUserInFlight: 1, globalInFlight: 8 } })
+    await draftOf(await postDraft(base, REQUEST))
+    await resultsOf(await postBatch(base, BATCH)) // 1 + 3 = 4
+    expect((await postBatch(base, { ...BATCH, items: BATCH.items.slice(0, 1) })).status).toBe(429)
+  })
+
+  it('each item counts against the global hourly quota with 503 and Retry-After', async () => {
+    const base = await start({ draftLimits: { perUserPerHour: 10, perUserInFlight: 1, globalInFlight: 8, globalPerHour: 4 } })
+    await resultsOf(await postBatch(base, BATCH))
+    const refused = await postBatch(base, BATCH)
+    expect(refused.status).toBe(503)
+    expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0)
+  })
+
+  it('aborts every item when the client disconnects, never starts the rest, and frees the slot and the unused quota', async () => {
+    const ai = fakeAnthropic('hang', 'hang')
+    const base = await start({ anthropic: ai.client, aiDeadlineMs: 60_000, draftLimits: { perUserPerHour: 3, perUserInFlight: 1, globalInFlight: 8 } })
+    const controller = new AbortController()
+    const pending = fetch(`${base}/api/planner/draft-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auth },
+      body: JSON.stringify(BATCH),
+      signal: controller.signal,
+    }).catch(() => null)
+    await vi.waitFor(() => expect(ai.create).toHaveBeenCalledTimes(2))
+    const signals = ai.create.mock.calls.map((c) => (c[1] as { signal: AbortSignal }).signal)
+    expect(signals.every((s) => !s.aborted)).toBe(true)
+    controller.abort()
+    await pending
+    await vi.waitFor(() => expect(signals.every((s) => s.aborted)).toBe(true))
+    await vi.waitFor(() => expect(logs.some((l) => l.event === 'planner.batch.abandoned')).toBe(true))
+    expect(ai.create).toHaveBeenCalledTimes(2) // the third item was never started
+    expect(logs.find((l) => l.event === 'planner.batch.abandoned')?.detail).toMatchObject({ items: 3, started: 2 })
+    // The slot is free, and only the 2 started items stayed charged: 1 of 3 is left (no more AI replies: history).
+    const next = await draftOf(await postDraft(base, REQUEST))
+    expect(next.source).toBe('history')
+    expect((await postDraft(base, REQUEST)).status).toBe(429)
+  })
+
+  it('keeps /draft unchanged next to it', async () => {
+    const base = await start()
+    const draft = await draftOf(await postDraft(base, REQUEST))
+    expect(draft.request).toEqual(REQUEST)
   })
 })
 

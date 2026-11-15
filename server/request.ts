@@ -1,5 +1,5 @@
-/** Validation of the POST /api/planner/draft body. */
-import type { PlanRequest } from '../src/planner/types'
+/** Validation of the POST /api/planner/draft and /draft-batch bodies. */
+import { MAX_BATCH_ITEMS, type BatchPlanItem, type BatchPlanRequest, type PlanRequest } from '../src/planner/types'
 
 export const LIMITS = {
   scheduleType: 64,
@@ -57,4 +57,52 @@ export function parsePlanRequest(body: unknown): ParseResult {
   }
   if (notes !== undefined) value.notes = notes as string
   return { ok: true, value }
+}
+
+export type BatchParseResult = { ok: true; value: BatchPlanRequest } | { ok: false; error: string }
+
+/** Checks the shape of a batch request: shared schedule type and notes, and 1 to MAX_BATCH_ITEMS items. */
+export function parseBatchRequest(body: unknown): BatchParseResult {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return { ok: false, error: 'The request body must be a JSON object.' }
+  const b = body as Record<string, unknown>
+  const scheduleType = field(b, 'scheduleType', true)
+  const notes = field(b, 'notes', false)
+  for (const v of [scheduleType, notes]) if (v instanceof Error) return { ok: false, error: v.message }
+  if (!Array.isArray(b.items) || b.items.length === 0) return { ok: false, error: 'items must be a list of at least one item.' }
+  if (b.items.length > MAX_BATCH_ITEMS) return { ok: false, error: `items must have at most ${MAX_BATCH_ITEMS} entries.` }
+  const items: BatchPlanItem[] = []
+  for (const [i, raw] of b.items.entries()) {
+    const where = `items[${i}]`
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ok: false, error: `${where} must be an object.` }
+    const it = raw as Record<string, unknown>
+    const equipmentType = field(it, 'equipmentType', true)
+    const equipmentName = field(it, 'equipmentName', true)
+    const itemNotes = field(it, 'notes', false)
+    for (const v of [equipmentType, equipmentName, itemNotes]) if (v instanceof Error) return { ok: false, error: `${where}: ${v.message}` }
+    if (typeof it.requiredDate !== 'string' || !isIsoDate(it.requiredDate)) {
+      return { ok: false, error: `${where}: requiredDate must be a calendar date written YYYY-MM-DD.` }
+    }
+    const item: BatchPlanItem = {
+      equipmentType: equipmentType as string,
+      equipmentName: equipmentName as string,
+      requiredDate: it.requiredDate,
+    }
+    if (itemNotes !== undefined) item.notes = itemNotes as string
+    items.push(item)
+  }
+  const value: BatchPlanRequest = { scheduleType: scheduleType as string, items }
+  if (notes !== undefined) value.notes = notes as string
+  return { ok: true, value }
+}
+
+/** The single-item request the planner drafts for one batch item: the shared notes, then the item's own. */
+export function planRequestFor(batch: BatchPlanRequest, item: BatchPlanItem): PlanRequest {
+  const notes = [batch.notes, item.notes].filter(Boolean).join('\n')
+  return {
+    scheduleType: batch.scheduleType,
+    equipmentType: item.equipmentType,
+    equipmentName: item.equipmentName,
+    requiredDate: item.requiredDate,
+    ...(notes ? { notes } : {}),
+  }
 }
