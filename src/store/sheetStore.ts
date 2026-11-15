@@ -1,4 +1,5 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
+import type { BaselineRow } from '../engine/baseline'
 import { findCycle } from '../engine/cycles'
 import { schedule, type SchedDep, type ScheduleResult } from '../engine/schedule'
 import {
@@ -11,6 +12,7 @@ import {
   type RowNode,
 } from '../model/hierarchy'
 import { validateCell, type ColumnRole } from '../model/validate'
+import { createBaselineActions, type BaselineActions } from './baselineActions'
 import { createColumnActions, type ColumnActions } from './columnActions'
 import type { Persistence, RowRecord, SheetData } from './persistence'
 import { parsePredecessorInput, rowNumbers } from './predecessors'
@@ -28,7 +30,7 @@ export interface CellError {
 
 export type ActionResult = { ok: true } | { ok: false; error: string }
 
-export interface SheetState extends ColumnActions {
+export interface SheetState extends ColumnActions, BaselineActions {
   data: SheetData | null
   scheduled: ScheduleResult
   saveStatus: SaveStatus
@@ -38,6 +40,8 @@ export interface SheetState extends ColumnActions {
   errors: CellError[]
   notices: string[]
   loadError: string | null
+  /** Rows of the baselines loaded so far, by baseline id (headers are in `data.baselines`). */
+  baselineRows: Record<string, BaselineRow[]>
 
   load(id: string): Promise<void>
   setCell(rowId: string, colId: string, raw: string): ActionResult
@@ -473,12 +477,13 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       errors: [],
       notices: [],
       loadError: null,
+      baselineRows: {},
 
       async load(id) {
         set({ loadError: null })
         try {
           const data = await p.loadSheet(id)
-          commit(data, { errors: [], notices: [], loadError: null })
+          commit(data, { errors: [], notices: [], loadError: null, baselineRows: {} })
         } catch (e) {
           set({ loadError: errorMessage(e) })
         }
@@ -722,6 +727,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         return { ok: true }
       },
       ...createColumnActions({ p, get, commit, enqueue, failedKeys, unpersisted, retryers }),
+      ...createBaselineActions({ p, get, set }),
 
       batch(fn) {
         batchDepth++
