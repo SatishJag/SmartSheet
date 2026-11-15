@@ -25,9 +25,9 @@ export function ScheduleSettingsButton() {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)}>
+      <button type="button" aria-label="Schedule settings" title="Schedule settings" onClick={() => setOpen(true)}>
         <Icon name="settings" size={16} />
-        Schedule settings
+        <span className="hide-sm">Schedule settings</span>
       </button>
       {open && <ScheduleSettingsDialog onClose={() => setOpen(false)} />}
     </>
