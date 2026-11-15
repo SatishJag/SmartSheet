@@ -18,7 +18,7 @@ export interface AuthenticatedUser {
 }
 
 /** Defaults for the AI draft limits (one server instance). */
-export const DEFAULT_DRAFT_LIMITS: DraftLimits = { perUserPerHour: 10, perUserInFlight: 1, globalInFlight: 8 }
+export const DEFAULT_DRAFT_LIMITS: DraftLimits = { perUserPerHour: 10, perUserInFlight: 1, globalInFlight: 8, globalPerHour: 60 }
 
 export interface AppDeps {
   /** Directory of the built SPA (vite build output). */

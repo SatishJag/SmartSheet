@@ -9,6 +9,7 @@
  *   STATIC_DIR            optional, default ./dist
  *   PLANNER_DRAFTS_PER_HOUR       optional, per user, default 10
  *   PLANNER_MAX_CONCURRENT_DRAFTS optional, all users together, default 8
+ *   PLANNER_DRAFTS_PER_HOUR_TOTAL optional, all users together, default 60
  */
 import path from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
@@ -38,6 +39,7 @@ const server = createApp({
     ...DEFAULT_DRAFT_LIMITS,
     perUserPerHour: Number(env.PLANNER_DRAFTS_PER_HOUR) || DEFAULT_DRAFT_LIMITS.perUserPerHour,
     globalInFlight: Number(env.PLANNER_MAX_CONCURRENT_DRAFTS) || DEFAULT_DRAFT_LIMITS.globalInFlight,
+    globalPerHour: Number(env.PLANNER_DRAFTS_PER_HOUR_TOTAL) || DEFAULT_DRAFT_LIMITS.globalPerHour,
   },
 })
 

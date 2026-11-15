@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { createScheduleSheet, editCell, expectSaved, gridCell, signUp, USER_A } from './support/app'
+import { createScheduleSheet, editCell, expectSaved, gridCell, openApp } from './support/app'
 
 const headerTitles = (page: Page) => page.getByRole('columnheader')
 
@@ -9,7 +9,7 @@ async function columnMenu(page: Page, title: string, action: string): Promise<vo
 }
 
 test('add, rename (formulas follow) and delete columns, and the changes persist', async ({ page }) => {
-  await signUp(page, USER_A)
+  await openApp(page)
   await createScheduleSheet(page)
   await page.getByRole('button', { name: 'Add row' }).click()
   await editCell(page, 1, 'Task', 'Pour footings')

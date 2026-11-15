@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { createScheduleSheet, editCell, expectSaved, ganttBar, gridCell, openTab, signUp, USER_A } from './support/app'
+import { createScheduleSheet, editCell, expectSaved, ganttBar, gridCell, openTab, openApp } from './support/app'
 
 const bar1 = (page: Page) => ganttBar(page, 'Task 1')
 const bar2 = (page: Page) => ganttBar(page, 'Task 2')
@@ -17,7 +17,7 @@ const T1_4D = 'Task 1: 2026-11-09 to 2026-11-12, 4 days, 0% complete'
 const T2_AFTER_4D = 'Task 2: 2026-11-13 to 2026-11-16, 2 days, 0% complete'
 
 test('predecessors drive the Gantt chart, invalid input is flagged, and everything persists', async ({ page }) => {
-  await signUp(page, USER_A)
+  await openApp(page)
   await createScheduleSheet(page)
   await expect(page.getByText('No rows yet')).toBeVisible()
 

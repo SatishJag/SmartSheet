@@ -7,6 +7,8 @@ export interface DraftLimits {
   perUserPerHour: number
   perUserInFlight: number
   globalInFlight: number
+  /** Drafts across all users per rolling hour; unlimited when omitted. */
+  globalPerHour?: number
   now?: () => number
 }
 
@@ -21,6 +23,7 @@ export function createDraftLimiter(limits: DraftLimits) {
   const inFlight = new Map<string, number>()
   const recent = new Map<string, number[]>()
   let global = 0
+  let allRecent: number[] = []
 
   return {
     acquire(userId: string): Acquired {
@@ -41,6 +44,11 @@ export function createDraftLimiter(limits: DraftLimits) {
           retryAfterSeconds,
         }
       }
+      allRecent = allRecent.filter((x) => x > t - HOUR_MS)
+      if (limits.globalPerHour !== undefined && allRecent.length >= limits.globalPerHour) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((allRecent[0] + HOUR_MS - t) / 1000))
+        return { ok: false, status: 503, message: 'The planner has reached its hourly limit. Try again later.', retryAfterSeconds }
+      }
       if (global >= limits.globalInFlight) {
         return { ok: false, status: 503, message: 'The planner is busy. Try again in a minute.', retryAfterSeconds: 30 }
       }
@@ -48,6 +56,7 @@ export function createDraftLimiter(limits: DraftLimits) {
       global++
       inFlight.set(userId, (inFlight.get(userId) ?? 0) + 1)
       recent.set(userId, [...times, t])
+      allRecent.push(t)
       let released = false
       return {
         ok: true,

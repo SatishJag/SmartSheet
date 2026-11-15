@@ -3,7 +3,7 @@ import { defaultCalendar } from '../src/engine/calendar'
 import { planBackward } from '../src/planner/backward'
 import type { PlannerOptions, PlanRequest } from '../src/planner/types'
 import { catalogDraft } from '../src/test/plannerFixtures'
-import { ganttBar, gridCell, openTab, signUp, USER_A } from './support/app'
+import { ganttBar, gridCell, openTab, openApp } from './support/app'
 
 const OPTIONS: PlannerOptions = {
   scheduleTypes: [{ id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'Procurement of long-lead equipment' }],
@@ -28,7 +28,7 @@ test('Plan with AI: request, preview, approve into an editable schedule', async 
     return route.fulfill({ json: { ok: true, draft: { ...catalogDraft(request.requiredDate), request } } })
   })
 
-  await signUp(page, USER_A)
+  await openApp(page)
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
   await expect(dialog.getByLabel('Schedule type')).toHaveValue('lle-procurement')

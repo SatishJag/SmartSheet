@@ -316,6 +316,18 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         return { data: { user: session.user, session }, error: null }
       },
 
+      /** A new anonymous user, signed in at once (as with anonymous sign-ins enabled in Supabase). */
+      async signInAnonymously() {
+        await tick()
+        const state = read()
+        const user = addUser(state, '', '')
+        state.sessionUserId = user.id
+        write(state)
+        const session = sessionFor(user)
+        emit('SIGNED_IN', session)
+        return { data: { user: session.user, session }, error: null }
+      },
+
       async signOut() {
         await tick()
         const state = read()

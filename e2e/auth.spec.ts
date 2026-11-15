@@ -1,44 +1,42 @@
 import { expect, test } from '@playwright/test'
-import { createScheduleSheet, signIn, signOut, signUp, submitSignIn, USER_A, USER_B } from './support/app'
+import { becomeNewVisitor, createScheduleSheet, openApp, returnAsVisitor } from './support/app'
 
-test('create an account, sign out, sign back in; a wrong password is refused', async ({ page }) => {
-  await signUp(page, USER_A)
+// MVP: there is no sign-in. Each browser gets its own anonymous session on its first visit.
+
+test('the app opens straight to the sheet list, with no sign-in, and keeps the visitor across reloads', async ({ page }) => {
+  await openApp(page)
   await expect(page.getByText('No sheets yet')).toBeVisible()
+  await expect(page.getByLabel('Email')).toHaveCount(0)
+  await expect(page.getByLabel('Password')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0)
 
-  await signOut(page)
-  await submitSignIn(page, { ...USER_A, password: 'e2e-wrong-password' })
-  await expect(page.getByRole('alert')).toHaveText('Invalid login credentials')
-  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
-
-  await signIn(page, USER_A)
-  await expect(page.getByText('No sheets yet')).toBeVisible()
-
-  // The session survives a reload.
+  await createScheduleSheet(page)
+  await page.getByRole('button', { name: 'Back to sheets' }).click()
   await page.reload()
-  await expect(page.getByRole('heading', { name: 'Your sheets' })).toBeVisible()
-  await expect(page.getByText(USER_A.email)).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Project schedule/ })).toHaveCount(1)
 })
 
-test("a second user sees none of the first user's sheets", async ({ page }) => {
-  await signUp(page, USER_A)
+test("another visitor sees none of the first visitor's sheets", async ({ page }) => {
+  await openApp(page)
   await createScheduleSheet(page)
   await page.getByRole('button', { name: 'Back to sheets' }).click()
   const sheetButton = page.getByRole('button', { name: /^Project schedule/ })
   await expect(sheetButton).toHaveCount(1)
 
-  await signOut(page)
-  await signUp(page, USER_B)
+  const first = await becomeNewVisitor(page)
+  expect(first).toBeTruthy()
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Your sheets' })).toBeVisible()
   await expect(page.getByText('No sheets yet')).toBeVisible()
   await expect(sheetButton).toHaveCount(0)
 
-  await signOut(page)
-  await signIn(page, USER_A)
+  await returnAsVisitor(page, first!)
+  await page.reload()
   await expect(sheetButton).toHaveCount(1)
-  await expect(page.getByText('No sheets yet')).toHaveCount(0)
 })
 
 test('rename a sheet, then delete it', async ({ page }) => {
-  await signUp(page, USER_A)
+  await openApp(page)
   await createScheduleSheet(page)
   await page.getByRole('button', { name: 'Back to sheets' }).click()
 

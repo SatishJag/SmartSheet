@@ -3,9 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { AuthGate } from './auth/AuthGate'
 import { SheetList } from './auth/SheetList'
 import { createSupabaseClient, getSupabaseConfig } from './lib/supabase'
-import type { SaveStatus } from './store/sheetStore'
-import { ConfirmDialog } from './views/ConfirmDialog'
-import { SheetView, UNSAVED_MESSAGE } from './views/SheetView'
+import { SheetView } from './views/SheetView'
 import './App.css'
 
 export default function App() {
@@ -31,56 +29,26 @@ function ConfiguredApp({ url, anonKey }: { url: string; anonKey: string }) {
   return (
     <AuthGate client={client}>
       {(session) => (
-        <Shell client={client} userId={session.user.id} email={session.user.email ?? ''} />
+        <Shell client={client} userId={session.user.id} />
       )}
     </AuthGate>
   )
 }
 
-function Shell({ client, userId, email }: { client: SupabaseClient; userId: string; email: string }) {
+function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
   const [openSheetId, setOpenSheetId] = useState<string | null>(null)
-  // Save status of the open sheet: Sign out asks first while anything is unsaved.
-  const [sheetStatus, setSheetStatus] = useState<SaveStatus>('saved')
-  const [confirmSignOut, setConfirmSignOut] = useState(false)
-  const unsaved = openSheetId !== null && sheetStatus !== 'saved'
-  const signOut = () => void client.auth.signOut()
 
   return (
     <div className="app">
-      {confirmSignOut && (
-        <ConfirmDialog
-          title="Unsaved changes"
-          message={UNSAVED_MESSAGE}
-          confirmLabel="Leave"
-          cancelLabel="Stay"
-          onConfirm={() => {
-            setConfirmSignOut(false)
-            signOut()
-          }}
-          onCancel={() => setConfirmSignOut(false)}
-        />
-      )}
       <header className="app-header">
         <strong>Construction Work Management</strong>
         <span className="spacer" />
-        <span>{email}</span>
-        <button type="button" onClick={() => (unsaved ? setConfirmSignOut(true) : signOut())}>
-          Sign out
-        </button>
       </header>
       <main>
         {openSheetId === null ? (
           <SheetList client={client} userId={userId} onOpen={setOpenSheetId} />
         ) : (
-          <SheetView
-            client={client}
-            sheetId={openSheetId}
-            onSaveStatusChange={setSheetStatus}
-            onBack={() => {
-              setSheetStatus('saved')
-              setOpenSheetId(null)
-            }}
-          />
+          <SheetView client={client} sheetId={openSheetId} onBack={() => setOpenSheetId(null)} />
         )}
       </main>
     </div>

@@ -1,11 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
-import { createScheduleSheet, editCell, expectSaved, gridCell, openTab, signUp, USER_A } from './support/app'
+import { createScheduleSheet, editCell, expectSaved, gridCell, openTab, openApp } from './support/app'
 
 const lane = (page: Page, name: string) => page.getByRole('region', { name: new RegExp(`^${name} \\(\\d+\\)$`) })
 const card = (page: Page, name: string) => page.getByRole('listitem').filter({ hasText: name })
 
 test('dragging a card to another lane, and the Move-to select, write the Status cell', async ({ page }) => {
-  await signUp(page, USER_A)
+  await openApp(page)
   await createScheduleSheet(page)
   const tasks = [
     ['Pour footings', 'Not started'],

@@ -10,7 +10,9 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
 
 ## Features
 
-- **Sign-in and per-user sheets** (Supabase Auth, row-level security on every table)
+- **No sign-in (MVP)**: each browser gets an anonymous Supabase session on its first visit, so
+  visitors keep their own sheets (row-level security on every table) without an account. Needs
+  "Allow anonymous sign-ins" turned on in the Supabase project (Authentication → Sign In / Providers)
 - **Grid**: typed columns (text/number, date, checkbox, picklist, multi-picklist, contact,
   duration, predecessor), inline editing with validation, row hierarchy (Tab / Shift+Tab),
   drag to reorder, collapse, sort and filter, basic formulas (`SUM`, `IF`, arithmetic,
@@ -102,11 +104,12 @@ Environment variables:
 | `PORT` | runtime | Set by Railway; 8787 locally |
 | `PLANNER_DRAFTS_PER_HOUR` | runtime, optional | AI drafts each user may request per rolling hour (default 10) |
 | `PLANNER_MAX_CONCURRENT_DRAFTS` | runtime, optional | Drafts in progress across all users (default 8); each user may have one at a time |
+| `PLANNER_DRAFTS_PER_HOUR_TOTAL` | runtime, optional | AI drafts across all users per rolling hour (default 60) |
 
 Each AI draft can cost several large model calls, so the server limits drafts per user and in
-total, and stops the AI call when the browser disconnects. The limits are per user account,
-so before going live also, in the Supabase dashboard, turn off open sign-ups (or restrict them
-to your company's email domain), and set a monthly spend limit on the Anthropic key.
+total, and stops the AI call when the browser disconnects. Without sign-in anyone can get a new
+anonymous account, so the total hourly cap is what bounds cost: also set a monthly spend limit
+on the Anthropic key.
 
 Railway: `railway.json` builds with `npm run build` (Railpack) and starts
 `node dist-server/server/main.js` with a health check on `/api/health`. Set the variables above

@@ -61,3 +61,21 @@ describe('createDraftLimiter', () => {
     }
   })
 })
+
+describe('createDraftLimiter: total per hour (anonymous visitors can make new accounts freely)', () => {
+  it('caps drafts across all users per rolling hour with 503 and Retry-After', () => {
+    let t = 0
+    const limiter = createDraftLimiter({ perUserPerHour: 10, perUserInFlight: 1, globalInFlight: 8, globalPerHour: 2, now: () => t })
+    for (const u of ['a', 'b']) {
+      const g = limiter.acquire(u)
+      expect(g.ok).toBe(true)
+      if (g.ok) g.release()
+      t += 60_000
+    }
+    const denied = limiter.acquire('c')
+    expect(denied).toMatchObject({ ok: false, status: 503 })
+    expect(!denied.ok && denied.retryAfterSeconds).toBe(58 * 60) // the first draft expires 58 min from now
+    t += 58 * 60_000
+    expect(limiter.acquire('c').ok).toBe(true)
+  })
+})
