@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { BaselineMeta, BaselineRow } from '../engine/baseline'
 import { defaultCalendar } from '../engine/calendar'
 import type { SchedDep } from '../engine/schedule'
 import type { Column } from '../model/validate'
@@ -51,6 +52,16 @@ function fakePersistence(data: SheetData = sheetData()) {
     saveColumnOrder: vi.fn(async (_sheetId: string, _colIds: string[]) => {}),
     deleteColumn: vi.fn(async (_sheetId: string, _colId: string) => {}),
     saveColumnCells: vi.fn(async (_sheetId: string, _colId: string, _values: Record<string, unknown>) => {}),
+    loadBaselineRows: vi.fn(async (_baselineId: string): Promise<BaselineRow[]> => []),
+    saveBaseline: vi.fn(
+      async (_sheetId: string, slot: number, name: string, _rows: BaselineRow[]): Promise<BaselineMeta> => ({
+        id: `baseline-${slot}`,
+        slot,
+        name,
+        createdAt: '2026-11-15T10:00:00.000Z',
+      }),
+    ),
+    deleteBaseline: vi.fn(async (_baselineId: string) => {}),
   } satisfies Persistence
 }
 

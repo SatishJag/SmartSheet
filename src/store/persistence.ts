@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { BaselineMeta, BaselineRow } from '../engine/baseline'
 import type { SchedDep } from '../engine/schedule'
 import type { Calendar, DepType } from '../engine/types'
 import type { RowNode } from '../model/hierarchy'
@@ -21,6 +22,8 @@ export interface SheetData {
   columns: Column[]
   rows: RowRecord[]
   dependencies: SchedDep[]
+  /** Baseline headers only (no rows), ordered by slot. Missing means none. */
+  baselines?: BaselineMeta[]
 }
 
 export interface Persistence {
@@ -44,6 +47,12 @@ export interface Persistence {
   deleteColumn(sheetId: string, colId: string): Promise<void>
   /** Sets one column's value on many rows (row id -> value); undefined or null empties the cell. */
   saveColumnCells(sheetId: string, colId: string, values: Record<string, unknown>): Promise<void>
+  /** The saved rows of one baseline (loaded on demand: a sheet's baselines are not loaded with it). */
+  loadBaselineRows(baselineId: string): Promise<BaselineRow[]>
+  /** Saves a baseline into slot 1-5, replacing that slot's baseline, in one atomic call. Returns its header. */
+  saveBaseline(sheetId: string, slot: number, name: string, rows: BaselineRow[]): Promise<BaselineMeta>
+  /** Deletes a baseline and its rows. Idempotent. */
+  deleteBaseline(baselineId: string): Promise<void>
 }
 
 /** The schedule settings of a sheet that users can change. */
@@ -84,6 +93,24 @@ export interface DbRow {
   position: string
   cells: Record<string, unknown> | null
   version: number
+}
+
+export interface DbBaseline {
+  id: string
+  sheet_id: string
+  slot: number
+  name: string
+  created_at: string
+}
+
+/** A `baseline_rows` row; it has no `id`, so `id` mirrors `row_id` for paging. */
+export interface DbBaselineRow {
+  id: string
+  baseline_id: string
+  row_id: string
+  start_date: string
+  end_date: string
+  duration_days: number
 }
 
 export interface DbDependency {
@@ -153,6 +180,14 @@ export function rowToDb(row: RowRecord, sheet: Pick<SheetMeta, 'id' | 'ownerId' 
     cells: row.cells,
     version: row.version,
   }
+}
+
+export function baselineFromDb(r: Pick<DbBaseline, 'id' | 'slot' | 'name' | 'created_at'>): BaselineMeta {
+  return { id: r.id, slot: r.slot, name: r.name, createdAt: r.created_at }
+}
+
+export function baselineRowFromDb(r: Pick<DbBaselineRow, 'row_id' | 'start_date' | 'end_date' | 'duration_days'>): BaselineRow {
+  return { rowId: r.row_id, start: r.start_date, end: r.end_date, durationDays: r.duration_days }
 }
 
 export function dependencyFromDb(r: DbDependency): SchedDep {
@@ -248,13 +283,15 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
      * order; a failed or inconsistent page fails the whole load rather than truncating it.
      */
     async loadSheet(id) {
-      const [sheetRes, cols, rows, deps] = await Promise.all([
+      const [sheetRes, cols, rows, deps, baselines] = await Promise.all([
         client.from('sheets').select('*').eq('id', id).single(),
         fetchAllPages<DbColumn>((from, to) =>
           client.from('columns').select('*').eq('sheet_id', id).order('position', { ascending: true }).order('id').range(from, to),
         ),
         fetchAllPages<DbRow>((from, to) => client.from('rows').select('*').eq('sheet_id', id).order('id').range(from, to)),
         fetchDeps(id),
+        // Headers only: at most 5 per sheet, so no paging; their rows load on demand.
+        client.from('baselines').select('id, slot, name, created_at').eq('sheet_id', id).order('slot', { ascending: true }),
       ])
       const sheet = sheetFromDb(check(sheetRes) as DbSheet)
       owners.set(sheet.id, sheet)
@@ -266,6 +303,7 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
         columns: cols.map(columnFromDb),
         rows: rows.map(rowFromDb),
         dependencies: [...depIndex.values()].map((d) => d.dep),
+        baselines: (check(baselines) as Pick<DbBaseline, 'id' | 'slot' | 'name' | 'created_at'>[]).map(baselineFromDb),
       }
     },
 
@@ -367,6 +405,53 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
     },
 
     ...columnPersistence(client, ownerOf),
+    ...baselinePersistence(client),
+  }
+}
+
+type BaselineMethods = Pick<Persistence, 'loadBaselineRows' | 'saveBaseline' | 'deleteBaseline'>
+
+/**
+ * Baselines (0006_baselines.sql). Rows are paged like every other list (a baseline holds as many
+ * rows as the sheet); saving is the atomic `save_baseline` function, one round trip.
+ */
+function baselinePersistence(client: SupabaseClient): BaselineMethods {
+  return {
+    async loadBaselineRows(baselineId) {
+      // baseline_rows has no `id`; the paging helper needs one, so mirror the row id (its page order).
+      const rows = await fetchAllPages<DbBaselineRow>(async (from, to) => {
+        const res = await client
+          .from('baseline_rows')
+          .select('row_id, start_date, end_date, duration_days')
+          .eq('baseline_id', baselineId)
+          .order('row_id')
+          .range(from, to)
+        const data = res.data as Omit<DbBaselineRow, 'id' | 'baseline_id'>[] | null
+        return { data: data ? data.map((r) => ({ ...r, id: r.row_id, baseline_id: baselineId })) : null, error: res.error }
+      })
+      return rows.map(baselineRowFromDb)
+    },
+
+    async saveBaseline(sheetId, slot, name, rows) {
+      const id = check(
+        await client.rpc('save_baseline', {
+          p_sheet_id: sheetId,
+          p_slot: slot,
+          p_name: name,
+          p_rows: rows.map((r) => ({ rowId: r.rowId, start: r.start, end: r.end, durationDays: r.durationDays })),
+        }),
+      ) as string | null
+      if (!id) throw new Error('Saving the baseline returned no id')
+      const header = check(
+        await client.from('baselines').select('id, slot, name, created_at').eq('id', id).single(),
+      ) as Pick<DbBaseline, 'id' | 'slot' | 'name' | 'created_at'>
+      return baselineFromDb(header)
+    },
+
+    async deleteBaseline(baselineId) {
+      // The rows go with it (on delete cascade).
+      check(await client.from('baselines').delete().eq('id', baselineId))
+    },
   }
 }
 

@@ -11,6 +11,8 @@
  *   0002_hardening.sql's same-sheet parents/endpoints and one dependency per pair.
  * - PostgREST's 1000-row response cap (`.range()` pages), and `upsert` (ON CONFLICT DO UPDATE).
  * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`.
+ * - tables `baselines` and `baseline_rows` and the function `save_baseline` (0006_baselines.sql):
+ *   cascade on sheet delete, NO cascade from `rows` (a baseline outlives a deleted row).
  * - ownership: every read and write is limited to rows owned by the signed-in user, and
  *   inserts/updates must keep `owner_id` = that user and point at the user's own sheet.
  *
@@ -25,7 +27,7 @@
 
 export const FAKE_STORAGE_KEY = 'fakeSupabase:v1'
 
-export type TableName = 'sheets' | 'columns' | 'rows' | 'dependencies'
+export type TableName = 'sheets' | 'columns' | 'rows' | 'dependencies' | 'baselines' | 'baseline_rows'
 export type DbRecord = Record<string, unknown>
 
 export interface FakeUser {
@@ -63,7 +65,7 @@ export interface FakeResult<T = unknown> {
   error: FakeError | null
 }
 
-const TABLES: readonly TableName[] = ['sheets', 'columns', 'rows', 'dependencies']
+const TABLES: readonly TableName[] = ['sheets', 'columns', 'rows', 'dependencies', 'baselines', 'baseline_rows']
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
 export const MAX_ROWS = 1000
@@ -120,6 +122,26 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     type: { notNull: true },
     lag_minutes: { default: () => 0, notNull: true },
   },
+  baselines: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    sheet_id: { notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    slot: { notNull: true },
+    name: { notNull: true },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  // No `id`: the primary key is (baseline_id, row_id).
+  baseline_rows: {
+    baseline_id: { notNull: true },
+    sheet_id: { notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    row_id: { notNull: true },
+    start_date: { notNull: true },
+    end_date: { notNull: true },
+    duration_days: { notNull: true },
+  },
 }
 
 const COLUMN_TYPES = ['TEXT_NUMBER', 'DATE', 'CHECKBOX', 'PICKLIST', 'MULTI_PICKLIST', 'CONTACT_LIST', 'DURATION', 'PREDECESSOR']
@@ -127,7 +149,7 @@ const COLUMN_ROLES = ['start', 'end', 'duration', 'predecessor', 'percentComplet
 const DEP_TYPES = ['FS', 'SS', 'FF', 'SF']
 
 export function emptyState(): FakeState {
-  return { users: [], sessionUserId: null, tables: { sheets: [], columns: [], rows: [], dependencies: [] }, clock: 0 }
+  return { users: [], sessionUserId: null, tables: { sheets: [], columns: [], rows: [], dependencies: [], baselines: [], baseline_rows: [] }, clock: 0 }
 }
 
 /** Adds a user to a state object (for seeding). Returns the new user. */
@@ -413,6 +435,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     update(patch: DbRecord, options?: unknown): this {
       if (options !== undefined) unsupported(`${this.table}.update(..., options)`)
+      if (this.table === 'baseline_rows') unsupported('baseline_rows.update() (baselines are read-only snapshots)')
       return this.setOp({ kind: 'update', patch })
     }
 
@@ -598,6 +621,18 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
           return pgError('new row violates check constraint "dependencies_check"', '23514')
         }
       }
+      if (this.table === 'baselines') {
+        const bad = baselineFieldError(row.slot, row.name)
+        if (bad) return bad
+      }
+      if (this.table === 'baseline_rows') {
+        // The rows belong to a baseline of the same sheet; row_id has no foreign key (it outlives its row).
+        if (!state.tables.baselines.some((b) => b.id === row.baseline_id && b.sheet_id === row.sheet_id)) {
+          return pgError('insert or update on table "baseline_rows" violates foreign key constraint', '23503')
+        }
+        const bad = baselineRowError(row)
+        if (bad) return bad
+      }
       return null
     }
 
@@ -616,6 +651,13 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     /** Primary key and (dependencies) the one-per-pair unique key. Null when `row` is unique among `others`. */
     private uniqueError(row: DbRecord, others: DbRecord[]): FakeError | null {
+      if (this.table === 'baseline_rows') {
+        const dup = others.some((r) => r !== row && r.baseline_id === row.baseline_id && r.row_id === row.row_id)
+        return dup ? pgError('duplicate key value violates unique constraint "baseline_rows_pkey"', '23505') : null
+      }
+      if (this.table === 'baselines' && others.some((r) => r !== row && r.sheet_id === row.sheet_id && r.slot === row.slot)) {
+        return pgError('duplicate key value violates unique constraint "baselines_sheet_id_slot_key"', '23505')
+      }
       if (others.some((r) => r !== row && r.id === row.id)) {
         return pgError(`duplicate key value violates unique constraint "${this.table}_pkey"`, '23505')
       }
@@ -686,7 +728,13 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     private runDelete(state: FakeState, uid: string): FakeResult {
       const targets = this.visible(state, uid)
-      removeWithCascade(state, this.table, new Set(targets.map((r) => r.id)))
+      if (this.table === 'baseline_rows') {
+        // No id column: remove the matched records themselves.
+        const gone = new Set(targets)
+        state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !gone.has(r))
+      } else {
+        removeWithCascade(state, this.table, new Set(targets.map((r) => r.id)))
+      }
       return { data: this.returned(targets), error: null }
     }
   }
@@ -695,7 +743,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
    * The database functions of 0003_columns.sql (SECURITY INVOKER, so limited to the caller's own
    * rows like everything else): `delete_column` and `set_column_cells`.
    */
-  async function rpc(fn: string, args: Record<string, unknown> = {}): Promise<FakeResult<null>> {
+  async function rpc(fn: string, args: Record<string, unknown> = {}): Promise<FakeResult<string | null>> {
     await tick()
     const state = read()
     const uid = state.sessionUserId
@@ -723,6 +771,11 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         if (value === null) delete cells[key]
         else cells[key] = structuredClone(value)
       }
+    } else if (fn === 'save_baseline') {
+      const res = saveBaseline(state, uid, args)
+      if (res.error) return res
+      write(state)
+      return res
     } else {
       unsupported(`rpc(${JSON.stringify(fn)})`)
     }
@@ -735,6 +788,95 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 }
 
 export type FakeSupabaseClient = ReturnType<typeof createFakeSupabase>
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** The checks of `baselines` (slot 1-5, name 1-100 chars and not blank). Null when fine. */
+function baselineFieldError(slot: unknown, name: unknown): FakeError | null {
+  if (typeof slot !== 'number' || !Number.isInteger(slot) || slot < 1 || slot > 5) {
+    return pgError('new row for relation "baselines" violates check constraint "baselines_slot_check"', '23514')
+  }
+  if (typeof name !== 'string' || name.trim().length === 0 || name.length > 100) {
+    return pgError('new row for relation "baselines" violates check constraint "baselines_name_check"', '23514')
+  }
+  return null
+}
+
+/** The column types and checks of `baseline_rows` (dates, end >= start, duration >= 0). Null when fine. */
+function baselineRowError(row: DbRecord): FakeError | null {
+  if (typeof row.row_id !== 'string' || !UUID_RE.test(row.row_id)) {
+    return pgError(`invalid input syntax for type uuid: "${String(row.row_id)}"`, '22P02')
+  }
+  for (const col of ['start_date', 'end_date'] as const) {
+    const v = row[col]
+    if (typeof v !== 'string' || !DATE_RE.test(v) || Number.isNaN(Date.parse(v))) {
+      return pgError(`invalid input syntax for type date: "${String(v)}"`, '22007')
+    }
+  }
+  if (typeof row.duration_days !== 'number' || !Number.isInteger(row.duration_days)) {
+    return pgError(`invalid input syntax for type integer: "${String(row.duration_days)}"`, '22P02')
+  }
+  if (row.duration_days < 0 || String(row.end_date) < String(row.start_date)) {
+    return pgError('new row for relation "baseline_rows" violates check constraint', '23514')
+  }
+  return null
+}
+
+/**
+ * `save_baseline(p_sheet_id, p_slot, p_name, p_rows)` of 0006_baselines.sql: replaces the slot's
+ * baseline and stores the rows, all or nothing, and returns the new baseline's id. `state` is only
+ * changed when the whole call succeeds (the caller writes it back). The caller must own the sheet
+ * (otherwise the baseline insert fails row-level security, as in the database).
+ */
+function saveBaseline(state: FakeState, uid: string, args: Record<string, unknown>): FakeResult<string | null> {
+  const fail = (error: FakeError): FakeResult<string | null> => ({ data: null, error })
+  const sheet = state.tables.sheets.find((s) => s.id === args.p_sheet_id && s.owner_id === uid)
+  const slot = args.p_slot
+  if (!sheet) return fail(rlsError('baselines'))
+  const bad = baselineFieldError(slot, args.p_name)
+  if (bad) return fail(bad)
+  if (!Array.isArray(args.p_rows)) return fail(pgError('cannot extract elements from a non-array', '22023'))
+  const baselineId = crypto.randomUUID()
+  const rows: DbRecord[] = []
+  const seen = new Set<string>()
+  for (const raw of args.p_rows as Record<string, unknown>[]) {
+    const row: DbRecord = {
+      baseline_id: baselineId,
+      sheet_id: sheet.id,
+      owner_id: uid,
+      workspace_id: uid,
+      row_id: raw?.rowId ?? null,
+      start_date: raw?.start ?? null,
+      end_date: raw?.end ?? null,
+      duration_days: raw?.durationDays ?? null,
+    }
+    if (row.row_id == null || row.start_date == null || row.end_date == null || row.duration_days == null) {
+      return fail(pgError('null value in column of relation "baseline_rows" violates not-null constraint', '23502'))
+    }
+    const err = baselineRowError(row)
+    if (err) return fail(err)
+    const key = String(row.row_id).toLowerCase()
+    if (seen.has(key)) return fail(pgError('duplicate key value violates unique constraint "baseline_rows_pkey"', '23505'))
+    seen.add(key)
+    rows.push(row)
+  }
+  state.clock = Math.max(Date.now(), state.clock + 1)
+  const old = new Set(state.tables.baselines.filter((b) => b.sheet_id === sheet.id && b.slot === slot).map((b) => b.id))
+  state.tables.baselines = state.tables.baselines.filter((b) => !old.has(b.id))
+  state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !old.has(r.baseline_id))
+  state.tables.baselines.push({
+    id: baselineId,
+    sheet_id: sheet.id,
+    owner_id: uid,
+    workspace_id: uid,
+    slot,
+    name: args.p_name,
+    created_at: new Date(state.clock).toISOString(),
+  })
+  state.tables.baseline_rows.push(...rows)
+  return { data: baselineId, error: null }
+}
 
 /** The dependencies table's one-per-pair unique key (0002_hardening.sql). */
 const PAIR_KEY = ['sheet_id', 'predecessor_row_id', 'successor_row_id'] as const
@@ -760,6 +902,13 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
     state.tables.columns = state.tables.columns.filter((r) => !ids.has(r.sheet_id))
     state.tables.dependencies = state.tables.dependencies.filter((r) => !ids.has(r.sheet_id))
     state.tables.rows = state.tables.rows.filter((r) => !ids.has(r.sheet_id))
+    state.tables.baselines = state.tables.baselines.filter((r) => !ids.has(r.sheet_id))
+    state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !ids.has(r.sheet_id))
+    return
+  }
+  if (table === 'baselines') {
+    state.tables.baselines = state.tables.baselines.filter((r) => !ids.has(r.id))
+    state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !ids.has(r.baseline_id))
     return
   }
   if (table === 'rows') {
@@ -775,6 +924,7 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
         }
       }
     }
+    // baseline_rows.row_id deliberately has no foreign key: baselines survive a deleted row.
     state.tables.rows = state.tables.rows.filter((r) => !all.has(r.id))
     state.tables.dependencies = state.tables.dependencies.filter(
       (d) => !all.has(d.predecessor_row_id) && !all.has(d.successor_row_id),

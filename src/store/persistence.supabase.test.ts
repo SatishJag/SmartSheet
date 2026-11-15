@@ -2,6 +2,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { describe, expect, it } from 'vitest'
 import { addUser, createFakeSupabase, emptyState, FAKE_STORAGE_KEY, type DbRecord, type StorageLike } from '../../e2e/support/fakeSupabase'
+import type { BaselineRow } from '../engine/baseline'
 import { supabasePersistence } from './persistence'
 
 function memoryStorage(json: string): StorageLike {
@@ -62,6 +63,7 @@ function instrument(client: SupabaseClient) {
   const ctl = { failDeletes: 0 }
   const wrapped = {
     auth: client.auth,
+    rpc: (fn: string, args?: Record<string, unknown>) => client.rpc(fn, args),
     from(table: string) {
       const target = client.from(table) as unknown as Record<string | symbol, unknown>
       const proxy: unknown = new Proxy(target, {
@@ -282,5 +284,93 @@ describe('supabasePersistence column management', () => {
     const byId = new Map((await p.loadSheet(sheetId)).rows.map((r) => [r.id, r.cells]))
     expect(byId.get(rowIds[0])).toEqual({ [b.id]: ['Open'], keep: 1 })
     expect(byId.get(rowIds[1])).toEqual({ keep: 1 })
+  })
+})
+
+describe('supabasePersistence baselines', () => {
+  const snap = (rowIds: string[]): BaselineRow[] =>
+    rowIds.map((rowId, i) => ({ rowId, start: '2026-11-09', end: '2026-11-1' + (i % 10), durationDays: i % 10 }))
+  const byRowId = (rows: BaselineRow[]) => [...rows].sort((a, b) => a.rowId.localeCompare(b.rowId))
+
+  it('loadSheet returns baseline headers only, ordered by slot; none means an empty list', async () => {
+    const { client, sheetId, rowIds } = seeded(5, 0)
+    const p = supabasePersistence(client)
+    expect((await p.loadSheet(sheetId)).baselines).toEqual([])
+    await p.saveBaseline(sheetId, 3, 'Third', snap(rowIds))
+    await p.saveBaseline(sheetId, 1, 'First', snap(rowIds))
+    const loaded = (await p.loadSheet(sheetId)).baselines!
+    expect(loaded.map((b) => [b.slot, b.name])).toEqual([
+      [1, 'First'],
+      [3, 'Third'],
+    ])
+    expect(loaded[0]).toEqual({ id: expect.any(String), slot: 1, name: 'First', createdAt: expect.any(String) })
+  })
+
+  it('does not read baseline_rows when loading a sheet', async () => {
+    const { client: raw, sheetId, rowIds } = seeded(5, 0)
+    const { client, calls } = instrument(raw)
+    const p = supabasePersistence(client)
+    await p.saveBaseline(sheetId, 1, 'A', snap(rowIds))
+    calls.length = 0
+    await p.loadSheet(sheetId)
+    expect(calls.filter((c) => c.table === 'baseline_rows')).toEqual([])
+  })
+
+  it('round trips: save returns the header, loadBaselineRows returns the rows', async () => {
+    const { client, sheetId, rowIds } = seeded(4, 0)
+    const p = supabasePersistence(client)
+    const rows = snap(rowIds)
+    const meta = await p.saveBaseline(sheetId, 2, 'Agreed', rows)
+    expect(meta).toEqual({ id: expect.any(String), slot: 2, name: 'Agreed', createdAt: expect.any(String) })
+    expect((await p.loadSheet(sheetId)).baselines).toEqual([meta])
+    expect(byRowId(await p.loadBaselineRows(meta.id))).toEqual(byRowId(rows))
+  })
+
+  it('saving into a used slot replaces that baseline and its rows', async () => {
+    const { client, sheetId, rowIds } = seeded(4, 0)
+    const p = supabasePersistence(client)
+    const first = await p.saveBaseline(sheetId, 1, 'v1', snap(rowIds))
+    const second = await p.saveBaseline(sheetId, 1, 'v2', snap(rowIds.slice(0, 2)))
+    expect(second.id).not.toBe(first.id)
+    expect((await p.loadSheet(sheetId)).baselines).toEqual([second])
+    expect(await p.loadBaselineRows(first.id)).toEqual([])
+    expect(await p.loadBaselineRows(second.id)).toHaveLength(2)
+  })
+
+  it('pages baseline rows past the 1000-row cap', async () => {
+    const { client: raw, sheetId, rowIds } = seeded(2500, 0)
+    const { client, calls } = instrument(raw)
+    const p = supabasePersistence(client)
+    const meta = await p.saveBaseline(sheetId, 5, 'Big', snap(rowIds))
+    calls.length = 0
+    const back = await p.loadBaselineRows(meta.id)
+    expect(back).toHaveLength(2500)
+    expect(new Set(back.map((r) => r.rowId)).size).toBe(2500)
+    expect(calls.filter((c) => c.table === 'baseline_rows' && c.method === 'range').map((c) => c.args)).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [2000, 2999],
+    ])
+  })
+
+  it('deleteBaseline removes the baseline and its rows, and is idempotent', async () => {
+    const { client, sheetId, rowIds } = seeded(3, 0)
+    const p = supabasePersistence(client)
+    const a = await p.saveBaseline(sheetId, 1, 'A', snap(rowIds))
+    const b = await p.saveBaseline(sheetId, 2, 'B', snap(rowIds))
+    await p.deleteBaseline(a.id)
+    await p.deleteBaseline(a.id)
+    expect((await p.loadSheet(sheetId)).baselines).toEqual([b])
+    expect(await p.loadBaselineRows(a.id)).toEqual([])
+    expect(await p.loadBaselineRows(b.id)).toHaveLength(3)
+  })
+
+  it('throws the backend error message when the database refuses', async () => {
+    const { client, sheetId, rowIds } = seeded(2, 0)
+    const p = supabasePersistence(client)
+    await expect(p.saveBaseline(sheetId, 6, 'x', snap(rowIds))).rejects.toThrow(/slot_check/)
+    await expect(p.saveBaseline(sheetId, 1, ' ', snap(rowIds))).rejects.toThrow(/name_check/)
+    await expect(p.saveBaseline(crypto.randomUUID(), 1, 'x', snap(rowIds))).rejects.toThrow(/row-level security/)
+    expect((await p.loadSheet(sheetId)).baselines).toEqual([])
   })
 })

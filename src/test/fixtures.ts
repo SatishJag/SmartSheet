@@ -1,5 +1,6 @@
 import { vi } from 'vitest'
 import type { StoreApi } from 'zustand/vanilla'
+import type { BaselineMeta, BaselineRow } from '../engine/baseline'
 import { defaultCalendar } from '../engine/calendar'
 import type { SchedDep } from '../engine/schedule'
 import type { Column } from '../model/validate'
@@ -80,6 +81,8 @@ export function makeSheetData(overrides: Partial<SheetData> = {}): SheetData {
   }
 }
 
+let baselineCounter = 0
+
 /** A fake Persistence whose calls all succeed; `loadSheet` returns a copy of `data`. */
 export function makeFakePersistence(data: SheetData = makeSheetData()) {
   return {
@@ -95,6 +98,16 @@ export function makeFakePersistence(data: SheetData = makeSheetData()) {
     saveColumnOrder: vi.fn(async (_sheetId: string, _colIds: string[]) => {}),
     deleteColumn: vi.fn(async (_sheetId: string, _colId: string) => {}),
     saveColumnCells: vi.fn(async (_sheetId: string, _colId: string, _values: Record<string, unknown>) => {}),
+    loadBaselineRows: vi.fn(async (_baselineId: string): Promise<BaselineRow[]> => []),
+    saveBaseline: vi.fn(
+      async (_sheetId: string, slot: number, name: string, _rows: BaselineRow[]): Promise<BaselineMeta> => ({
+        id: `baseline-${slot}-${++baselineCounter}`,
+        slot,
+        name,
+        createdAt: '2026-11-15T10:00:00.000Z',
+      }),
+    ),
+    deleteBaseline: vi.fn(async (_baselineId: string) => {}),
   } satisfies Persistence
 }
 
