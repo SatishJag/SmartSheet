@@ -3,12 +3,13 @@
  * injected so tests can run it on an ephemeral port with fakes.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import type { DraftResponse, HistorySource } from '../src/planner/types'
+import type { BatchDraftResponse, DraftResponse, HistorySource } from '../src/planner/types'
 import { DEFAULT_MODEL, type AnthropicLike } from './ai'
+import { DEFAULT_BATCH_CONCURRENCY, draftBatch as draftBatchItems } from './batch'
 import { createDraftLimiter, type DraftLimits } from './limits'
 import { consoleLogger, type Logger } from './log'
 import { createDraft, PlannerError } from './planner'
-import { parsePlanRequest } from './request'
+import { parseBatchRequest, parsePlanRequest } from './request'
 import { serveStatic } from './static'
 
 /** A verified caller: who they are (for limits) and the history as they may read it. */
@@ -40,6 +41,8 @@ export interface AppDeps {
   aiDeadlineMs?: number
   /** Default 16 KiB. */
   maxBodyBytes?: number
+  /** Items of one batch drafted at the same time. Default 2. */
+  batchConcurrency?: number
   log?: Logger
 }
 
@@ -135,25 +138,84 @@ export function createApp(deps: AppDeps): Server {
     }
   }
 
-  async function draft(req: IncomingMessage, res: ServerResponse) {
-    const { userId, history: source } = await authorize(req)
+  /** The request's JSON body, or throws an HttpError (415/413/400). */
+  async function readJson(req: IncomingMessage): Promise<unknown> {
     const type = (req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
     if (type !== 'application/json') throw new HttpError(415, 'Send the request as application/json.')
-    let body: unknown
     try {
-      body = JSON.parse(await readBody(req, maxBody))
+      return JSON.parse(await readBody(req, maxBody))
     } catch (err) {
       if (err instanceof HttpError) throw err
       throw new HttpError(400, 'The request body is not valid JSON.')
     }
+  }
+
+  /** One slot in flight per user for the whole request; every item counts against the hourly quotas. */
+  function acquireSlot(userId: string, cost: number, event: string) {
+    const slot = limiter.acquire(userId, cost)
+    if (!slot.ok) {
+      log(event, { status: slot.status, cost })
+      throw new HttpError(slot.status, slot.message, { 'Retry-After': String(slot.retryAfterSeconds) })
+    }
+    return slot
+  }
+
+  async function draftBatch(req: IncomingMessage, res: ServerResponse) {
+    const { userId, history: source } = await authorize(req)
+    const parsed = parseBatchRequest(await readJson(req))
+    if (!parsed.ok) throw new HttpError(400, parsed.error)
+    const batch = parsed.value
+
+    // A request-level mistake refuses the whole batch before anything is spent.
+    let known: boolean
+    try {
+      known = (await source.options()).scheduleTypes.some((t) => t.id === batch.scheduleType)
+    } catch (err) {
+      log('planner.batch.error', { error: (err as Error).message })
+      throw new HttpError(502, 'Could not read the planner history.')
+    }
+    if (!known) throw new HttpError(400, `Unknown schedule type: ${batch.scheduleType}.`)
+
+    const slot = acquireSlot(userId, batch.items.length, 'planner.batch.limited')
+    const disconnected = new AbortController()
+    const onClose = () => {
+      if (!res.writableFinished) disconnected.abort()
+    }
+    res.on('close', onClose)
+    try {
+      const { results, started } = await draftBatchItems(
+        source,
+        batch,
+        { ...plannerConfig, signal: disconnected.signal },
+        deps.batchConcurrency ?? DEFAULT_BATCH_CONCURRENCY,
+      )
+      // Items never started (the client left) cost nothing.
+      slot.refund(batch.items.length - started)
+      if (disconnected.signal.aborted) {
+        log('planner.batch.abandoned', { scheduleType: batch.scheduleType, items: batch.items.length, started })
+        return
+      }
+      const done = results.map((r) => r ?? { ok: false as const, error: 'This item was not drafted.' })
+      log('planner.batch', {
+        scheduleType: batch.scheduleType,
+        items: batch.items.length,
+        failed: done.filter((r) => !r.ok).length,
+      })
+      const body: BatchDraftResponse = { ok: true, results: done }
+      json(res, 200, body)
+    } finally {
+      res.off('close', onClose)
+      slot.release()
+    }
+  }
+
+  async function draft(req: IncomingMessage, res: ServerResponse) {
+    const { userId, history: source } = await authorize(req)
+    const body = await readJson(req)
     const parsed = parsePlanRequest(body)
     if (!parsed.ok) throw new HttpError(400, parsed.error)
 
-    const slot = limiter.acquire(userId)
-    if (!slot.ok) {
-      log('planner.draft.limited', { status: slot.status })
-      throw new HttpError(slot.status, slot.message, { 'Retry-After': String(slot.retryAfterSeconds) })
-    }
+    const slot = acquireSlot(userId, 1, 'planner.draft.limited')
     // Stop paying for a draft nobody is waiting for: abort the AI call when the client goes away.
     const disconnected = new AbortController()
     const onClose = () => {
@@ -185,6 +247,7 @@ export function createApp(deps: AppDeps): Server {
     '/api/health': { method: 'GET', handle: (_req, res) => json(res, 200, { ok: true }) },
     '/api/planner/options': { method: 'GET', handle: options },
     '/api/planner/draft': { method: 'POST', handle: draft },
+    '/api/planner/draft-batch': { method: 'POST', handle: draftBatch },
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse) {

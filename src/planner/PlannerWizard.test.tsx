@@ -4,15 +4,18 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { addUser, createFakeSupabase, emptyState, FAKE_STORAGE_KEY, type StorageLike } from '../../e2e/support/fakeSupabase'
 import { SheetList } from '../auth/SheetList'
+import { defaultCalendar } from '../engine/calendar'
 import { catalogDraft } from '../test/plannerFixtures'
+import { planBackward } from './backward'
 import { PlannerWizard } from './PlannerWizard'
-import type { PlanDraft, PlannerOptions, PlanRequest } from './types'
+import type { BatchPlanRequest, PlanDraft, PlannerOptions, PlanRequest } from './types'
 
 const TODAY = '2026-11-16' // a Monday
 
 const OPTIONS: PlannerOptions = {
   scheduleTypes: [{ id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE' }],
   equipmentTypes: { 'lle-procurement': ['Power transformer', 'Switchgear'] },
+  projectCounts: { 'lle-procurement': { 'Power transformer': 8, Switchgear: 5 } },
 }
 
 function fakeClient() {
@@ -29,11 +32,25 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 interface Server {
   options?: () => Response | Promise<Response>
   draft?: (request: PlanRequest) => Response | Promise<Response>
+  batch?: (request: BatchPlanRequest) => Response | Promise<Response>
 }
 
-/** Routes fetch('/api/planner/...') to the handlers; records every draft request body. */
+/** The batch reply a server gives: each item drafted from the catalog, echoing its request. */
+function batchReply(request: BatchPlanRequest, failing: number[] = []): Response {
+  return json(200, {
+    ok: true,
+    results: request.items.map((item, i) =>
+      failing.includes(i)
+        ? { ok: false, error: `Could not draft ${item.equipmentName}` }
+        : { ok: true, draft: draftFor({ ...item, scheduleType: request.scheduleType, ...(request.notes ? { notes: request.notes } : {}) }) },
+    ),
+  })
+}
+
+/** Routes fetch('/api/planner/...') to the handlers; records every draft and batch request body. */
 function mockServer(server: Server = {}) {
   const drafts: PlanRequest[] = []
+  const batches: BatchPlanRequest[] = []
   const headers: Record<string, string>[] = []
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     headers.push(init.headers as Record<string, string>)
@@ -43,10 +60,15 @@ function mockServer(server: Server = {}) {
       drafts.push(request)
       return (server.draft ?? ((r) => json(200, { ok: true, draft: draftFor(r) })))(request)
     }
+    if (url === '/api/planner/draft-batch') {
+      const request = JSON.parse(init.body as string) as BatchPlanRequest
+      batches.push(request)
+      return (server.batch ?? ((r) => batchReply(r)))(request)
+    }
     return json(404, { error: 'not found' })
   })
   vi.stubGlobal('fetch', fetch)
-  return { fetch, drafts, headers }
+  return { fetch, drafts, batches, headers }
 }
 
 /** The catalog draft echoing the request (as the server does). */
@@ -324,5 +346,376 @@ describe('SheetList: Plan with AI', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(button).toHaveFocus()
+  })
+})
+
+// ---- Several equipment items ----
+
+type User = ReturnType<typeof userEvent.setup>
+const itemGroup = (n: number) => screen.getByRole('group', { name: `Item ${n}` })
+const card = (name: string) => screen.findByRole('checkbox', { name: new RegExp(`^${name}`) })
+
+/** Ticks the two equipment cards: Item 1 is a Power transformer, Item 2 Switchgear. */
+async function tickTwo(user: User) {
+  await user.click(await card('Power transformer'))
+  await user.click(await card('Switchgear'))
+}
+
+async function fillItem(user: User, n: number, name: string, date?: string) {
+  const group = within(itemGroup(n))
+  await user.type(group.getByLabelText('Equipment name'), name)
+  if (date) await user.type(group.getByLabelText('Required on site'), date)
+}
+
+/** Two items: a transformer due 2028-03-31 (on time) and switchgear due 2027-03-31 (already late). */
+async function requestTwo(user: User, opts: { notes?: string } = {}) {
+  await tickTwo(user)
+  await fillItem(user, 1, '400 MVA transformer, Substation B', '2028-03-31')
+  await fillItem(user, 2, '132 kV GIS', '2027-03-31')
+  if (opts.notes) await user.type(screen.getByLabelText('Notes for all items (optional)'), opts.notes)
+  await user.click(screen.getByRole('button', { name: 'Generate' }))
+}
+
+const panel = (title: RegExp) => {
+  const header = screen.getByRole('button', { name: title })
+  return within(screen.getByRole('region', { name: header.textContent ?? '' }))
+}
+
+describe('PlannerWizard: several items, request step', () => {
+  it('ticking equipment types adds an item each (replacing the untouched placeholder); unticking removes it', async () => {
+    mockServer()
+    const { user } = setup()
+    const transformer = await screen.findByRole('checkbox', { name: 'Power transformer · 8 projects' })
+    expect(await card('Switchgear')).toHaveAccessibleName('Switchgear · 5 projects')
+    expect(screen.queryByRole('group', { name: 'Item 1' })).not.toBeInTheDocument() // one item: the plain form
+
+    await user.click(transformer)
+    expect(transformer).toBeChecked()
+    expect(screen.getByLabelText('Equipment type')).toHaveValue('Power transformer')
+
+    await user.click(await card('Switchgear'))
+    expect(within(itemGroup(1)).getByLabelText('Equipment type')).toHaveValue('Power transformer')
+    expect(within(itemGroup(2)).getByLabelText('Equipment type')).toHaveValue('Switchgear')
+
+    await user.click(transformer)
+    expect(transformer).not.toBeChecked()
+    expect(screen.queryByRole('group', { name: 'Item 1' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Equipment type')).toHaveValue('Switchgear')
+  })
+
+  it('"Add another item" adds a custom item and focuses its name; Remove drops one', async () => {
+    mockServer()
+    const { user } = setup()
+    await screen.findByLabelText('Schedule type')
+    await user.click(screen.getByRole('button', { name: 'Add another item' }))
+    expect(within(itemGroup(2)).getByLabelText('Equipment name')).toHaveFocus()
+    await user.selectOptions(within(itemGroup(2)).getByLabelText('Equipment type'), 'Other (type it)')
+    await user.type(within(itemGroup(2)).getByLabelText('Other equipment type'), 'Chiller')
+    await user.click(screen.getByRole('button', { name: 'Remove item 1' }))
+    expect(screen.queryByRole('group', { name: 'Item 1' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Other equipment type')).toHaveValue('Chiller')
+    expect(screen.queryByRole('button', { name: /Remove item/ })).not.toBeInTheDocument() // the last item cannot be removed
+  })
+
+  it('allows at most 6 items', async () => {
+    mockServer()
+    const { user } = setup()
+    await screen.findByLabelText('Schedule type')
+    await user.type(screen.getByLabelText('Equipment name'), 'T1')
+    for (let i = 2; i <= 6; i++) {
+      await user.click(screen.getByRole('button', { name: 'Add another item' }))
+      await user.type(within(itemGroup(i)).getByLabelText('Equipment name'), `T${i}`)
+    }
+    expect(screen.getAllByRole('group', { name: /^Item \d$/ })).toHaveLength(6)
+    expect(screen.getByRole('button', { name: 'Add another item' })).toBeDisabled()
+    expect(screen.getByText(/up to 6 items at once/)).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: /^Switchgear/ })).toBeDisabled()
+  })
+
+  it('validates every item with inline errors and says which item to fix', async () => {
+    const { drafts, batches } = mockServer()
+    const { user } = setup()
+    await tickTwo(user)
+    await fillItem(user, 1, 'T1', '2028-03-31')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Item 2: Enter the equipment name')
+    expect(within(itemGroup(2)).getByText('Enter the equipment name')).toBeInTheDocument()
+    expect(within(itemGroup(2)).getByText('Enter a date, or fill in the shared date')).toBeInTheDocument()
+    expect(within(itemGroup(2)).getByLabelText('Equipment name')).toBeInvalid()
+    expect(within(itemGroup(1)).queryByText(/Enter/)).not.toBeInTheDocument()
+    // Fixing the problems clears the errors as the user goes.
+    await fillItem(user, 2, 'S1')
+    expect(screen.getByRole('alert')).toHaveTextContent('Item 2: Enter a date, or fill in the shared date')
+    await user.type(screen.getByLabelText('Required on site (all items)'), '2028-05-31')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(drafts).toEqual([])
+    expect(batches).toEqual([])
+  })
+
+  it('"Use the same date for all": one shared date, an item can override it, or turn it off', async () => {
+    const { batches } = mockServer()
+    const { user } = setup()
+    await tickTwo(user)
+    await fillItem(user, 1, 'T1')
+    await fillItem(user, 2, 'S1', '2028-09-30') // its own date
+    await user.type(screen.getByLabelText('Required on site (all items)'), '2028-03-31')
+    expect(within(itemGroup(1)).getByText('Uses the shared date, 2028-03-31.')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Notes for all items (optional)'), 'Vendor in Korea')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText(/2 items · earliest required start/)
+    expect(batches).toEqual([
+      {
+        scheduleType: 'lle-procurement',
+        notes: 'Vendor in Korea',
+        items: [
+          { equipmentType: 'Power transformer', equipmentName: 'T1', requiredDate: '2028-03-31' },
+          { equipmentType: 'Switchgear', equipmentName: 'S1', requiredDate: '2028-09-30' },
+        ],
+      },
+    ])
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Use the same date for all' }))
+    expect(screen.queryByLabelText('Required on site (all items)')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Item 1: Enter the date the equipment must be on site')
+  })
+
+  it('the date entered for one item becomes the shared date when a second item appears, and comes back when one is left', async () => {
+    mockServer()
+    const { user } = setup()
+    await fillRequest(user, { date: '2028-03-31' })
+    await user.click(screen.getByRole('button', { name: 'Add another item' }))
+    expect(screen.getByLabelText('Required on site (all items)')).toHaveValue('2028-03-31')
+    expect(within(itemGroup(1)).getByLabelText('Required on site')).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: 'Remove item 2' }))
+    expect(screen.getByLabelText('Required on site')).toHaveValue('2028-03-31')
+  })
+
+  it('one item still uses /draft, not the batch endpoint', async () => {
+    const { drafts, batches } = mockServer()
+    const { user } = setup()
+    await fillRequest(user)
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table', { name: /Activities \(14\)/ })
+    expect(drafts).toHaveLength(1)
+    expect(batches).toHaveLength(0)
+    expect(screen.queryByRole('button', { name: /Regenerate all/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('PlannerWizard: several items, preview and create', () => {
+  const expected = (date: string) => planBackward(catalogDraft(date), defaultCalendar, TODAY)
+
+  it('sends ONE batch request, then shows an overall summary and a section per item', async () => {
+    const { batches, drafts } = mockServer()
+    const { user } = setup()
+    await requestTwo(user, { notes: 'Be conservative' })
+    expect(await screen.findByText(/2 items · earliest required start/)).toBeInTheDocument()
+    expect(batches).toHaveLength(1)
+    expect(drafts).toHaveLength(0)
+    expect(batches[0].items.map((i) => i.requiredDate)).toEqual(['2028-03-31', '2027-03-31'])
+
+    const late = expected('2027-03-31')
+    expect(screen.getByText(`2 items · earliest required start ${late.mustStartBy} · 1 item already late`)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Draft plan: 2 items' })).toHaveFocus()
+
+    // Item 1 is open; item 2 is collapsed until opened.
+    const first = screen.getByRole('button', { name: /Power transformer — 400 MVA transformer, Substation B/ })
+    const second = screen.getByRole('button', { name: /Switchgear — 132 kV GIS/ })
+    expect(first).toHaveAttribute('aria-expanded', 'true')
+    expect(second).toHaveAttribute('aria-expanded', 'false')
+    expect(first).toHaveTextContent(/On time · start by \d{4}-\d{2}-\d{2}/)
+    expect(first).toHaveTextContent('AI draft')
+    expect(second).toHaveTextContent(`Late by ${late.feasibility.lateByWorkingDays} working days`)
+    expect(screen.getAllByRole('table')).toHaveLength(1)
+
+    await user.click(second)
+    expect(second).toHaveAttribute('aria-expanded', 'true')
+    const tables = screen.getAllByRole('table', { name: /Activities \(14\)/ })
+    expect(tables).toHaveLength(2)
+    // Each item has its own banner and dates.
+    const lateBanner = panel(/Switchgear/).getByRole('alert')
+    expect(lateBanner).toHaveTextContent(`This plan should have started ${late.feasibility.lateByWorkingDays} working days ago`)
+    expect(within(tables[1]).getByRole('row', { name: /On site/ })).toHaveTextContent('2027-03-31')
+    expect(within(tables[0]).getByRole('row', { name: /On site/ })).toHaveTextContent('2028-03-31')
+    expect(panel(/Power transformer/).getByRole('status')).toHaveTextContent(/Work must start by/)
+    await user.click(first)
+    expect(first).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getAllByRole('table')).toHaveLength(1)
+  })
+
+  it('creates ONE sheet with a summary row per item and the activities under it', async () => {
+    mockServer()
+    const { client, user, onCreated } = setup()
+    await requestTwo(user)
+    await screen.findByText(/2 items · earliest required start/)
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    expect((await client.from('sheets').select('id,name')).data).toEqual([{ id: onCreated.mock.calls[0][0], name: 'LLE plan – 2 items' }])
+    const rows = (await client.from('rows').select('id,parent_id')).data as { id: string; parent_id: string | null }[]
+    expect(rows).toHaveLength(2 + 14 + 14)
+    const parents = rows.filter((r) => r.parent_id === null)
+    expect(parents).toHaveLength(2)
+    for (const p of parents) expect(rows.filter((r) => r.parent_id === p.id)).toHaveLength(14)
+    expect((await client.from('dependencies').select('id')).data).toHaveLength(28)
+  })
+
+  it('flags SAMPLE data once at the top when any item uses it', async () => {
+    mockServer({
+      batch: (r) =>
+        json(200, {
+          ok: true,
+          results: r.items.map((item, i) => ({
+            ok: true,
+            draft: draftFor({ ...item, scheduleType: r.scheduleType }, i === 1 ? { history: { ...catalogDraft().history, sampleOnly: true } } : {}),
+          })),
+        }),
+    })
+    const { user } = setup()
+    await requestTwo(user)
+    await screen.findByText(/2 items · earliest required start/)
+    expect(screen.getAllByText(/Based on SAMPLE data, not your company's history/)).toHaveLength(1)
+    expect(screen.getByText(/1 item uses it/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Switchgear/ })).toHaveTextContent('Sample data')
+  })
+
+  it('an item that failed shows its error with Retry for just that item, and Create waits for it', async () => {
+    const { batches, drafts } = mockServer({ batch: (r) => batchReply(r, [1]) })
+    const { user, onCreated } = setup()
+    await requestTwo(user, { notes: 'Shared' })
+    await screen.findByText(/1 item failed/)
+    expect(screen.getByText(/2 items · earliest required start \d{4}-\d{2}-\d{2} · no item late · 1 item failed/)).toBeInTheDocument()
+    const failedHeader = screen.getByRole('button', { name: /Switchgear/ })
+    expect(failedHeader).toHaveAttribute('aria-expanded', 'true') // failures open themselves
+    expect(failedHeader).toHaveTextContent('Failed')
+    const failed = panel(/Switchgear/)
+    expect(failed.getByRole('alert')).toHaveTextContent('Could not draft 132 kV GIS')
+    expect(screen.getByRole('button', { name: 'Create schedule' })).toBeDisabled()
+    expect(screen.getByText(/Retry or remove the items that failed/)).toBeInTheDocument()
+
+    await user.click(failed.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create schedule' })).toBeEnabled())
+    // Only that item was drafted again, through /draft, with the shared notes.
+    expect(batches).toHaveLength(1)
+    expect(drafts).toEqual([
+      { scheduleType: 'lle-procurement', equipmentType: 'Switchgear', equipmentName: '132 kV GIS', requiredDate: '2027-03-31', notes: 'Shared' },
+    ])
+    expect(screen.getByText(/2 items · earliest required start \d{4}-\d{2}-\d{2} · 1 item already late$/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+  })
+
+  it('a failed item can be removed from the plan; one item left is the single view', async () => {
+    mockServer({ batch: (r) => batchReply(r, [0]) })
+    const { user, client, onCreated } = setup()
+    await requestTwo(user)
+    await screen.findByText(/1 item failed/)
+    await user.click(panel(/Power transformer/).getByRole('button', { name: 'Remove from plan' }))
+    expect(screen.getByRole('heading', { name: 'Draft plan: 132 kV GIS' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Regenerate all/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    // One item: the flat sheet, named after it, no summary row.
+    expect((await client.from('sheets').select('name')).data).toEqual([{ name: 'LLE – 132 kV GIS' }])
+    expect((await client.from('rows').select('id')).data).toHaveLength(14)
+  })
+
+  it('"Regenerate this item" drafts only that item with its own instruction; "Regenerate all" sends the batch again', async () => {
+    const { batches, drafts } = mockServer()
+    const { user } = setup()
+    await requestTwo(user, { notes: 'Shared' })
+    await screen.findByText(/2 items · earliest required start/)
+
+    const one = panel(/Power transformer/)
+    await user.type(one.getByLabelText('Instructions for a new draft of this item (optional)'), 'Use p80 for fabrication')
+    await user.click(one.getByRole('button', { name: 'Regenerate this item' }))
+    await waitFor(() => expect(drafts).toHaveLength(1))
+    expect(drafts[0]).toMatchObject({ equipmentName: '400 MVA transformer, Substation B', notes: 'Shared\nUse p80 for fabrication' })
+    expect(batches).toHaveLength(1)
+    await waitFor(() => expect(one.getByLabelText('Instructions for a new draft of this item (optional)')).toHaveValue(''))
+
+    await user.type(screen.getByLabelText('Instructions for a new draft of all items (optional)'), 'Domestic vendors')
+    await user.click(screen.getByRole('button', { name: 'Regenerate all' }))
+    await waitFor(() => expect(batches).toHaveLength(2))
+    expect(batches[1]).toEqual({
+      scheduleType: 'lle-procurement',
+      notes: 'Shared\nDomestic vendors',
+      items: [
+        { equipmentType: 'Power transformer', equipmentName: '400 MVA transformer, Substation B', requiredDate: '2028-03-31', notes: 'Use p80 for fabrication' },
+        { equipmentType: 'Switchgear', equipmentName: '132 kV GIS', requiredDate: '2027-03-31' },
+      ],
+    })
+    await screen.findByText(/2 items · earliest required start/)
+  })
+
+  it('a failed regeneration keeps the good draft and says so', async () => {
+    let calls = 0
+    mockServer({ draft: (r) => (++calls === 1 ? json(502, { ok: false, error: 'overloaded' }) : json(200, { ok: true, draft: draftFor(r) })) })
+    const { user } = setup()
+    await requestTwo(user)
+    await screen.findByText(/2 items · earliest required start/)
+    const one = panel(/Power transformer/)
+    await user.click(one.getByRole('button', { name: 'Regenerate this item' }))
+    expect(await one.findByText('The planning server failed: overloaded')).toBeInTheDocument()
+    expect(one.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create schedule' })).toBeEnabled()
+  })
+
+  it('a refused batch (e.g. over the hourly quota) returns to the form with the message and Retry; nothing is lost', async () => {
+    let calls = 0
+    const { batches } = mockServer({
+      batch: (r) => (++calls === 1 ? json(429, { ok: false, error: 'This request needs 2 drafts and you have 1 left of your 10 per hour.' }) : batchReply(r)),
+    })
+    const { user } = setup()
+    await requestTwo(user)
+    expect(await screen.findByRole('alert')).toHaveTextContent('needs 2 drafts and you have 1 left')
+    expect(within(itemGroup(2)).getByLabelText('Equipment name')).toHaveValue('132 kV GIS')
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await screen.findByText(/2 items · earliest required start/)
+    expect(batches).toHaveLength(2)
+    expect(batches[1]).toEqual(batches[0])
+  })
+
+  it('when every item fails the form shows the first error', async () => {
+    mockServer({ batch: (r) => batchReply(r, [0, 1]) })
+    const { user } = setup()
+    await requestTwo(user)
+    expect(await screen.findByRole('alert')).toHaveTextContent('None of the 2 items could be drafted: Could not draft 400 MVA transformer, Substation B')
+  })
+
+  it('a draft the engine cannot schedule fails only its item', async () => {
+    mockServer({
+      batch: (r) =>
+        json(200, {
+          ok: true,
+          results: r.items.map((item, i) => ({ ok: true, draft: draftFor({ ...item, scheduleType: r.scheduleType }, i === 1 ? { targetCode: 'NOPE' } : {}) })),
+        }),
+    })
+    const { user } = setup()
+    await requestTwo(user)
+    await screen.findByText(/1 item failed/)
+    expect(panel(/Switchgear/).getByRole('alert')).toHaveTextContent('The draft could not be scheduled')
+  })
+
+  it('a save failure keeps the preview and Retry creates the whole sheet; nothing is left behind', async () => {
+    mockServer()
+    const { client, user, onCreated } = setup()
+    await requestTwo(user)
+    await screen.findByText(/2 items · earliest required start/)
+    const realFrom = client.from.bind(client)
+    let failNext = true
+    vi.spyOn(client, 'from').mockImplementation((table: string) => {
+      if (table === 'dependencies' && failNext) {
+        failNext = false
+        return { insert: async () => ({ data: null, error: { message: 'disk full' } }) } as never
+      }
+      return realFrom(table)
+    })
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    expect(await screen.findByText('Could not create the schedule: disk full')).toBeInTheDocument()
+    expect((await realFrom('sheets').select('id')).data).toEqual([])
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    expect((await realFrom('sheets').select('id')).data).toHaveLength(1)
   })
 })

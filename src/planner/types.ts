@@ -103,11 +103,51 @@ export interface PlanDraft {
 /** POST /api/planner/draft body and responses. Auth: `Authorization: Bearer <Supabase access token>`. */
 export type DraftResponse = { ok: true; draft: PlanDraft } | { ok: false; error: string }
 
+// ---- Several equipment items in one plan (POST /api/planner/draft-batch) ----
+
+/** The most items one batch request may carry. */
+export const MAX_BATCH_ITEMS = 6
+
+/** One piece of equipment in a batch: what a PlanRequest adds to the shared schedule type and notes. */
+export interface BatchPlanItem {
+  /** e.g. 'Power transformer'; matches history_projects.equipment_type. */
+  equipmentType: string
+  /** Free text: '400 MVA transformer, Substation B'. */
+  equipmentName: string
+  /** ISO date YYYY-MM-DD this item must be on site. */
+  requiredDate: string
+  /** Optional instructions for this item only; appended to the shared notes. */
+  notes?: string
+}
+
+/** POST /api/planner/draft-batch body. Auth as for /draft. 1 to MAX_BATCH_ITEMS items. */
+export interface BatchPlanRequest {
+  scheduleType: string
+  /** Shared by every item. */
+  notes?: string
+  items: BatchPlanItem[]
+}
+
+/** One item's outcome: a draft, or why that item could not be drafted (the others are unaffected). */
+export type BatchItemResult = { ok: true; draft: PlanDraft } | { ok: false; error: string }
+
+/**
+ * The response: `results[i]` belongs to `items[i]`. A request-level problem (bad body, rate limit,
+ * unknown schedule type) is `{ ok: false, error }` with a 4xx/5xx status and nothing is drafted.
+ */
+export type BatchDraftResponse = { ok: true; results: BatchItemResult[] } | { ok: false; error: string }
+
 /** GET /api/planner/options: what the wizard offers. */
 export interface PlannerOptions {
   scheduleTypes: ScheduleType[]
   /** Equipment types with history, per schedule type id. */
   equipmentTypes: Record<string, string[]>
+  /**
+   * Optional: historical projects per equipment type, per schedule type id. The wizard shows the
+   * count on its equipment cards ("Power transformer · 8 projects") when it is given. The Supabase
+   * source does not fill it yet (the planner_equipment_types view has no count).
+   */
+  projectCounts?: Record<string, Record<string, number>>
 }
 
 /**
