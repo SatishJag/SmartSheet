@@ -7,7 +7,7 @@ import { schedule } from '../engine/schedule'
 import { toSchedInput } from '../store/scheduleInput'
 import { planBackward } from './backward'
 import { buildHistoryDraft } from './historyDraft'
-import { buildSheetFromDraft } from './sheetFromDraft'
+import { buildSheetFromDraft, buildSheetFromDrafts } from './sheetFromDraft'
 import type { CatalogActivity, HistorySummary, PlanRequest } from './types'
 import { validateDraft } from './validateDraft'
 
@@ -99,6 +99,34 @@ describe('planner chain on the LLE sample history', () => {
       const ends = Object.values(result.byRow).map((s) => s.end).sort()
       expect(ends[ends.length - 1], equipmentType).toBe('2027-09-15')
     }
+  })
+
+  it('every equipment type in ONE combined sheet: each item lands on its own date, activity codes repeat across items', async () => {
+    const cat = await catalog()
+    const types = await equipmentTypes()
+    const dates = ['2027-09-15', '2027-11-30', '2028-02-29', '2028-05-12', '2028-08-02', '2028-10-17']
+    const items = []
+    for (const [i, equipmentType] of types.slice(0, 6).entries()) {
+      const history = await summary(equipmentType)
+      const request: PlanRequest = { scheduleType: LLE, equipmentType, equipmentName: `${equipmentType} for block ${i + 1}`, requiredDate: dates[i] }
+      const draft = buildHistoryDraft({ request, catalog: cat, history, assumptions: [] })
+      items.push({ draft, plan: planBackward(draft, defaultCalendar, '2026-11-16') })
+    }
+    expect(items.length).toBeGreaterThanOrEqual(5)
+    const sheet = buildSheetFromDrafts(items, USER, defaultCalendar)
+    expect(sheet.rows).toHaveLength(items.length + items.reduce((n, it) => n + it.draft.activities.length, 0))
+    const input = toSchedInput(sheet)!
+    const result = schedule(input.rows, input.deps, input.calendar)
+    expect(result.errors).toEqual([])
+    const parents = sheet.rows.filter((r) => r.parentId === null)
+    expect(parents).toHaveLength(items.length)
+    items.forEach(({ draft, plan }, i) => {
+      // The summary row ends on the latest activity of its item; the target activity ends on the required date.
+      expect(result.byRow[parents[i].id], draft.request.equipmentType).toMatchObject({ start: plan.mustStartBy, end: plan.projectEnd })
+      const kids = sheet.rows.filter((r) => r.parentId === parents[i].id)
+      const target = kids[draft.activities.findIndex((a) => a.code === draft.targetCode)]
+      expect(result.byRow[target.id].end, draft.request.equipmentType).toBe(dates[i])
+    })
   })
 
   it('a required date already too close is flagged late, with a realistic earliest finish', async () => {
