@@ -4,7 +4,9 @@ import type { Calendar } from '../engine/types'
 import { MAX_DATE, MIN_DATE } from '../model/validate'
 import { projectScheduleTemplate } from '../templates'
 import { todayIso } from './backward'
+import { Icon } from '../ui/Icon'
 import { PlanPreview } from './PlanPreview'
+import { equipmentGlyph, PIcon } from './PIcon'
 import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestDraft } from './plannerApi'
 import {
   appendNote,
@@ -31,7 +33,6 @@ import {
 } from './plannerItems'
 import { insertSheetFromDrafts } from './sheetFromDraft'
 import type { PlannerOptions } from './types'
-import '../views/confirmDialog.css'
 import './plannerWizard.css'
 
 export { BASIS_LABELS, sourceLabel } from './PlanPreview'
@@ -374,13 +375,16 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     applyItems(removeItem(items, key, defaultChoice))
   }
 
+
   const failureBlock = failure && (
-    <div className="planner-failure">
+    <div className="planner-bar is-danger">
       <p role="alert" id={ids.error}>
+        <PIcon name="alertCircle" size={18} />
         {failure.message}
       </p>
       {failure.retry && (
-        <button type="button" onClick={failure.retry}>
+        <button type="button" className="btn btn-sm" onClick={failure.retry}>
+          <PIcon name="refresh" size={15} />
           Retry
         </button>
       )}
@@ -388,146 +392,222 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   )
 
   const knownProjects = entries.length === 1 ? entries[0].draft?.history.projectCount : undefined
+  const stepNumber = step === 'preview' || step === 'creating' ? 2 : 1
+  const scheduleDescription = options?.scheduleTypes.find((t) => t.id === scheduleType)?.description
   return (
-    <div className="confirm-backdrop">
+    <div className="planner-backdrop">
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={ids.title}
         aria-busy={busy}
-        className="confirm-dialog planner-wizard"
+        className="planner-wizard"
         onKeyDown={onKeyDown}
       >
-        <div className="planner-titlebar">
-          <h2 id={ids.title}>Plan with AI</h2>
-          <button type="button" aria-label="Close" onClick={close} disabled={step === 'creating'}>
-            ×
+        <header className="planner-header">
+          <span className="planner-header-icon">
+            <Icon name="sparkles" size={22} />
+          </span>
+          <div className="planner-header-text">
+            <h2 id={ids.title}>Plan with AI</h2>
+            <p>An AI master planner drafts the first cut; you review and approve.</p>
+          </div>
+          <ol className="planner-steps" aria-label="Steps">
+            <li aria-current={stepNumber === 1 ? 'step' : undefined} className={stepNumber === 1 ? 'is-current' : 'is-done'}>
+              <span className="planner-step-num">{stepNumber === 2 ? <PIcon name="check" size={13} strokeWidth={3} /> : '1'}</span>
+              Request
+            </li>
+            <li aria-current={stepNumber === 2 ? 'step' : undefined} className={stepNumber === 2 ? 'is-current' : undefined}>
+              <span className="planner-step-num">2</span>
+              Review plan
+            </li>
+          </ol>
+          <button type="button" className="btn btn-icon planner-close" aria-label="Close" onClick={close} disabled={step === 'creating'}>
+            <PIcon name="close" size={20} />
           </button>
-        </div>
+        </header>
 
         {step === 'request' && (
-          <form onSubmit={submitRequest} noValidate className="planner-request">
-            <h3 ref={headingRef} tabIndex={-1}>
-              What do you need on site?
-            </h3>
-            {!options && !optionsError && <p role="status">Loading planner options…</p>}
-            {optionsError && (
-              <div className="planner-failure">
-                <p role="alert">{optionsError}</p>
-                <button type="button" onClick={() => void loadOptions()}>
-                  Retry
-                </button>
+          <form onSubmit={submitRequest} noValidate className="planner-step planner-request">
+            <div className="planner-body">
+              <div className="planner-intro">
+                <h3 ref={headingRef} tabIndex={-1}>
+                  What do you need on site?
+                </h3>
+                <p>Choose the equipment and the date it must arrive. The plan is built backward from that date.</p>
+              </div>
+              {!options && !optionsError && (
+                <div className="planner-card card" aria-hidden="true">
+                  <span className="planner-skeleton" style={{ width: '30%', height: 14 }} />
+                  <span className="planner-skeleton" style={{ width: '100%', height: 40, marginTop: 10 }} />
+                  <span className="planner-skeleton" style={{ width: '100%', height: 72, marginTop: 14 }} />
+                </div>
+              )}
+              {!options && !optionsError && (
+                <p role="status" className="planner-hint">
+                  Loading planner options…
+                </p>
+              )}
+              {optionsError && (
+                <div className="planner-bar is-danger planner-bar-inline">
+                  <p role="alert">
+                    <PIcon name="alertCircle" size={18} />
+                    {optionsError}
+                  </p>
+                  <button type="button" className="btn btn-sm" onClick={() => void loadOptions()}>
+                    <PIcon name="refresh" size={15} />
+                    Retry
+                  </button>
+                </div>
+              )}
+              {options && (
+                <>
+                  <section className="planner-card card" aria-label="Schedule and equipment">
+                    <div className="planner-field planner-schedule-type">
+                      <label htmlFor={ids.type} className="planner-label">
+                        Schedule type
+                      </label>
+                      <select id={ids.type} value={scheduleType} onChange={(e) => setScheduleType(e.target.value)}>
+                        {options.scheduleTypes.map((t) => (
+                          <option key={t.id} value={t.id} title={t.description}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                      {scheduleDescription && <small>{scheduleDescription}</small>}
+                    </div>
+
+                    {equipmentTypes.length > 0 && (
+                      <fieldset className="planner-types">
+                        <legend>Equipment with history</legend>
+                        <p className="planner-hint">Tick what you need on site; each tick adds an item to the plan (up to {MAX_ITEMS}).</p>
+                        <div className="planner-type-cards">
+                          {equipmentTypes.map((type) => {
+                            const checked = items.some((i) => i.fromCard === type)
+                            const count = projectCounts[type]
+                            const disabled = !checked && !roomForCard
+                            return (
+                              <label key={type} className={`planner-type-card${checked ? ' is-checked' : ''}${disabled ? ' is-disabled' : ''}`}>
+                                <input
+                                  type="checkbox"
+                                  className="planner-tile-input"
+                                  checked={checked}
+                                  disabled={disabled}
+                                  aria-label={count !== undefined ? `${type} · ${plural(count, 'project')}` : type}
+                                  onChange={(e) => toggleCard(type, e.target.checked)}
+                                />
+                                <span className="planner-tile-icon">
+                                  <PIcon name={equipmentGlyph(type)} size={20} />
+                                </span>
+                                <span className="planner-tile-text">
+                                  <span className="planner-type-name">{type}</span>
+                                  <span className="planner-type-count">{count !== undefined ? plural(count, 'project') : 'History available'}</span>
+                                </span>
+                                <span className="planner-tile-check">
+                                  <PIcon name="check" size={13} strokeWidth={3} />
+                                </span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </fieldset>
+                    )}
+                  </section>
+
+                  <section className="planner-card card" aria-label="Items to plan">
+                    <div className="planner-items-head">
+                      <h4>
+                        Items to plan <span className="planner-count">{items.length}</span>
+                      </h4>
+                      {many && (
+                        <div className="planner-shared-date">
+                          <label className="planner-switch">
+                            <input type="checkbox" checked={sameDate} onChange={(e) => setSameDate(e.target.checked)} />
+                            <span className="planner-switch-track" aria-hidden="true" />
+                            Use the same date for all
+                          </label>
+                          {sameDate && (
+                            <div className="planner-field planner-shared-field">
+                              <label htmlFor={ids.sharedDate} className="planner-label">
+                                Required on site (all items)
+                              </label>
+                              <input
+                                id={ids.sharedDate}
+                                type="date"
+                                min={MIN_DATE}
+                                max={MAX_DATE}
+                                value={sharedDate}
+                                onChange={(e) => setSharedDate(e.target.value)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {many && sameDate && <p className="planner-hint">An item can have its own date instead: fill in its Required on site below.</p>}
+
+                    <ol className="planner-items" aria-label="Equipment items">
+                      {items.map((item, index) => (
+                        <ItemFields
+                          key={item.key}
+                          item={item}
+                          index={index}
+                          idBase={`${ids.item}-${item.key}`}
+                          many={many}
+                          equipmentTypes={equipmentTypes}
+                          form={form}
+                          errors={submitted ? errors[item.key] : undefined}
+                          onChange={(patch) => updateItem(item.key, patch)}
+                          onRemove={() => dropItem(item.key)}
+                        />
+                      ))}
+                    </ol>
+                    <div className="planner-add">
+                      <button type="button" className="btn btn-ghost planner-add-button" ref={addButtonRef} onClick={addItem} disabled={!canAdd}>
+                        <PIcon name="plus" size={16} />
+                        Add another item
+                      </button>
+                      {!canAdd && <small className="planner-hint"> You can plan up to {MAX_ITEMS} items at once.</small>}
+                    </div>
+                  </section>
+
+                  <section className="planner-card card" aria-label="Notes">
+                    <div className="planner-field">
+                      <label htmlFor={ids.notes} className="planner-label">
+                        {many ? 'Notes for all items (optional)' : 'Notes (optional)'}
+                      </label>
+                      <textarea
+                        id={ids.notes}
+                        rows={3}
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Vendor, region, constraints, be conservative…"
+                      />
+                    </div>
+                  </section>
+                  <p className="planner-footnote">
+                    <PIcon name="info" size={15} />
+                    Durations come from your completed projects. Without history, the planner uses the schedule type's catalog or clearly marked sample data.
+                  </p>
+                </>
+              )}
+            </div>
+            {options && submitted && problem && (
+              <div className="planner-bar is-danger">
+                <p role="alert">
+                  <PIcon name="alertCircle" size={18} />
+                  {problem}
+                </p>
               </div>
             )}
-            {options && (
-              <>
-                <div className="planner-field">
-                  <label htmlFor={ids.type}>Schedule type</label>
-                  <select id={ids.type} value={scheduleType} onChange={(e) => setScheduleType(e.target.value)}>
-                    {options.scheduleTypes.map((t) => (
-                      <option key={t.id} value={t.id} title={t.description}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {equipmentTypes.length > 0 && (
-                  <fieldset className="planner-types">
-                    <legend>Equipment with history</legend>
-                    <p className="planner-hint">Tick what you need on site; each tick adds an item to the plan (up to {MAX_ITEMS}).</p>
-                    <div className="planner-type-cards">
-                      {equipmentTypes.map((type) => {
-                        const checked = items.some((i) => i.fromCard === type)
-                        const count = projectCounts[type]
-                        return (
-                          <label key={type} className={`planner-type-card${checked ? ' is-checked' : ''}`}>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              disabled={!checked && !roomForCard}
-                              onChange={(e) => toggleCard(type, e.target.checked)}
-                            />
-                            <span className="planner-type-name">{type}</span>
-                            {count !== undefined && (
-                              <>
-                                {' '}
-                                <small className="planner-type-count">· {plural(count, 'project')}</small>
-                              </>
-                            )}
-                          </label>
-                        )
-                      })}
-                    </div>
-                  </fieldset>
-                )}
-
-                {many && (
-                  <div className="planner-shared-date">
-                    <label className="planner-check">
-                      <input type="checkbox" checked={sameDate} onChange={(e) => setSameDate(e.target.checked)} />
-                      Use the same date for all
-                    </label>
-                    {sameDate && (
-                      <div className="planner-field">
-                        <label htmlFor={ids.sharedDate}>Required on site (all items)</label>
-                        <input
-                          id={ids.sharedDate}
-                          type="date"
-                          min={MIN_DATE}
-                          max={MAX_DATE}
-                          value={sharedDate}
-                          onChange={(e) => setSharedDate(e.target.value)}
-                        />
-                        <small>An item can have its own date instead: fill in its Required on site below.</small>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <ol className="planner-items" aria-label="Equipment items">
-                  {items.map((item, index) => (
-                    <ItemFields
-                      key={item.key}
-                      item={item}
-                      index={index}
-                      idBase={`${ids.item}-${item.key}`}
-                      many={many}
-                      equipmentTypes={equipmentTypes}
-                      form={form}
-                      errors={submitted ? errors[item.key] : undefined}
-                      onChange={(patch) => updateItem(item.key, patch)}
-                      onRemove={() => dropItem(item.key)}
-                    />
-                  ))}
-                </ol>
-                <div className="planner-add">
-                  <button type="button" ref={addButtonRef} onClick={addItem} disabled={!canAdd}>
-                    Add another item
-                  </button>
-                  {!canAdd && <small className="planner-hint"> You can plan up to {MAX_ITEMS} items at once.</small>}
-                </div>
-
-                <div className="planner-field">
-                  <label htmlFor={ids.notes}>{many ? 'Notes for all items (optional)' : 'Notes (optional)'}</label>
-                  <textarea
-                    id={ids.notes}
-                    rows={3}
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Vendor, region, constraints, be conservative…"
-                  />
-                </div>
-                {submitted && problem && <p role="alert">{problem}</p>}
-              </>
-            )}
             {failureBlock}
-            <div className="confirm-actions">
-              <button type="button" onClick={close}>
+            <div className="planner-footer">
+              <button type="button" className="btn" onClick={close}>
                 Cancel
               </button>
-              <button type="submit" disabled={!options}>
+              <button type="submit" className="btn btn-primary" disabled={!options}>
+                <Icon name="sparkles" size={16} />
                 Generate
               </button>
             </div>
@@ -535,19 +615,40 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
         )}
 
         {step === 'drafting' && (
-          <div className="planner-loading">
-            <h3 ref={headingRef} tabIndex={-1}>
-              {draftingCount > 1 ? 'Drafting your plans' : 'Drafting your plan'}
-            </h3>
-            <p role="status">
-              {draftingCount > 1
-                ? `Drafting ${draftingCount} items from historical projects; this can take a minute…`
-                : knownProjects
-                  ? `Drafting from ${plural(knownProjects, 'historical project')}…`
-                  : 'Drafting from historical projects…'}
-            </p>
-            <div className="confirm-actions">
-              <button type="button" onClick={close}>
+          <div className="planner-step planner-loading">
+            <div className="planner-body">
+              <div className="planner-card card planner-loading-card">
+                <span className="planner-loading-icon" aria-hidden="true">
+                  <Icon name="sparkles" size={26} />
+                </span>
+                <h3 ref={headingRef} tabIndex={-1}>
+                  {draftingCount > 1 ? 'Drafting your plans' : 'Drafting your plan'}
+                </h3>
+                <p role="status">
+                  {draftingCount > 1
+                    ? `Drafting ${draftingCount} items from historical projects; this can take a minute…`
+                    : knownProjects
+                      ? `Drafting from ${plural(knownProjects, 'historical project')}…`
+                      : 'Drafting from historical projects…'}
+                </p>
+                <div className="planner-progress progress" aria-hidden="true">
+                  <span />
+                </div>
+                <small className="planner-hint">The planner picks activities, durations and logic, then works backward from your date.</small>
+              </div>
+              <div className="planner-skeleton-stack" aria-hidden="true">
+                {Array.from({ length: Math.min(draftingCount, 3) }, (_, i) => (
+                  <div key={i} className="planner-card card planner-skeleton-card">
+                    <span className="planner-skeleton" style={{ width: '38%', height: 16 }} />
+                    <span className="planner-skeleton" style={{ width: '100%', height: 10 }} />
+                    <span className="planner-skeleton" style={{ width: '82%', height: 10 }} />
+                    <span className="planner-skeleton" style={{ width: '64%', height: 10 }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="planner-footer">
+              <button type="button" className="btn" onClick={close}>
                 Cancel
               </button>
             </div>
@@ -590,7 +691,14 @@ interface ItemFieldsProps {
   onRemove: () => void
 }
 
-/** One equipment item of the request form: type, name and its own required date. */
+const FieldError = ({ id, children }: { id: string; children: string }) => (
+  <small id={id} className="planner-error">
+    <PIcon name="alertCircle" size={14} />
+    {children}
+  </small>
+)
+
+/** One equipment item of the request form, as a compact row: type, name, its own required date (and Remove). */
 function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, onChange, onRemove }: ItemFieldsProps) {
   const typeId = `${idBase}-type`
   const otherId = `${idBase}-other`
@@ -602,11 +710,20 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, o
   const sharedDateInUse = many && form.sameDate
   const effective = effectiveDate(item, form)
   const showOther = equipmentTypes.length === 0 || item.choice === OTHER
+  const hasSelect = equipmentTypes.length > 0
+  const classes = ['planner-item-row', many ? 'has-index' : 'is-single', showOther ? 'has-other' : '', hasSelect ? '' : 'no-select'].filter(Boolean).join(' ')
   const body = (
     <>
-      {equipmentTypes.length > 0 && (
-        <div className="planner-field">
-          <label htmlFor={typeId}>Equipment type</label>
+      {many && (
+        <span className="planner-item-index" aria-hidden="true">
+          {index + 1}
+        </span>
+      )}
+      {hasSelect && (
+        <div className="planner-field planner-f-type">
+          <label htmlFor={typeId} className="planner-label">
+            Equipment type
+          </label>
           <select id={typeId} value={item.choice} onChange={(e) => onChange({ choice: e.target.value, fromCard: null })}>
             {equipmentTypes.map((t) => (
               <option key={t} value={t}>
@@ -618,8 +735,10 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, o
         </div>
       )}
       {showOther && (
-        <div className="planner-field">
-          <label htmlFor={otherId}>{equipmentTypes.length === 0 ? 'Equipment type' : 'Other equipment type'}</label>
+        <div className="planner-field planner-f-other">
+          <label htmlFor={otherId} className="planner-label">
+            {equipmentTypes.length === 0 ? 'Equipment type' : 'Other equipment type'}
+          </label>
           <input
             id={otherId}
             value={item.other}
@@ -630,15 +749,13 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, o
             aria-describedby={typeError ? `${otherId}-error` : undefined}
           />
           <small>No history for this type yet: the plan uses the schedule type's overall history.</small>
-          {typeError && (
-            <small id={`${otherId}-error`} className="planner-error">
-              {typeError}
-            </small>
-          )}
+          {typeError && <FieldError id={`${otherId}-error`}>{typeError}</FieldError>}
         </div>
       )}
-      <div className="planner-field">
-        <label htmlFor={nameId}>Equipment name</label>
+      <div className="planner-field planner-f-name">
+        <label htmlFor={nameId} className="planner-label">
+          Equipment name
+        </label>
         <input
           id={nameId}
           value={item.name}
@@ -648,14 +765,12 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, o
           aria-invalid={nameError ? true : undefined}
           aria-describedby={nameError ? `${nameId}-error` : undefined}
         />
-        {nameError && (
-          <small id={`${nameId}-error`} className="planner-error">
-            {nameError}
-          </small>
-        )}
+        {nameError && <FieldError id={`${nameId}-error`}>{nameError}</FieldError>}
       </div>
-      <div className="planner-field">
-        <label htmlFor={dateId}>Required on site</label>
+      <div className="planner-field planner-f-date">
+        <label htmlFor={dateId} className="planner-label">
+          Required on site
+        </label>
         <input
           id={dateId}
           type="date"
@@ -669,23 +784,32 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, o
         {sharedDateInUse && !item.date && (
           <small id={`${dateId}-hint`}>{effective ? `Uses the shared date, ${effective}.` : 'Empty: uses the shared date.'}</small>
         )}
-        {dateError && (
-          <small id={`${dateId}-error`} className="planner-error">
-            {dateError}
-          </small>
-        )}
+        {dateError && <FieldError id={`${dateId}-error`}>{dateError}</FieldError>}
       </div>
+      {many && (
+        <button
+          type="button"
+          className="btn btn-icon is-danger planner-remove"
+          aria-label={`Remove item ${index + 1}`}
+          title={`Remove item ${index + 1}`}
+          onClick={onRemove}
+        >
+          <Icon name="trash" size={18} />
+        </button>
+      )}
     </>
   )
-  if (!many) return <li className="planner-item">{body}</li>
+  if (!many)
+    return (
+      <li className="planner-item">
+        <div className={classes}>{body}</div>
+      </li>
+    )
   return (
     <li className="planner-item">
-      <fieldset>
-        <legend>{`Item ${index + 1}`}</legend>
+      <fieldset className={classes}>
+        <legend className="visually-hidden">{`Item ${index + 1}`}</legend>
         {body}
-        <button type="button" className="planner-remove" aria-label={`Remove item ${index + 1}`} onClick={onRemove}>
-          Remove
-        </button>
       </fieldset>
     </li>
   )
