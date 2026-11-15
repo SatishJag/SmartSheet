@@ -91,10 +91,10 @@
   background: var(--surface);
   box-shadow: 0 1px 2px rgb(22 24 29 / 0.05), 0 4px 12px -6px rgb(22 24 29 / 0.12);
   cursor: grab;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: box-shadow 0.2s ease;
 }
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .kanban-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px -10px rgb(22 24 29 / 0.25); }
+  .kanban-card:hover { box-shadow: 0 10px 24px -10px rgb(22 24 29 / 0.25); }
 }
 .kanban-card:focus-within { outline: 3px solid rgb(var(--b700)); outline-offset: 2px; }
 
