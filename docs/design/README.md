@@ -110,3 +110,54 @@ Mobile (390x844):
   and animations, 44px controls on touch devices (grid and Gantt toggles get larger invisible hit
   areas), no horizontal page scroll at 390px (grid and Gantt scroll in their own panes).
 - **Skeletons** replace bare "Loading..." text; the original text stays as screen-reader text.
+
+## Plan with AI wizard
+
+The AI planner (`src/planner/PlannerWizard.tsx`, `PlanPreview.tsx`, `plannerWizard.css`) is a flagship
+flow, so it gets the full treatment rather than inheriting the base button and input styles. It is
+still two steps with the same behaviour; only the presentation changed.
+
+- **Shell.** A header (sparkles mark, title, "1 Request - 2 Review plan" step indicator, close), a
+  scrolling body on the warm page background holding white cards, and a **sticky footer** that always
+  holds the step's actions (Cancel / Generate, then Back / Regenerate / Create schedule). Validation
+  and request failures are pinned in a bar just above the footer so they are never scrolled away.
+  Below 640px it is a full-height sheet: footer buttons are 44px, "Create schedule" takes its own row,
+  tables scroll inside their own pane, and nothing scrolls sideways.
+- **Request.** Equipment with history are selectable tiles (glyph, name, "8 projects", check badge;
+  a visually hidden checkbox underneath keeps the keyboard and screen-reader behaviour). Chosen items
+  are compact rows (type, name, date, remove icon on one line; they wrap on narrow screens). "Use the
+  same date for all" is a switch with the shared date beside it. Field errors use the danger token
+  with an icon and `aria-describedby`.
+- **Loading.** A striped indeterminate `.progress`, shimmering skeleton cards and a Cancel button.
+- **Review.** An overview card (items, earliest required start, late count, status chips, one
+  SAMPLE-data warning), then an accordion card per item: header chips (On time / Late, AI draft or
+  History only, Sample data), a green or red status banner with icon and text, a source badge, and an
+  activities table with a sticky header and first column, tabular numerals, zebra rows, a duration
+  bar, basis chips (p50 / p80 / Default / Adjusted), "Critical" chips and float, plus assumptions and
+  risks as tidy lists. A failed item shows its error with Retry and Remove.
+- **Styling rules.** Only global tokens and shared classes (`.card`, `.btn*`, `.chip`, `.progress`);
+  wizard-only classes carry a `.planner-` prefix; status colours are always text plus tint pairs and
+  every status also has an icon and a word, never colour alone. Animations (sheet entrance, switch,
+  pulse, stripes, skeleton) are removed under `prefers-reduced-motion`.
+
+| Request | Request, 3 items with a validation error |
+| --- | --- |
+| ![Request](wizard-request-empty.png) | ![Three items](wizard-request-items.png) |
+
+| Loading | Review, first item open |
+| --- | --- |
+| ![Loading](wizard-loading.png) | ![Review](wizard-review.png) |
+
+| Review, late item open | Review, one item failed |
+| --- | --- |
+| ![Late](wizard-review-late.png) | ![Failed](wizard-review-failed.png) |
+
+| Single item review | |
+| --- | --- |
+| ![Single](wizard-single-review.png) | |
+
+Mobile (390x844):
+
+| Request | 3 items | Loading | Review | Late | Failed | Single |
+| --- | --- | --- | --- | --- | --- | --- |
+| ![](wizard-mobile-request.png) | ![](wizard-mobile-request-items.png) | ![](wizard-mobile-loading.png) | ![](wizard-mobile-review.png) | ![](wizard-mobile-review-late.png) | ![](wizard-mobile-review-failed.png) | ![](wizard-mobile-single-review.png) |
