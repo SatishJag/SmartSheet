@@ -5,7 +5,7 @@ import type { SchedDep } from '../engine/schedule'
 import type { Calendar } from '../engine/types'
 import { MAX_SHEET_NAME_LENGTH } from '../auth/sheetName'
 import type { Column } from '../model/validate'
-import { columnToDb, dependencyToDb, rowToDb, type RowRecord, type SheetData } from '../store/persistence'
+import { columnToDb, dependencyToDb, rowToDb, type RowRecord, type SheetData, type SheetMeta } from '../store/persistence'
 import { createSheetFromTemplate } from '../templates'
 import { daysToMinutes, planBackward, todayIso, type BackwardPlan } from './backward'
 import type { DraftActivity, HistorySummary, PlanDraft } from './types'
@@ -15,11 +15,28 @@ export const BASIS_COLUMN_TITLE = 'Basis'
 
 const NAME_PREFIX: Record<string, string> = { 'lle-procurement': 'LLE' }
 
+const clip = (name: string, max: number) => (name.length > max ? `${name.slice(0, max - 1)}…` : name)
+
 /** "LLE – 400 MVA transformer" (at most the sheet-name limit). */
 export function sheetNameForDraft(draft: PlanDraft): string {
   const prefix = NAME_PREFIX[draft.request.scheduleType] ?? 'Plan'
-  const name = `${prefix} – ${draft.request.equipmentName.trim() || draft.request.equipmentType}`
-  return name.length > MAX_SHEET_NAME_LENGTH ? `${name.slice(0, MAX_SHEET_NAME_LENGTH - 1)}…` : name
+  return clip(`${prefix} – ${draft.request.equipmentName.trim() || draft.request.equipmentType}`, MAX_SHEET_NAME_LENGTH)
+}
+
+/** One draft: its own name ("LLE – 400 MVA transformer"); several: "LLE plan – 3 items". */
+export function sheetNameForDrafts(drafts: PlanDraft[]): string {
+  if (drafts.length === 1) return sheetNameForDraft(drafts[0])
+  const prefix = NAME_PREFIX[drafts[0].request.scheduleType]
+  return clip(`${prefix ? `${prefix} plan` : 'Plan'} – ${drafts.length} items`, MAX_SHEET_NAME_LENGTH)
+}
+
+/** The summary row's name for one item of a combined plan: "Power transformer — 400 MVA transformer, Substation B". */
+export function itemRowName(draft: PlanDraft): string {
+  const type = draft.request.equipmentType.trim()
+  const name = draft.request.equipmentName.trim()
+  if (!name) return type
+  if (!type || name.toLowerCase().includes(type.toLowerCase())) return name
+  return `${type} — ${name}`
 }
 
 /** Where a duration came from, for the Basis column: "p80 of 9 projects", "adjusted: ...". */
@@ -39,17 +56,20 @@ export function basisText(activity: DraftActivity, history: HistorySummary): str
   }
 }
 
-/**
- * The sheet a draft becomes: the Project schedule template's columns plus "Basis", one row per
- * activity in draft order, and one dependency per link. Only rows without predecessors carry a
- * Start (the backward-planned one); the engine derives every other date from the links, so the
- * sheet opens with the dates the preview showed. Pure apart from fresh ids.
- */
-export function buildSheetFromDraft(draft: PlanDraft, plan: BackwardPlan, ownerId: string, calendar: Calendar): SheetData {
+/** The Basis text of an item's summary row: where its whole draft came from. */
+function itemSourceText(draft: PlanDraft): string {
+  const n = draft.history.projectCount
+  const sample = draft.history.sampleOnly ? ' (sample data)' : ''
+  const from = n === 0 ? 'no history' : `${n} project${n === 1 ? '' : 's'}`
+  return `${draft.source === 'ai' ? 'AI draft' : 'History draft'} from ${from}${sample}`
+}
+
+/** A new sheet with the Project schedule template's columns plus "Basis", and the ids of the columns the plan fills. */
+function newPlanSheet(name: string, ownerId: string, calendar: Calendar) {
   const base = createSheetFromTemplate('project-schedule', ownerId)
-  const sheet = {
+  const sheet: SheetMeta = {
     ...base.sheet,
-    name: sheetNameForDraft(draft),
+    name,
     calendar: { ...calendar, workingWeekdays: [...calendar.workingWeekdays], nonWorkingDates: [...calendar.nonWorkingDates] },
     dependenciesEnabled: true,
   }
@@ -60,12 +80,26 @@ export function buildSheetFromDraft(draft: PlanDraft, plan: BackwardPlan, ownerI
     if (!col) throw new Error(`The Project schedule template has no ${what} column`)
     return col.id
   }
-  const taskCol = columns[0].id
-  const phaseCol = colId((c) => c.title === 'Phase', 'Phase')
-  const durationCol = colId((c) => c.role === 'duration', 'duration')
-  const startCol = colId((c) => c.role === 'start', 'start')
-  const statusCol = colId((c) => c.role === 'status', 'status')
+  const cols = {
+    task: columns[0].id,
+    phase: colId((c) => c.title === 'Phase', 'Phase'),
+    duration: colId((c) => c.role === 'duration', 'duration'),
+    start: colId((c) => c.role === 'start', 'start'),
+    status: colId((c) => c.role === 'status', 'status'),
+    basis: basisColumn.id,
+  }
+  return { sheet, columns, cols }
+}
 
+type PlanCols = ReturnType<typeof newPlanSheet>['cols']
+
+/**
+ * One draft's activity rows (draft order, children of `parentId`, or top-level when null) and the
+ * dependencies between them. Dependencies are keyed by this draft's activity codes only, so two
+ * drafts that use the same codes never link to each other. Only rows without predecessors carry a
+ * Start (the backward-planned one).
+ */
+function activityRows(draft: PlanDraft, plan: BackwardPlan, cols: PlanCols, calendar: Calendar, parentId: string | null) {
   const planned = new Map(plan.activities.map((a) => [a.code, a]))
   const positions = generateNKeysBetween(null, null, draft.activities.length)
   const rowIdByCode = new Map<string, string>()
@@ -74,41 +108,78 @@ export function buildSheetFromDraft(draft: PlanDraft, plan: BackwardPlan, ownerI
     rowIdByCode.set(a.code, id)
     const p = planned.get(a.code)
     const cells: Record<string, unknown> = {
-      [taskCol]: a.name,
-      [phaseCol]: a.phase,
-      [durationCol]: formatDuration({ minutes: daysToMinutes(a.durationDays, calendar), elapsed: false }, calendar.hoursPerDay),
-      [statusCol]: 'Not started',
-      [basisColumn.id]: basisText(a, draft.history),
+      [cols.task]: a.name,
+      [cols.phase]: a.phase,
+      [cols.duration]: formatDuration({ minutes: daysToMinutes(a.durationDays, calendar), elapsed: false }, calendar.hoursPerDay),
+      [cols.status]: 'Not started',
+      [cols.basis]: basisText(a, draft.history),
     }
-    if (p?.isRoot) cells[startCol] = p.start
-    return { id, parentId: null, position: positions[i], cells, version: 0 }
+    if (p?.isRoot) cells[cols.start] = p.start
+    return { id, parentId, position: positions[i], cells, version: 0 }
   })
-
   const dependencies: SchedDep[] = plan.links.map((l) => ({
     predecessorId: rowIdByCode.get(l.from)!,
     successorId: rowIdByCode.get(l.to)!,
     type: l.type,
     lagMinutes: daysToMinutes(l.lagDays, calendar),
   }))
-
-  return { sheet, columns, rows, dependencies }
+  return { rows, dependencies }
 }
 
 /**
- * Plans the draft backward from its required date and saves it as a new sheet (sheet, columns,
- * rows, dependencies, in that order). Returns the new sheet's id. If anything after the sheet
- * fails, the sheet is deleted (best effort; its columns, rows and dependencies cascade) so no
- * half-built plan is left behind.
+ * The sheet a draft becomes: the Project schedule template's columns plus "Basis", one row per
+ * activity in draft order, and one dependency per link. Only rows without predecessors carry a
+ * Start (the backward-planned one); the engine derives every other date from the links, so the
+ * sheet opens with the dates the preview showed. Pure apart from fresh ids.
  */
-export async function insertSheetFromDraft(
-  client: SupabaseClient,
-  draft: PlanDraft,
-  userId: string,
-  calendar: Calendar,
-  options: { today?: string } = {},
-): Promise<string> {
-  const plan = planBackward(draft, calendar, options.today ?? todayIso())
-  const data = buildSheetFromDraft(draft, plan, userId, calendar)
+export function buildSheetFromDraft(draft: PlanDraft, plan: BackwardPlan, ownerId: string, calendar: Calendar): SheetData {
+  const { sheet, columns, cols } = newPlanSheet(sheetNameForDraft(draft), ownerId, calendar)
+  const { rows, dependencies } = activityRows(draft, plan, cols, calendar, null)
+  return { sheet, columns, rows, dependencies }
+}
+
+/** A draft with its backward plan: what the preview shows and the sheet is built from. */
+export interface PlannedDraft {
+  draft: PlanDraft
+  plan: BackwardPlan
+}
+
+/**
+ * One sheet for several items. One item: exactly buildSheetFromDraft's flat sheet. Several: each item
+ * is a summary (parent) row named after its equipment, with its activities as indented child rows
+ * under it. Dependencies stay inside an item; summary rows carry no Start, Duration or
+ * predecessors (the engine rolls their dates up from the children), so the sheet opens with the
+ * dates of every item's preview. Pure apart from fresh ids.
+ */
+export function buildSheetFromDrafts(items: PlannedDraft[], ownerId: string, calendar: Calendar): SheetData {
+  if (items.length === 0) throw new Error('There is nothing to plan')
+  if (items.length === 1) return buildSheetFromDraft(items[0].draft, items[0].plan, ownerId, calendar)
+  const { sheet, columns, cols } = newPlanSheet(sheetNameForDrafts(items.map((i) => i.draft)), ownerId, calendar)
+  const positions = generateNKeysBetween(null, null, items.length)
+  const rows: RowRecord[] = []
+  const dependencies: SchedDep[] = []
+  items.forEach(({ draft, plan }, i) => {
+    const parentId = crypto.randomUUID()
+    rows.push({
+      id: parentId,
+      parentId: null,
+      position: positions[i],
+      cells: {
+        [cols.task]: clip(itemRowName(draft), 200),
+        [cols.status]: 'Not started',
+        [cols.basis]: itemSourceText(draft),
+      },
+      version: 0,
+    })
+    const children = activityRows(draft, plan, cols, calendar, parentId)
+    rows.push(...children.rows)
+    dependencies.push(...children.dependencies)
+  })
+  return { sheet, columns, rows, dependencies }
+}
+
+/** Saves sheet data as a new sheet (sheet, columns, rows, dependencies, in that order); see insertSheetFromDraft. */
+async function insertSheetData(client: SupabaseClient, data: SheetData): Promise<string> {
   const { sheet } = data
 
   const sheetRes = await client.from('sheets').insert({
@@ -145,4 +216,38 @@ export async function insertSheetFromDraft(
     throw err instanceof Error ? err : new Error('Could not save the schedule')
   }
   return sheet.id
+}
+
+/**
+ * Plans the draft backward from its required date and saves it as a new sheet (sheet, columns,
+ * rows, dependencies, in that order). Returns the new sheet's id. If anything after the sheet
+ * fails, the sheet is deleted (best effort; its columns, rows and dependencies cascade) so no
+ * half-built plan is left behind.
+ */
+export async function insertSheetFromDraft(
+  client: SupabaseClient,
+  draft: PlanDraft,
+  userId: string,
+  calendar: Calendar,
+  options: { today?: string } = {},
+): Promise<string> {
+  const plan = planBackward(draft, calendar, options.today ?? todayIso())
+  return insertSheetData(client, buildSheetFromDraft(draft, plan, userId, calendar))
+}
+
+/**
+ * The batch variant: plans every draft backward to its own required date and saves ONE sheet with
+ * all of them (see buildSheetFromDrafts), with the same cleanup on failure. Every draft is planned
+ * before anything is written, so one that cannot be scheduled fails the call with nothing saved.
+ */
+export async function insertSheetFromDrafts(
+  client: SupabaseClient,
+  drafts: PlanDraft[],
+  userId: string,
+  calendar: Calendar,
+  options: { today?: string } = {},
+): Promise<string> {
+  const today = options.today ?? todayIso()
+  const items = drafts.map((draft) => ({ draft, plan: planBackward(draft, calendar, today) }))
+  return insertSheetData(client, buildSheetFromDrafts(items, userId, calendar))
 }

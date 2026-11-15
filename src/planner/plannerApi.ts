@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { DraftResponse, PlanDraft, PlannerOptions, PlanRequest } from './types'
+import type { BatchItemResult, BatchPlanRequest, DraftResponse, PlanDraft, PlannerOptions, PlanRequest } from './types'
 
 /**
  * Client for the planning server (same origin, `/api/planner/...`). Every call carries the user's
@@ -136,4 +136,33 @@ export async function requestDraft(token: string, request: PlanRequest, opts: Ca
     throw new PlannerApiError(UNEXPECTED_MESSAGE, 'response', 200)
   }
   return body.draft
+}
+
+/** Checks one entry of a batch response; a malformed one becomes that item's failure, not the whole batch's. */
+function toBatchResult(v: unknown): BatchItemResult {
+  if (isObject(v) && v.ok === true && isDraft(v.draft)) return { ok: true, draft: v.draft }
+  if (isObject(v) && v.ok === false) return { ok: false, error: serverMessage(v) ?? 'The planner could not draft this item.' }
+  return { ok: false, error: UNEXPECTED_MESSAGE }
+}
+
+/**
+ * POST /api/planner/draft-batch: first-cut plans for several equipment items at once. Resolves to one
+ * result per item, in order (`results[i]` is `request.items[i]`); an item that failed is
+ * `{ ok: false, error }` and does not affect the others. Throws PlannerApiError when the whole request
+ * is refused (bad input, rate limit, server down).
+ */
+export async function requestBatch(token: string, request: BatchPlanRequest, opts: CallOptions = {}): Promise<BatchItemResult[]> {
+  const body = await call(
+    'draft-batch',
+    token,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) },
+    opts,
+  )
+  if (isObject(body) && body.ok === false) {
+    throw new PlannerApiError(serverMessage(body) ?? 'The planner could not draft the plans.', 'server', 200)
+  }
+  if (!isObject(body) || body.ok !== true || !Array.isArray(body.results) || body.results.length !== request.items.length) {
+    throw new PlannerApiError(UNEXPECTED_MESSAGE, 'response', 200)
+  }
+  return body.results.map(toBatchResult)
 }
