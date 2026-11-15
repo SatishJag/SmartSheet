@@ -319,3 +319,126 @@ describe('fakeSupabase tables', () => {
     expect((await client.from('columns').select('id')).data).toEqual([])
   })
 })
+
+describe('fakeSupabase baselines', () => {
+  let client: ReturnType<typeof createFakeSupabase>
+  const R1 = '00000000-0000-4000-8000-0000000000a1'
+  const R2 = '00000000-0000-4000-8000-0000000000a2'
+  const rowsFor = (...ids: string[]) => ids.map((rowId, i) => ({ rowId, start: '2026-11-09', end: '2026-11-1' + i, durationDays: i + 1 }))
+
+  beforeEach(async () => {
+    client = createFakeSupabase({ storage: memoryStorage() })
+    await client.auth.signUp(A)
+  })
+
+  async function newSheet(name = 'S'): Promise<string> {
+    return ((await client.from('sheets').insert({ name }).select('id').single()).data as { id: string }).id
+  }
+  const save = (sheet: string, slot: number, name: string, rows: unknown[] = rowsFor(R1, R2)) =>
+    client.rpc('save_baseline', { p_sheet_id: sheet, p_slot: slot, p_name: name, p_rows: rows })
+
+  it('save_baseline returns the new id, stores header and rows, and replaces the slot', async () => {
+    const s = await newSheet()
+    const first = await save(s, 2, 'Agreed plan')
+    expect(first.error).toBeNull()
+    const id = first.data as string
+    expect(id).toMatch(/^[0-9a-f-]{36}$/)
+    const header = await client.from('baselines').select('id, slot, name, created_at').eq('sheet_id', s)
+    expect(header.data).toEqual([{ id, slot: 2, name: 'Agreed plan', created_at: expect.any(String) }])
+    const rows = await client.from('baseline_rows').select('*').eq('baseline_id', id).order('row_id')
+    expect(rows.data).toMatchObject([
+      { row_id: R1, start_date: '2026-11-09', end_date: '2026-11-10', duration_days: 1 },
+      { row_id: R2, start_date: '2026-11-09', end_date: '2026-11-11', duration_days: 2 },
+    ])
+
+    const again = await save(s, 2, 'Revised', rowsFor(R1))
+    expect(again.data).not.toBe(id)
+    expect((await client.from('baselines').select('id, name').eq('sheet_id', s)).data).toEqual([{ id: again.data, name: 'Revised' }])
+    expect((await client.from('baseline_rows').select('baseline_id')).data).toEqual([{ baseline_id: again.data }])
+    await save(s, 3, 'Other slot')
+    expect((await client.from('baselines').select('slot').eq('sheet_id', s).order('slot')).data).toEqual([{ slot: 2 }, { slot: 3 }])
+  })
+
+  it('save_baseline validates the slot, name and rows, and changes nothing on failure', async () => {
+    const s = await newSheet()
+    const kept = (await save(s, 1, 'Keep')).data as string
+    const bad = [
+      await save(s, 0, 'x'),
+      await save(s, 6, 'x'),
+      await save(s, 1.5, 'x'),
+      await save(s, 1, '   '),
+      await save(s, 1, 'n'.repeat(101)),
+      await save(s, 1, 'x', [{ rowId: R1, start: '2026-11-10', end: '2026-11-09', durationDays: 1 }]),
+      await save(s, 1, 'x', [{ rowId: R1, start: '2026-11-09', end: '2026-11-10', durationDays: -1 }]),
+      await save(s, 1, 'x', [{ rowId: 'not-a-uuid', start: '2026-11-09', end: '2026-11-10', durationDays: 1 }]),
+      await save(s, 1, 'x', [...rowsFor(R1), ...rowsFor(R1)]),
+    ]
+    for (const r of bad) {
+      expect(r.data).toBeNull()
+      expect(r.error?.message).toBeTruthy()
+    }
+    expect((await client.from('baselines').select('id')).data).toEqual([{ id: kept }])
+    expect((await client.from('baseline_rows').select('baseline_id')).data).toHaveLength(2)
+  })
+
+  it("refuses another user's sheet and a missing sheet, and hides baselines from other users", async () => {
+    const s = await newSheet()
+    await save(s, 1, 'Mine')
+    await client.auth.signOut()
+    await client.auth.signUp(B)
+    const theirs = await save(s, 1, 'Hack')
+    expect(theirs.data).toBeNull()
+    expect(theirs.error?.code).toBe('42501')
+    expect((await save(crypto.randomUUID(), 1, 'x')).error?.code).toBe('42501')
+    expect((await client.from('baselines').select('*')).data).toEqual([])
+    expect((await client.from('baseline_rows').select('*')).data).toEqual([])
+    expect((await client.from('baselines').delete().eq('sheet_id', s)).error).toBeNull()
+    await client.auth.signOut()
+    await client.auth.signInWithPassword(A)
+    expect((await client.from('baselines').select('id')).data).toHaveLength(1)
+  })
+
+  it('deleting a baseline removes its rows; deleting a sheet removes its baselines; deleting a row keeps them', async () => {
+    const s = await newSheet()
+    await client.from('rows').insert({ sheet_id: s, position: 'a0', id: R1 })
+    const a = (await save(s, 1, 'A')).data as string
+    await save(s, 2, 'B')
+    await client.from('rows').delete().in('id', [R1])
+    expect((await client.from('baseline_rows').select('row_id').eq('baseline_id', a)).data).toHaveLength(2)
+
+    expect((await client.from('baselines').delete().eq('id', a)).error).toBeNull()
+    expect((await client.from('baselines').select('slot')).data).toEqual([{ slot: 2 }])
+    expect((await client.from('baseline_rows').select('baseline_id').eq('baseline_id', a)).data).toEqual([])
+    expect((await client.from('baseline_rows').select('baseline_id')).data).toHaveLength(2)
+
+    await client.from('sheets').delete().eq('id', s)
+    expect((await client.from('baselines').select('id')).data).toEqual([])
+    expect((await client.from('baseline_rows').select('baseline_id')).data).toEqual([])
+  })
+
+  it('caps baseline_rows at 1000 per response and pages with .range()', async () => {
+    const s = await newSheet()
+    const many = Array.from({ length: 2500 }, (_, i) => ({
+      rowId: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      start: '2026-11-09',
+      end: '2026-11-09',
+      durationDays: 1,
+    }))
+    const id = (await save(s, 1, 'Big', many)).data as string
+    const q = () => client.from('baseline_rows').select('row_id').eq('baseline_id', id).order('row_id')
+    expect((await q()).data).toHaveLength(1000)
+    expect((await q().range(1000, 1999)).data).toHaveLength(1000)
+    expect((await q().range(2000, 2999)).data).toHaveLength(500)
+  })
+
+  it('enforces slot uniqueness and checks on direct inserts, and rejects updates of snapshot rows loudly', async () => {
+    const s = await newSheet()
+    expect((await client.from('baselines').insert({ sheet_id: s, slot: 1, name: 'a' })).error).toBeNull()
+    expect((await client.from('baselines').insert({ sheet_id: s, slot: 1, name: 'b' })).error?.code).toBe('23505')
+    expect((await client.from('baselines').insert({ sheet_id: s, slot: 9, name: 'b' })).error?.code).toBe('23514')
+    expect((await client.from('baselines').insert({ sheet_id: s, slot: 2, name: '' })).error?.code).toBe('23514')
+    const orphan = { baseline_id: crypto.randomUUID(), sheet_id: s, row_id: R1, start_date: '2026-11-09', end_date: '2026-11-09', duration_days: 1 }
+    expect((await client.from('baseline_rows').insert(orphan)).error?.code).toBe('23503')
+    expect(() => client.from('baseline_rows').update({ duration_days: 3 })).toThrow(/unsupported call .*baseline_rows.update/)
+  })
+})
