@@ -142,6 +142,12 @@ export interface PlannerOptions {
   scheduleTypes: ScheduleType[]
   /** Equipment types with history, per schedule type id. */
   equipmentTypes: Record<string, string[]>
+  /**
+   * Optional: historical projects per equipment type, per schedule type id. The wizard shows the
+   * count on its equipment cards ("Power transformer · 8 projects") when it is given. The Supabase
+   * source does not fill it yet (the planner_equipment_types view has no count).
+   */
+  projectCounts?: Record<string, Record<string, number>>
 }
 
 /**

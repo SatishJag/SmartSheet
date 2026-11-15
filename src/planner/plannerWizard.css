@@ -189,3 +189,178 @@
   border-color: #1d4ed8;
   color: #fff;
 }
+
+/* ---- Several equipment items: request step ---- */
+
+.planner-types {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+}
+
+.planner-types .planner-hint {
+  margin: 0 0 8px;
+}
+
+.planner-type-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.planner-type-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.planner-type-card.is-checked {
+  border-color: #1d4ed8;
+  background: #eef2ff;
+}
+
+.planner-type-count {
+  color: #52606d;
+}
+
+.planner-shared-date {
+  margin: 0 0 12px;
+}
+
+.planner-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.planner-items {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.planner-item fieldset {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+}
+
+.planner-item legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.planner-remove {
+  margin: 0;
+}
+
+.planner-add {
+  margin: 0 0 12px;
+}
+
+.planner-error {
+  color: #b42318;
+}
+
+.planner-field input[aria-invalid='true'] {
+  border-color: #b42318;
+}
+
+/* ---- Several equipment items: preview step ---- */
+
+.planner-overview {
+  margin: 0 0 12px;
+}
+
+.planner-overview-text {
+  margin: 0 0 8px;
+}
+
+.planner-accordion {
+  margin: 0 0 12px;
+}
+
+.planner-accordion-item {
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  margin: 0 0 8px;
+}
+
+.planner-accordion-item.is-failed {
+  border-color: #b42318;
+}
+
+.planner-accordion-heading {
+  margin: 0;
+  font-size: 1em;
+}
+
+.planner-accordion-button {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.planner-accordion-title {
+  font-weight: 600;
+}
+
+.planner-accordion-panel {
+  padding: 0 12px 12px;
+}
+
+.planner-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.planner-chip {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #e4e7eb;
+  font-size: 0.85em;
+}
+
+.planner-chip.is-ok {
+  background: #f0fff4;
+  color: #1c4532;
+}
+
+.planner-chip.is-late,
+.planner-chip.is-failed {
+  background: #fef3f2;
+  color: #7a271a;
+}
+
+.planner-chip.is-sample {
+  background: #fffbeb;
+  color: #78350f;
+}
+
+.planner-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 4px;
+}
+
+.planner-notice {
+  color: #7a271a;
+}

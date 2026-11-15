@@ -1,18 +1,43 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Calendar } from '../engine/types'
-import { isAcceptedDate, MAX_DATE, MIN_DATE } from '../model/validate'
+import { MAX_DATE, MIN_DATE } from '../model/validate'
 import { projectScheduleTemplate } from '../templates'
-import { planBackward, todayIso, type BackwardPlan } from './backward'
-import { getAccessToken, getOptions, PlannerApiError, requestDraft } from './plannerApi'
-import { insertSheetFromDraft } from './sheetFromDraft'
-import type { DurationBasis, PlanDraft, PlannerOptions, PlanRequest } from './types'
+import { todayIso } from './backward'
+import { PlanPreview } from './PlanPreview'
+import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestDraft } from './plannerApi'
+import {
+  appendNote,
+  batchRequestOf,
+  planRequestOf,
+  readyEntry,
+  type Entry,
+  type Job,
+} from './plannerEntries'
+import {
+  addCardItem,
+  effectiveDate,
+  firstProblem,
+  isPristine,
+  jobFromForm,
+  MAX_ITEMS,
+  newItem,
+  OTHER,
+  removeCardItem,
+  removeItem,
+  validateItems,
+  type FormValues,
+  type ItemForm,
+} from './plannerItems'
+import { insertSheetFromDrafts } from './sheetFromDraft'
+import type { PlannerOptions } from './types'
 import '../views/confirmDialog.css'
 import './plannerWizard.css'
 
+export { BASIS_LABELS, sourceLabel } from './PlanPreview'
+
 const FOCUSABLE =
   'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-const OTHER = '__other__'
 
 export interface PlannerWizardProps {
   client: SupabaseClient
@@ -37,26 +62,14 @@ const isAbort = (err: unknown) => err instanceof DOMException && err.name === 'A
 const describe = (err: unknown, fallback: string) =>
   err instanceof PlannerApiError || err instanceof Error ? err.message : fallback
 
-export const BASIS_LABELS: Record<DurationBasis, string> = {
-  p50: 'p50',
-  p80: 'p80',
-  default: 'Default',
-  adjusted: 'Adjusted',
-}
-
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
-/** "Drafted by AI from 9 historical projects" / "Built from history only — AI unavailable". */
-export function sourceLabel(draft: PlanDraft): string {
-  const n = draft.history.projectCount
-  if (draft.source === 'ai') return n > 0 ? `Drafted by AI from ${plural(n, 'historical project')}` : 'Drafted by AI (no historical projects)'
-  return `Built from history only — AI unavailable${n > 0 ? ` (${plural(n, 'historical project')})` : ''}`
-}
-
 /**
- * "Plan with AI": a modal wizard. Step 1 collects the request; the planning server drafts the
- * activities, durations and links; the client plans them backward from the required date and shows
- * a preview; "Create schedule" saves it as an ordinary sheet and opens it.
+ * "Plan with AI": a modal wizard. Step 1 collects the request: a shared schedule type and notes and
+ * one or more equipment items (ticked from the types with history, or added by hand), each with its
+ * own required date. The planning server drafts every item's activities, durations and links; the
+ * client plans each backward from its own date and shows a preview per item with an overall summary;
+ * "Create schedule" saves ONE sheet (one summary row per item when there are several) and opens it.
  *
  * Accessible like the other dialogs: labelled, focus moves inside on open and to each step's
  * heading as the step changes, Tab cycles within, Escape closes (except while saving), and focus
@@ -67,36 +80,36 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const ids = {
     title: useId(),
     type: useId(),
-    equipment: useId(),
-    otherEquipment: useId(),
-    name: useId(),
-    date: useId(),
+    sharedDate: useId(),
     notes: useId(),
     instruction: useId(),
     error: useId(),
+    item: useId(),
   }
   const dialogRef = useRef<HTMLDivElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
+  const addButtonRef = useRef<HTMLButtonElement>(null)
   const aborter = useRef<AbortController | null>(null)
+  const itemAborters = useRef(new Map<string, AbortController>())
+  const focusAfterRender = useRef<string | null>(null)
   const mounted = useRef(true)
 
   const [options, setOptions] = useState<PlannerOptions | null>(null)
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [step, setStep] = useState<Step>('request')
   const [failure, setFailure] = useState<Failure | null>(null)
-  const [fieldError, setFieldError] = useState<string | null>(null)
+  const [submitted, setSubmitted] = useState(false)
 
   const [scheduleType, setScheduleType] = useState('')
-  const [equipmentChoice, setEquipmentChoice] = useState('')
-  const [otherEquipment, setOtherEquipment] = useState('')
-  const [equipmentName, setEquipmentName] = useState('')
-  const [requiredDate, setRequiredDate] = useState('')
+  const [items, setItems] = useState<ItemForm[]>(() => [newItem('')])
+  const [sameDate, setSameDate] = useState(true)
+  const [sharedDate, setSharedDate] = useState('')
   const [notes, setNotes] = useState('')
   const [instruction, setInstruction] = useState('')
 
-  const [lastRequest, setLastRequest] = useState<PlanRequest | null>(null)
-  const [draft, setDraft] = useState<PlanDraft | null>(null)
-  const [plan, setPlan] = useState<BackwardPlan | null>(null)
+  const [job, setJob] = useState<Job | null>(null)
+  const [entries, setEntries] = useState<Entry[]>([])
+  const [draftingCount, setDraftingCount] = useState(1)
 
   /** A fresh AbortController for the next request; aborts the one before. */
   const nextSignal = () => {
@@ -105,12 +118,20 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     return aborter.current.signal
   }
 
+  const abortAll = () => {
+    aborter.current?.abort()
+    for (const c of itemAborters.current.values()) c.abort()
+    itemAborters.current.clear()
+  }
+
   useEffect(() => {
     mounted.current = true
     const previous = document.activeElement as HTMLElement | null
+    const pending = itemAborters.current
     return () => {
       mounted.current = false
       aborter.current?.abort()
+      for (const c of pending.values()) c.abort()
       if (previous && previous.isConnected) previous.focus()
     }
   }, [])
@@ -135,9 +156,17 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   }, [loadOptions])
 
   const equipmentTypes = options?.equipmentTypes[scheduleType] ?? []
-  // Default to the first equipment type with history whenever the schedule type or options change.
+  const projectCounts = options?.projectCounts?.[scheduleType] ?? {}
+  const defaultChoice = equipmentTypes[0] ?? OTHER
+  // Items whose type is not on offer for the schedule type (or not chosen yet) get the first type with history.
   useEffect(() => {
-    setEquipmentChoice(equipmentTypes[0] ?? OTHER)
+    if (!options) return
+    setItems((prev) => {
+      const next = prev.map((i) =>
+        i.choice === OTHER || equipmentTypes.includes(i.choice) ? i : { ...i, choice: defaultChoice, fromCard: null },
+      )
+      return next.some((n, k) => n !== prev[k]) ? next : prev
+    })
   }, [scheduleType, options])
 
   // Each step's heading takes focus, so keyboard and screen-reader users land on the new content.
@@ -149,11 +178,20 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     headingRef.current?.focus()
   }, [step, options])
 
+  // After adding or removing an item, focus moves to where the user is working.
+  useEffect(() => {
+    const target = focusAfterRender.current
+    if (!target) return
+    focusAfterRender.current = null
+    if (target === 'add') addButtonRef.current?.focus()
+    else document.getElementById(target)?.focus()
+  }, [items])
+
   const busy = step === 'drafting' || step === 'creating'
 
   function close() {
     if (step === 'creating') return
-    aborter.current?.abort()
+    abortAll()
     onClose()
   }
 
@@ -163,10 +201,10 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
       e.preventDefault()
       close()
     } else if (e.key === 'Tab') {
-      const items = [...(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
-      if (items.length === 0) return
-      const first = items[0]
-      const last = items[items.length - 1]
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
       const inside = dialogRef.current?.contains(document.activeElement)
       if (e.shiftKey && (document.activeElement === first || document.activeElement === headingRef.current || !inside)) {
         e.preventDefault()
@@ -178,72 +216,162 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     }
   }
 
-  async function generate(request: PlanRequest, returnTo: 'request' | 'preview') {
+  // ---- drafting ----
+
+  /**
+   * Drafts every item of the job and shows the preview. One item uses /draft exactly as before; several
+   * use /draft-batch, where an item that fails stays in the preview with its own Retry. A failure of the
+   * whole request returns to `returnTo` with the error and a Retry.
+   */
+  async function generate(next: Job, returnTo: 'request' | 'preview') {
     const signal = nextSignal()
     setFailure(null)
+    setDraftingCount(next.items.length)
     setStep('drafting')
-    setLastRequest(request)
     try {
       const token = await getAccessToken(client)
-      const next = await requestDraft(token, request, { signal })
-      if (!mounted.current || signal.aborted) return
-      let planned: BackwardPlan
-      try {
-        planned = planBackward(next, calendar, today)
-      } catch (err) {
-        throw new Error(`The draft could not be scheduled: ${describe(err, 'invalid plan')}`)
+      let drafted: Entry[]
+      if (next.items.length === 1) {
+        const item = next.items[0]
+        const request = planRequestOf(next, item)
+        const draft = await requestDraft(token, request, { signal })
+        if (!mounted.current || signal.aborted) return
+        drafted = [readyEntry(item.key, request, draft, calendar, today)]
+      } else {
+        const results = await requestBatch(token, batchRequestOf(next), { signal })
+        if (!mounted.current || signal.aborted) return
+        drafted = results.map((result, i): Entry => {
+          const item = next.items[i]
+          const request = planRequestOf(next, item)
+          if (!result.ok) return { key: item.key, status: 'failed', request, error: result.error }
+          try {
+            return readyEntry(item.key, request, result.draft, calendar, today)
+          } catch (err) {
+            return { key: item.key, status: 'failed', request, error: describe(err, 'The draft could not be scheduled') }
+          }
+        })
+        if (drafted.every((e) => e.status === 'failed')) {
+          throw new Error(`None of the ${next.items.length} items could be drafted: ${drafted[0].error ?? 'unknown error'}`)
+        }
       }
-      setDraft(next)
-      setPlan(planned)
+      setJob(next)
+      setEntries(drafted)
       setInstruction('')
       setStep('preview')
     } catch (err) {
       if (isAbort(err) || !mounted.current) return
-      setFailure({ message: describe(err, 'Could not draft the plan'), retry: () => void generate(request, returnTo) })
-      setStep(returnTo === 'preview' && draft ? 'preview' : 'request')
+      setFailure({ message: describe(err, 'Could not draft the plan'), retry: () => void generate(next, returnTo) })
+      setStep(returnTo === 'preview' && entries.length > 0 ? 'preview' : 'request')
     }
   }
 
-  function submitRequest(e: FormEvent) {
-    e.preventDefault()
-    const equipmentType = (equipmentChoice === OTHER ? otherEquipment : equipmentChoice).trim()
-    if (!scheduleType) return setFieldError('Choose a schedule type')
-    if (!equipmentType) return setFieldError('Enter the equipment type')
-    if (!equipmentName.trim()) return setFieldError('Enter the equipment name')
-    if (!requiredDate) return setFieldError('Enter the date the equipment must be on site')
-    if (!isAcceptedDate(requiredDate)) return setFieldError(`Enter a date between ${MIN_DATE} and ${MAX_DATE}`)
-    setFieldError(null)
-    const request: PlanRequest = {
-      scheduleType,
-      equipmentType,
-      equipmentName: equipmentName.trim(),
-      requiredDate,
-      ...(notes.trim() ? { notes: notes.trim() } : {}),
+  /** Drafts one item again (a Retry for a failed one, or new instructions for a good one); the others stay as they are. */
+  async function regenerateOne(key: string, extra: string) {
+    if (!job) return
+    const item = job.items.find((i) => i.key === key)
+    if (!item) return
+    const note = extra.trim()
+    const changed = note ? { ...item, notes: appendNote(item.notes, note) } : item
+    const nextJob: Job = { ...job, items: job.items.map((i) => (i.key === key ? changed : i)) }
+    const request = planRequestOf(nextJob, changed)
+    itemAborters.current.get(key)?.abort()
+    const controller = new AbortController()
+    itemAborters.current.set(key, controller)
+    const update = (change: (e: Entry) => Entry) => setEntries((all) => all.map((e) => (e.key === key ? change(e) : e)))
+    setFailure(null)
+    update((e) => ({ ...e, status: 'busy', error: undefined, notice: undefined }))
+    try {
+      const draft = await requestDraft(await getAccessToken(client), request, { signal: controller.signal })
+      if (!mounted.current || controller.signal.aborted) return
+      const entry = readyEntry(key, request, draft, calendar, today)
+      setJob((j) => (j ? { ...j, items: j.items.map((i) => (i.key === key ? changed : i)) } : j))
+      update(() => entry)
+    } catch (err) {
+      if (isAbort(err) || !mounted.current) return
+      const message = describe(err, 'Could not draft this item')
+      setJob((j) => (j ? { ...j, items: j.items.map((i) => (i.key === key ? changed : i)) } : j))
+      // A good draft stays when its regeneration fails; a failed item stays failed.
+      update((e) => (e.draft && e.plan ? { ...e, status: 'ready', notice: message } : { ...e, status: 'failed', error: message }))
+    } finally {
+      if (itemAborters.current.get(key) === controller) itemAborters.current.delete(key)
     }
-    void generate(request, 'request')
   }
 
-  function regenerate() {
-    const base = lastRequest ?? draft?.request
-    if (!base) return
+  function removeEntry(key: string) {
+    setEntries((all) => (all.length > 1 ? all.filter((e) => e.key !== key) : all))
+    setJob((j) => (j && j.items.length > 1 ? { ...j, items: j.items.filter((i) => i.key !== key) } : j))
+  }
+
+  function regenerateAll() {
+    if (!job) return
     const extra = instruction.trim()
-    const combined = [base.notes?.trim(), extra].filter(Boolean).join('\n')
-    const { notes: _old, ...rest } = base
-    void generate(combined ? { ...rest, notes: combined } : rest, 'preview')
+    void generate(extra ? { ...job, notes: appendNote(job.notes, extra) } : job, 'preview')
   }
 
   async function create() {
-    if (!draft) return
+    const drafts = entries.flatMap((e) => (e.status === 'ready' && e.draft ? [e.draft] : []))
+    if (drafts.length === 0 || drafts.length !== entries.length) return
     setFailure(null)
     setStep('creating')
     try {
-      const sheetId = await insertSheetFromDraft(client, draft, userId, calendar, { today })
+      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today })
       if (mounted.current) onCreated(sheetId)
     } catch (err) {
       if (!mounted.current) return
       setFailure({ message: `Could not create the schedule: ${describe(err, 'unknown error')}`, retry: () => void create() })
       setStep('preview')
     }
+  }
+
+  // ---- the request form ----
+
+  const form: FormValues = { scheduleType, items, sameDate, sharedDate, notes }
+  const errors = validateItems(form)
+  const problem = firstProblem(form, errors)
+  const many = items.length > 1
+  const canAdd = items.length < MAX_ITEMS
+  const roomForCard = canAdd || items.some(isPristine)
+
+  function submitRequest(e: FormEvent) {
+    e.preventDefault()
+    setSubmitted(true)
+    if (problem) return
+    void generate(jobFromForm(form), 'request')
+  }
+
+  const updateItem = (key: string, patch: Partial<ItemForm>) => setItems((all) => all.map((i) => (i.key === key ? { ...i, ...patch } : i)))
+
+  /**
+   * Sets the item list, keeping the date the user entered once: the first item's date becomes the
+   * shared date when a second item appears, and the shared date moves into the last item left.
+   */
+  function applyItems(next: ItemForm[]) {
+    if (items.length === 1 && next.length > 1 && sameDate && !sharedDate && items[0].date) {
+      setSharedDate(items[0].date)
+      setItems(next.map((i) => (i.key === items[0].key ? { ...i, date: '' } : i)))
+      return
+    }
+    if (next.length === 1 && items.length > 1 && sameDate && sharedDate && !next[0].date) {
+      setItems([{ ...next[0], date: sharedDate }])
+      return
+    }
+    setItems(next)
+  }
+
+  function toggleCard(type: string, on: boolean) {
+    applyItems(on ? addCardItem(items, type) : removeCardItem(items, type, defaultChoice))
+  }
+
+  function addItem() {
+    if (items.length >= MAX_ITEMS) return
+    const item = newItem(defaultChoice)
+    focusAfterRender.current = `${ids.item}-${item.key}-name`
+    applyItems([...items, item])
+  }
+
+  function dropItem(key: string) {
+    focusAfterRender.current = 'add'
+    applyItems(removeItem(items, key, defaultChoice))
   }
 
   const failureBlock = failure && (
@@ -259,7 +387,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     </div>
   )
 
-  const knownProjects = draft?.history.projectCount
+  const knownProjects = entries.length === 1 ? entries[0].draft?.history.projectCount : undefined
   return (
     <div className="confirm-backdrop">
       <div
@@ -304,47 +432,85 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                     ))}
                   </select>
                 </div>
-                {equipmentTypes.length > 0 ? (
-                  <div className="planner-field">
-                    <label htmlFor={ids.equipment}>Equipment type</label>
-                    <select id={ids.equipment} value={equipmentChoice} onChange={(e) => setEquipmentChoice(e.target.value)}>
-                      {equipmentTypes.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                      <option value={OTHER}>Other (type it)</option>
-                    </select>
-                  </div>
-                ) : null}
-                {(equipmentTypes.length === 0 || equipmentChoice === OTHER) && (
-                  <div className="planner-field">
-                    <label htmlFor={ids.otherEquipment}>{equipmentTypes.length === 0 ? 'Equipment type' : 'Other equipment type'}</label>
-                    <input
-                      id={ids.otherEquipment}
-                      value={otherEquipment}
-                      onChange={(e) => setOtherEquipment(e.target.value)}
-                      placeholder="e.g. Gas turbine"
-                    />
-                    <small>No history for this type yet: the plan uses the schedule type's overall history.</small>
+
+                {equipmentTypes.length > 0 && (
+                  <fieldset className="planner-types">
+                    <legend>Equipment with history</legend>
+                    <p className="planner-hint">Tick what you need on site; each tick adds an item to the plan (up to {MAX_ITEMS}).</p>
+                    <div className="planner-type-cards">
+                      {equipmentTypes.map((type) => {
+                        const checked = items.some((i) => i.fromCard === type)
+                        const count = projectCounts[type]
+                        return (
+                          <label key={type} className={`planner-type-card${checked ? ' is-checked' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={!checked && !roomForCard}
+                              onChange={(e) => toggleCard(type, e.target.checked)}
+                            />
+                            <span className="planner-type-name">{type}</span>
+                            {count !== undefined && (
+                              <>
+                                {' '}
+                                <small className="planner-type-count">· {plural(count, 'project')}</small>
+                              </>
+                            )}
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </fieldset>
+                )}
+
+                {many && (
+                  <div className="planner-shared-date">
+                    <label className="planner-check">
+                      <input type="checkbox" checked={sameDate} onChange={(e) => setSameDate(e.target.checked)} />
+                      Use the same date for all
+                    </label>
+                    {sameDate && (
+                      <div className="planner-field">
+                        <label htmlFor={ids.sharedDate}>Required on site (all items)</label>
+                        <input
+                          id={ids.sharedDate}
+                          type="date"
+                          min={MIN_DATE}
+                          max={MAX_DATE}
+                          value={sharedDate}
+                          onChange={(e) => setSharedDate(e.target.value)}
+                        />
+                        <small>An item can have its own date instead: fill in its Required on site below.</small>
+                      </div>
+                    )}
                   </div>
                 )}
-                <div className="planner-field">
-                  <label htmlFor={ids.name}>Equipment name</label>
-                  <input
-                    id={ids.name}
-                    value={equipmentName}
-                    onChange={(e) => setEquipmentName(e.target.value)}
-                    placeholder="e.g. 400 MVA transformer for substation B"
-                    maxLength={200}
-                  />
+
+                <ol className="planner-items" aria-label="Equipment items">
+                  {items.map((item, index) => (
+                    <ItemFields
+                      key={item.key}
+                      item={item}
+                      index={index}
+                      idBase={`${ids.item}-${item.key}`}
+                      many={many}
+                      equipmentTypes={equipmentTypes}
+                      form={form}
+                      errors={submitted ? errors[item.key] : undefined}
+                      onChange={(patch) => updateItem(item.key, patch)}
+                      onRemove={() => dropItem(item.key)}
+                    />
+                  ))}
+                </ol>
+                <div className="planner-add">
+                  <button type="button" ref={addButtonRef} onClick={addItem} disabled={!canAdd}>
+                    Add another item
+                  </button>
+                  {!canAdd && <small className="planner-hint"> You can plan up to {MAX_ITEMS} items at once.</small>}
                 </div>
+
                 <div className="planner-field">
-                  <label htmlFor={ids.date}>Required on site</label>
-                  <input id={ids.date} type="date" min={MIN_DATE} max={MAX_DATE} value={requiredDate} onChange={(e) => setRequiredDate(e.target.value)} />
-                </div>
-                <div className="planner-field">
-                  <label htmlFor={ids.notes}>Notes (optional)</label>
+                  <label htmlFor={ids.notes}>{many ? 'Notes for all items (optional)' : 'Notes (optional)'}</label>
                   <textarea
                     id={ids.notes}
                     rows={3}
@@ -353,7 +519,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                     placeholder="Vendor, region, constraints, be conservative…"
                   />
                 </div>
-                {fieldError && <p role="alert">{fieldError}</p>}
+                {submitted && problem && <p role="alert">{problem}</p>}
               </>
             )}
             {failureBlock}
@@ -371,12 +537,14 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
         {step === 'drafting' && (
           <div className="planner-loading">
             <h3 ref={headingRef} tabIndex={-1}>
-              Drafting your plan
+              {draftingCount > 1 ? 'Drafting your plans' : 'Drafting your plan'}
             </h3>
             <p role="status">
-              {knownProjects
-                ? `Drafting from ${plural(knownProjects, 'historical project')}…`
-                : 'Drafting from historical projects…'}
+              {draftingCount > 1
+                ? `Drafting ${draftingCount} items from historical projects; this can take a minute…`
+                : knownProjects
+                  ? `Drafting from ${plural(knownProjects, 'historical project')}…`
+                  : 'Drafting from historical projects…'}
             </p>
             <div className="confirm-actions">
               <button type="button" onClick={close}>
@@ -386,10 +554,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
           </div>
         )}
 
-        {(step === 'preview' || step === 'creating') && draft && plan && (
-          <Preview
-            draft={draft}
-            plan={plan}
+        {(step === 'preview' || step === 'creating') && entries.length > 0 && (
+          <PlanPreview
+            entries={entries}
             headingRef={headingRef}
             instruction={instruction}
             instructionId={ids.instruction}
@@ -400,7 +567,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               setFailure(null)
               setStep('request')
             }}
-            onRegenerate={regenerate}
+            onRegenerateAll={regenerateAll}
+            onRegenerateOne={(key, extra) => void regenerateOne(key, extra)}
+            onRemove={removeEntry}
             onCreate={() => void create()}
           />
         )}
@@ -409,133 +578,115 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   )
 }
 
-interface PreviewProps {
-  draft: PlanDraft
-  plan: BackwardPlan
-  headingRef: RefObject<HTMLHeadingElement>
-  instruction: string
-  instructionId: string
-  onInstruction: (v: string) => void
-  failure: ReactNode
-  creating: boolean
-  onBack: () => void
-  onRegenerate: () => void
-  onCreate: () => void
+interface ItemFieldsProps {
+  item: ItemForm
+  index: number
+  idBase: string
+  many: boolean
+  equipmentTypes: string[]
+  form: FormValues
+  errors: { type?: string; name?: string; date?: string } | undefined
+  onChange: (patch: Partial<ItemForm>) => void
+  onRemove: () => void
 }
 
-function Preview({ draft, plan, headingRef, instruction, instructionId, onInstruction, failure, creating, onBack, onRegenerate, onCreate }: PreviewProps) {
-  const { feasibility } = plan
-  const target = plan.activities.find((a) => a.isTarget)
-  return (
-    <div className="planner-preview">
-      <h3 ref={headingRef} tabIndex={-1}>
-        Draft plan: {draft.request.equipmentName}
-      </h3>
-      <p className={`planner-source is-${draft.source}`}>{sourceLabel(draft)}</p>
-      {draft.history.projectCount === 0 && (
-        <p className="planner-sample" role="note">
-          <strong>No history for this equipment; durations are defaults.</strong> Check them against vendor quotes.
-        </p>
-      )}
-      {draft.history.sampleOnly && (
-        <p className="planner-sample" role="note">
-          <strong>Based on SAMPLE data, not your company's history.</strong> Check every duration before relying on this plan.
-        </p>
-      )}
-      <p className="planner-summary">{draft.summary}</p>
-
-      <div className={`planner-feasibility ${feasibility.feasible ? 'is-ok' : 'is-late'}`} role={feasibility.feasible ? 'status' : 'alert'}>
-        <p>{feasibility.message}</p>
-        <p className="planner-feasibility-dates">
-          Must start by <strong>{plan.mustStartBy}</strong> · {target?.name ?? 'Target'} on <strong>{plan.targetFinish}</strong>
-        </p>
-        {plan.dateNote && <p className="planner-date-note">{plan.dateNote}</p>}
-      </div>
-
-      <div className="planner-table-wrap">
-        <table className="planner-table">
-          <caption>Activities ({plan.activities.length})</caption>
-          <thead>
-            <tr>
-              <th scope="col">Activity</th>
-              <th scope="col">Phase</th>
-              <th scope="col">Duration</th>
-              <th scope="col">Basis</th>
-              <th scope="col">Start</th>
-              <th scope="col">End</th>
-              <th scope="col">Float</th>
-            </tr>
-          </thead>
-          <tbody>
-            {plan.activities.map((a) => (
-              <tr key={a.code} className={a.critical ? 'is-critical' : undefined}>
-                <th scope="row">
-                  {a.name}
-                  {a.isTarget && <span className="planner-target"> (target)</span>}
-                </th>
-                <td>{a.phase}</td>
-                <td>{a.durationDays === 0 ? 'Milestone' : `${a.durationDays}d`}</td>
-                <td>
-                  <span className={`planner-basis is-${a.basis}`}>{BASIS_LABELS[a.basis]}</span> <span className="planner-reason">{a.reason}</span>
-                </td>
-                <td>{a.start}</td>
-                <td>{a.end}</td>
-                <td>{a.critical ? 'Critical' : `${a.totalFloat}d float`}</td>
-              </tr>
+/** One equipment item of the request form: type, name and its own required date. */
+function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, onChange, onRemove }: ItemFieldsProps) {
+  const typeId = `${idBase}-type`
+  const otherId = `${idBase}-other`
+  const nameId = `${idBase}-name`
+  const dateId = `${idBase}-date`
+  const typeError = errors?.type
+  const nameError = errors?.name
+  const dateError = errors?.date
+  const sharedDateInUse = many && form.sameDate
+  const effective = effectiveDate(item, form)
+  const showOther = equipmentTypes.length === 0 || item.choice === OTHER
+  const body = (
+    <>
+      {equipmentTypes.length > 0 && (
+        <div className="planner-field">
+          <label htmlFor={typeId}>Equipment type</label>
+          <select id={typeId} value={item.choice} onChange={(e) => onChange({ choice: e.target.value, fromCard: null })}>
+            {equipmentTypes.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
             ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="planner-hint">Dates use a Monday to Friday working week; you can change the calendar in the sheet's schedule settings.</p>
-
-      <div className="planner-lists">
-        {draft.assumptions.length > 0 && (
-          <section aria-label="Assumptions">
-            <h4>Assumptions</h4>
-            <ul>
-              {draft.assumptions.map((x, i) => (
-                <li key={i}>{x}</li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {draft.risks.length > 0 && (
-          <section aria-label="Risks">
-            <h4>Risks</h4>
-            <ul>
-              {draft.risks.map((x, i) => (
-                <li key={i}>{x}</li>
-              ))}
-            </ul>
-          </section>
-        )}
-      </div>
-
-      <div className="planner-field planner-regenerate">
-        <label htmlFor={instructionId}>Instructions for a new draft (optional)</label>
-        <textarea
-          id={instructionId}
-          rows={2}
-          value={instruction}
-          onChange={(e) => onInstruction(e.target.value)}
-          placeholder="e.g. Use p80 for fabrication; the vendor quotes 16 weeks"
-          disabled={creating}
+            <option value={OTHER}>Other (type it)</option>
+          </select>
+        </div>
+      )}
+      {showOther && (
+        <div className="planner-field">
+          <label htmlFor={otherId}>{equipmentTypes.length === 0 ? 'Equipment type' : 'Other equipment type'}</label>
+          <input
+            id={otherId}
+            value={item.other}
+            onChange={(e) => onChange({ other: e.target.value })}
+            placeholder="e.g. Gas turbine"
+            maxLength={100}
+            aria-invalid={typeError ? true : undefined}
+            aria-describedby={typeError ? `${otherId}-error` : undefined}
+          />
+          <small>No history for this type yet: the plan uses the schedule type's overall history.</small>
+          {typeError && (
+            <small id={`${otherId}-error`} className="planner-error">
+              {typeError}
+            </small>
+          )}
+        </div>
+      )}
+      <div className="planner-field">
+        <label htmlFor={nameId}>Equipment name</label>
+        <input
+          id={nameId}
+          value={item.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder="e.g. 400 MVA transformer for substation B"
+          maxLength={200}
+          aria-invalid={nameError ? true : undefined}
+          aria-describedby={nameError ? `${nameId}-error` : undefined}
         />
+        {nameError && (
+          <small id={`${nameId}-error`} className="planner-error">
+            {nameError}
+          </small>
+        )}
       </div>
-
-      {failure}
-      {creating && <p role="status">Creating the schedule…</p>}
-      <div className="confirm-actions">
-        <button type="button" onClick={onBack} disabled={creating}>
-          Back
-        </button>
-        <button type="button" onClick={onRegenerate} disabled={creating}>
-          Regenerate
-        </button>
-        <button type="button" className="planner-approve" onClick={onCreate} disabled={creating}>
-          Create schedule
-        </button>
+      <div className="planner-field">
+        <label htmlFor={dateId}>Required on site</label>
+        <input
+          id={dateId}
+          type="date"
+          min={MIN_DATE}
+          max={MAX_DATE}
+          value={item.date}
+          onChange={(e) => onChange({ date: e.target.value })}
+          aria-invalid={dateError ? true : undefined}
+          aria-describedby={dateError ? `${dateId}-error` : sharedDateInUse ? `${dateId}-hint` : undefined}
+        />
+        {sharedDateInUse && !item.date && (
+          <small id={`${dateId}-hint`}>{effective ? `Uses the shared date, ${effective}.` : 'Empty: uses the shared date.'}</small>
+        )}
+        {dateError && (
+          <small id={`${dateId}-error`} className="planner-error">
+            {dateError}
+          </small>
+        )}
       </div>
-    </div>
+    </>
+  )
+  if (!many) return <li className="planner-item">{body}</li>
+  return (
+    <li className="planner-item">
+      <fieldset>
+        <legend>{`Item ${index + 1}`}</legend>
+        {body}
+        <button type="button" className="planner-remove" aria-label={`Remove item ${index + 1}`} onClick={onRemove}>
+          Remove
+        </button>
+      </fieldset>
+    </li>
   )
 }
