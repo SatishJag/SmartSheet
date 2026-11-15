@@ -4,6 +4,9 @@ import { AuthGate } from './auth/AuthGate'
 import { SheetList } from './auth/SheetList'
 import { createSupabaseClient, getSupabaseConfig } from './lib/supabase'
 import { SheetView } from './views/SheetView'
+import { Icon } from './ui/Icon'
+import { ThemePicker } from './ui/ThemePicker'
+import './theme.css'
 import './App.css'
 
 export default function App() {
@@ -41,10 +44,16 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
   return (
     <div className="app">
       <header className="app-header">
-        <strong>Construction Work Management</strong>
+        <span className="brand">
+          <span className="brand-mark">
+            <Icon name="logo" size={18} />
+          </span>
+          <strong className="brand-name">Construction Work Management</strong>
+        </span>
         <span className="spacer" />
+        <ThemePicker />
       </header>
-      <main>
+      <main className={openSheetId === null ? 'page page-list' : 'page page-sheet'}>
         {openSheetId === null ? (
           <SheetList client={client} userId={userId} onOpen={setOpenSheetId} />
         ) : (

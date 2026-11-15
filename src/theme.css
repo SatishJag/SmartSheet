@@ -1,0 +1,310 @@
+/*
+ * Design tokens + shared building blocks (ported from the PMIS design language).
+ *
+ * - The brand colour is a 9-step scale of space-separated RGB triplets (--b50 .. --b800) so it can be
+ *   used with alpha:  rgb(var(--b700) / .4).  `data-theme` on <html> swaps the whole scale.
+ * - Text and buttons use the darker steps (--b700 / --b800) so they pass WCAG AA on white:
+ *   white on --b700 is >= 5:1 in every theme. The bright steps (--b400..--b600) are for fills, bars
+ *   and decoration only (always paired with a darker outline or label when they carry meaning).
+ * - Everything here is global, so any screen (including the AI wizard) can use .btn, .card, .input ...
+ */
+
+/* ---------- brand scales ---------- */
+:root,
+[data-theme='orange'] { --b50: 255 245 236; --b100: 255 230 208; --b200: 255 202 160; --b300: 255 168 106; --b400: 255 138 61; --b500: 255 106 19; --b600: 234 88 12; --b700: 194 65 12; --b800: 154 52 18; }
+[data-theme='blue'] { --b50: 239 246 255; --b100: 219 234 254; --b200: 191 219 254; --b300: 147 197 253; --b400: 96 165 250; --b500: 59 130 246; --b600: 37 99 235; --b700: 29 78 216; --b800: 30 64 175; }
+[data-theme='purple'] { --b50: 245 243 255; --b100: 237 233 254; --b200: 221 214 254; --b300: 196 181 253; --b400: 167 139 250; --b500: 139 92 246; --b600: 124 58 237; --b700: 109 40 217; --b800: 91 33 182; }
+[data-theme='green'] { --b50: 240 253 244; --b100: 220 252 231; --b200: 187 247 208; --b300: 134 239 172; --b400: 74 222 128; --b500: 34 197 94; --b600: 22 163 74; --b700: 21 128 61; --b800: 22 101 52; }
+[data-theme='red'] { --b50: 254 242 242; --b100: 254 226 226; --b200: 254 202 202; --b300: 252 165 165; --b400: 248 113 113; --b500: 239 68 68; --b600: 220 38 38; --b700: 185 28 28; --b800: 153 27 27; }
+[data-theme='teal'] { --b50: 240 253 250; --b100: 204 251 241; --b200: 153 246 228; --b300: 94 234 212; --b400: 45 212 191; --b500: 20 184 166; --b600: 13 148 136; --b700: 15 118 110; --b800: 17 94 89; }
+[data-theme='grey'] { --b50: 248 250 252; --b100: 241 245 249; --b200: 226 232 240; --b300: 203 213 225; --b400: 148 163 184; --b500: 100 116 139; --b600: 71 85 105; --b700: 51 65 85; --b800: 30 41 59; }
+[data-theme='black'] { --b50: 245 245 245; --b100: 229 229 229; --b200: 212 212 212; --b300: 163 163 163; --b400: 115 115 115; --b500: 82 82 82; --b600: 38 38 38; --b700: 23 23 23; --b800: 10 10 10; }
+
+/* ---------- neutral + semantic tokens ---------- */
+:root {
+  --ink: #16181d;
+  --ink-2: #3d424e; /* secondary text: 9:1 on white */
+  --ink-3: #5b6170; /* muted text: 6:1 on white, 5.5:1 on the page background */
+  --page: #faf9f7; /* warm off-white page */
+  --surface: #ffffff;
+  --surface-2: #f6f4f0; /* quiet fills: table headers, read-only cells, lanes */
+  --line: rgb(22 24 29 / 0.09); /* hairlines and separators */
+  --line-2: rgb(22 24 29 / 0.16); /* card / control borders */
+  --line-strong: #85878d; /* form-control outline: >= 3:1 on white (WCAG 1.4.11) */
+
+  /* brand shortcuts */
+  --accent: rgb(var(--b700)); /* text, links, primary buttons */
+  --accent-strong: rgb(var(--b800));
+  --accent-fill: rgb(var(--b600)); /* bars, indicators (decorative / paired with outlines) */
+  --accent-soft: rgb(var(--b50)); /* tinted backgrounds */
+  --accent-soft-2: rgb(var(--b100));
+  --on-accent: #fff;
+
+  /* status colours, all >= 4.5:1 as text on white */
+  --danger: #b42318;
+  --danger-soft: #fef3f2;
+  --warn: #9a4a05;
+  --warn-soft: #fff6e5;
+  --ok: #166a3a;
+  --ok-soft: #ecfdf3;
+  --info: #175cd3;
+  --info-soft: #eff6ff;
+  --crit: 190 18 60; /* critical path (crimson); redefined in the red / black themes below */
+
+  /* radius scale */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 16px;
+  --r-lg: 24px;
+  --r-pill: 999px;
+
+  /* shadows */
+  --shadow-card: 0 1px 2px rgb(22 24 29 / 0.04), 0 8px 24px -8px rgb(22 24 29 / 0.1);
+  --shadow-lift: 0 2px 4px rgb(22 24 29 / 0.05), 0 24px 48px -12px rgb(var(--b600) / 0.28);
+  --shadow-pop: 0 24px 60px -12px rgb(22 24 29 / 0.28), 0 4px 12px rgb(22 24 29 / 0.08);
+  --ring: 0 0 0 4px rgb(var(--b700) / 0.28);
+
+  --font: 'Plus Jakarta Sans', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --header-h: 64px;
+  --page-pad: 24px;
+  --control-h: 38px; /* raised to 44px on touch devices, see the end of the file */
+}
+[data-theme='red'] { --crit: 88 28 135; } /* red brand: critical bars go plum so they stay distinct */
+[data-theme='black'],
+[data-theme='grey'] { --crit: 190 18 60; }
+
+/* ---------- base ---------- */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--page);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4 { margin: 0; letter-spacing: -0.01em; line-height: 1.25; }
+p { margin: 0; }
+code { font-size: 0.9em; padding: 1px 6px; border-radius: var(--r-xs); background: var(--surface-2); }
+a { color: var(--accent); }
+
+/* Visible keyboard focus everywhere (WCAG 2.4.7). Fields and .btn use a ring instead. */
+:focus-visible { outline: 3px solid rgb(var(--b700)); outline-offset: 2px; }
+::selection { background: rgb(var(--b200)); color: var(--ink); }
+
+/* ---------- surfaces ---------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* Interactive cards: a springy lift on hover / focus and a press-in on tap. */
+.lift {
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease, border-color 0.2s ease;
+}
+.lift .pop-icon { transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@media (hover: hover) {
+  .lift:hover,
+  .lift:focus-within {
+    transform: translateY(-4px) scale(1.012);
+    box-shadow: var(--shadow-lift);
+    border-color: rgb(var(--b300) / 0.6);
+  }
+  .lift:hover .pop-icon,
+  .lift:focus-within .pop-icon { transform: scale(1.1) rotate(-4deg); }
+}
+.lift:active { transform: scale(0.985); box-shadow: 0 4px 10px -4px rgb(22 24 29 / 0.18); transition-duration: 0.12s; }
+@media (prefers-reduced-motion: reduce) {
+  .lift,
+  .lift:hover,
+  .lift:focus-within,
+  .lift:active { transform: none; transition: box-shadow 0.01ms, border-color 0.01ms; }
+  .lift .pop-icon,
+  .lift:hover .pop-icon,
+  .lift:focus-within .pop-icon { transform: none; transition: none; }
+  .rise { animation: none !important; }
+}
+
+/* Anything that opens on demand (dialogs, menus, popovers) rises in; page content never fades in. */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.rise { animation: rise 0.28s ease both; }
+
+/* ---------- buttons ---------- */
+/* Every plain <button> is a pill ghost button; .btn-primary / .btn-danger are the filled variants. */
+button,
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-h);
+  padding: 6px 16px;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+button:hover:not(:disabled),
+.btn:hover:not(:disabled) { background: rgb(22 24 29 / 0.04); border-color: var(--ink); }
+button:disabled,
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+button:focus-visible,
+.btn:focus-visible { outline: none; box-shadow: var(--ring), 0 0 0 2px var(--surface) inset; border-color: var(--accent); }
+
+.btn-primary {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 700;
+  box-shadow: 0 8px 20px -8px rgb(var(--b700) / 0.55);
+}
+button.btn-primary:hover:not(:disabled),
+.btn-primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+.btn-ghost { background: var(--surface); }
+.btn-danger,
+.confirm-danger {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+  font-weight: 700;
+}
+button.btn-danger:hover:not(:disabled),
+button.confirm-danger:hover:not(:disabled) { background: #912018; border-color: #912018; }
+.btn-sm { min-height: 32px; padding: 4px 12px; font-size: 0.8125rem; }
+.btn svg,
+button svg { flex: none; }
+
+/* Quiet icon-only button (rename / delete / toggles). */
+.btn-icon {
+  width: var(--control-h);
+  min-height: var(--control-h);
+  padding: 0;
+  color: var(--ink-3);
+  background: transparent;
+  border-color: transparent;
+}
+.btn-icon:hover:not(:disabled) { color: var(--ink); background: rgb(22 24 29 / 0.07); border-color: transparent; }
+.btn-icon.is-danger:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); }
+
+.link-button {
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  border-radius: var(--r-xs);
+}
+
+/* ---------- form fields ---------- */
+input:not([type='checkbox']):not([type='radio']),
+select,
+textarea,
+.input {
+  min-height: var(--control-h);
+  max-width: 100%;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.9375rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:not([type='checkbox']):not([type='radio']):hover,
+select:hover,
+textarea:hover { border-color: var(--ink); }
+input:not([type='checkbox']):not([type='radio']):focus,
+select:focus,
+textarea:focus,
+.input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+input::placeholder,
+textarea::placeholder { color: var(--ink-3); }
+input[type='checkbox'],
+input[type='radio'] { width: 18px; height: 18px; margin: 0; accent-color: rgb(var(--b700)); }
+select { padding-right: 8px; }
+input[aria-invalid='true'] { border-color: var(--danger); }
+.label { display: block; margin-bottom: 6px; font-size: 0.875rem; font-weight: 600; color: var(--ink-2); }
+
+/* ---------- chips, badges, segmented control ---------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: rgb(var(--b800));
+  background: rgb(var(--b100));
+  border-radius: var(--r-pill);
+}
+
+/* A pill segmented control (used for the Grid / Gantt / Kanban switch). */
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-pill);
+  box-shadow: 0 1px 2px rgb(22 24 29 / 0.04);
+}
+.segmented button {
+  min-height: 34px;
+  padding: 4px 18px;
+  color: var(--ink-2);
+  background: transparent;
+  border-color: transparent;
+}
+.segmented button:hover:not(:disabled) { color: var(--ink); background: rgb(22 24 29 / 0.05); border-color: transparent; }
+.segmented button[aria-selected='true'],
+.segmented button[aria-pressed='true'] {
+  color: var(--on-accent);
+  background: var(--accent);
+  box-shadow: 0 6px 14px -6px rgb(var(--b700) / 0.6);
+}
+
+/* Striped orange-style progress bar (PMIS): a track with a diagonal-striped fill. */
+.progress { height: 10px; overflow: hidden; background: rgb(var(--b100)); border-radius: var(--r-pill); }
+.progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: repeating-linear-gradient(135deg, rgb(var(--b600)) 0 6px, rgb(var(--b500)) 6px 12px);
+}
+
+/* Screen-reader-only text. */
+.visually-hidden,
+.kanban-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+[role='alert'] { color: var(--danger); }
+
+/* ---------- touch devices / small screens ---------- */
+@media (pointer: coarse), (max-width: 640px) {
+  :root { --control-h: 44px; --page-pad: 16px; }
+  .btn-sm { min-height: 40px; }
+  .segmented button { min-height: 40px; }
+}
+@media (max-width: 640px) {
+  :root { --header-h: 56px; }
+}

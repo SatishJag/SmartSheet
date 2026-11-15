@@ -37,7 +37,7 @@ export async function returnAsVisitor(page: Page, userId: string): Promise<void>
 
 /** Creates a sheet from the "Project schedule" template; ends inside the new sheet's grid. */
 export async function createScheduleSheet(page: Page): Promise<void> {
-  await page.getByLabel('Template').selectOption({ label: 'Project schedule' })
+  await page.getByRole('radio', { name: 'Project schedule' }).check()
   await page.getByRole('button', { name: 'New sheet' }).click()
   await expect(page.getByRole('heading', { name: 'Project schedule' })).toBeVisible()
   await expect(page.getByRole('grid')).toBeVisible()
