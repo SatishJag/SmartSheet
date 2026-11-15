@@ -20,6 +20,9 @@ export interface Baseline {
   rows: BaselineRow[]
 }
 
+/** A baseline without its rows (what loads with the sheet). */
+export type BaselineMeta = Omit<Baseline, 'rows'>
+
 export type VarianceStatus = 'on-track' | 'late' | 'ahead' | 'new'
 
 /** Working days the live schedule is later (+) or earlier (-) than the baseline; null for a new row. */
