@@ -152,7 +152,7 @@ export function ColumnDialog({ mode, columnTitle, initialType = 'TEXT_NUMBER', i
           <button type="button" onClick={onCancel}>
             Cancel
           </button>
-          <button type="submit" className="column-dialog-submit">
+          <button type="submit" className="btn-primary column-dialog-submit">
             {SUBMIT[mode]}
           </button>
         </div>

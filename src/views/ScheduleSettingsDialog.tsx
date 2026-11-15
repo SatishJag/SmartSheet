@@ -3,6 +3,7 @@ import type { Calendar } from '../engine/types'
 import { isAcceptedDate, MAX_DATE, MIN_DATE } from '../model/validate'
 import { useSheetStore, useSheetStoreApi } from '../store/SheetStoreContext'
 import { HOURS_PER_DAY_MSG, normalizeCalendar } from '../store/sheetSettings'
+import { Icon } from '../ui/Icon'
 import './confirmDialog.css'
 import './scheduleSettings.css'
 
@@ -25,6 +26,7 @@ export function ScheduleSettingsButton() {
   return (
     <>
       <button type="button" onClick={() => setOpen(true)}>
+        <Icon name="settings" size={16} />
         Schedule settings
       </button>
       {open && <ScheduleSettingsDialog onClose={() => setOpen(false)} />}
@@ -210,7 +212,9 @@ export function ScheduleSettingsDialog({ onClose }: { onClose: () => void }) {
             <button type="button" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit">Save</button>
+            <button type="submit" className="btn-primary">
+              Save
+            </button>
           </div>
         </form>
       </div>

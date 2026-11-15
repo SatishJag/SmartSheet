@@ -32,14 +32,14 @@ export function anchors(type: SchedDep['type'], from: BarEdges, to: BarEdges): {
 }
 
 /** Orthogonal elbow path from a to b; starts with `M a.x a.y` and ends with `H b.x`. */
-export function elbowPath(a: Anchor, b: Anchor): string {
+export function elbowPath(a: Anchor, b: Anchor, rowHalf = ROW_HALF): string {
   const out = a.x + a.dir * GAP
   const into = b.x - b.dir * GAP
   // Three segments when one vertical line can serve both the exit and the entry stub.
   if ((b.x - out) * b.dir >= GAP) return `M ${a.x} ${a.y} H ${out} V ${b.y} H ${b.x}`
   if ((into - a.x) * a.dir >= GAP) return `M ${a.x} ${a.y} H ${into} V ${b.y} H ${b.x}`
   // Otherwise loop around through the gap between the two rows.
-  const mid = b.y === a.y ? a.y + ROW_HALF : b.y + (b.y > a.y ? -ROW_HALF : ROW_HALF)
+  const mid = b.y === a.y ? a.y + rowHalf : b.y + (b.y > a.y ? -rowHalf : rowHalf)
   return `M ${a.x} ${a.y} H ${out} V ${mid} H ${into} V ${b.y} H ${b.x}`
 }
 
@@ -52,10 +52,12 @@ interface DependencyArrowsProps {
   rowNumber(rowId: string): number | undefined
   /** `depKey(pred, succ)` of the links to draw as critical. */
   criticalKeys?: ReadonlySet<string>
+  /** Row height in px (density); defaults to 32. */
+  rowHeight?: number
 }
 
 /** Dependency arrows, drawn under the bars and never intercepting their pointer events. */
-export function DependencyArrows({ deps, edgesOf, inWindow, rowNumber, criticalKeys }: DependencyArrowsProps) {
+export function DependencyArrows({ deps, edgesOf, inWindow, rowNumber, criticalKeys, rowHeight = ROW_HALF * 2 }: DependencyArrowsProps) {
   const markerId = `gantt-arrowhead-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
   const criticalMarkerId = `${markerId}-critical`
   return (
@@ -87,7 +89,7 @@ export function DependencyArrows({ deps, edgesOf, inWindow, rowNumber, criticalK
             aria-label={label}
             data-critical={critical ? 'true' : undefined}
             className={critical ? 'gantt-arrow is-critical' : 'gantt-arrow'}
-            d={elbowPath(a, b)}
+            d={elbowPath(a, b, rowHeight / 2)}
             markerEnd={`url(#${critical ? criticalMarkerId : markerId})`}
           />
         )

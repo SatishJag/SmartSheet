@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { isWorkingDay, shiftIso } from '../../engine/calendar'
 import type { Scheduled } from '../../engine/schedule'
@@ -12,7 +12,7 @@ import { fixedViewport, measuredViewport } from '../grid/viewport'
 import { useCriticalPath } from '../../store/useCriticalPath'
 import { floatBadge, floatDescription, useShowCriticalPath } from '../criticalPathContext'
 import { DependencyArrows, type BarEdges } from './arrows'
-import { barKind, GanttBar, ROW_HEIGHT } from './bars'
+import { barKind, GanttBar } from './bars'
 import {
   barGeometry,
   capRange,
@@ -26,9 +26,25 @@ import {
   type DayRange,
 } from './timeScale'
 import { useBarDrag, type DragMode, type DragPreview } from './useBarDrag'
+import { useDensity } from '../density'
 import './gantt.css'
 
-const LABEL_WIDTH = 240
+const LABEL_WIDTH_WIDE = 240
+const LABEL_WIDTH_NARROW = 148 // phones: leave room for the timeline
+const NARROW_QUERY = '(max-width: 640px)'
+
+/** The label column's width, narrower on phones. */
+function useLabelWidth(): number {
+  const query = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(NARROW_QUERY) : null
+  const [narrow, setNarrow] = useState(query?.matches ?? false)
+  useEffect(() => {
+    if (!query) return undefined
+    const on = () => setNarrow(query.matches)
+    query.addEventListener?.('change', on)
+    return () => query.removeEventListener?.('change', on)
+  }, [query])
+  return narrow ? LABEL_WIDTH_NARROW : LABEL_WIDTH_WIDE
+}
 const HEADER_ROW = 20
 const INDENT_PX = 16
 const OVERSCAN = 10
@@ -37,8 +53,24 @@ const MSG_PREDECESSORS = START_SET_BY_PREDECESSORS
 const MSG_SUMMARY = 'Summary row dates are calculated from their child rows — move the child tasks instead'
 const MSG_NO_DURATION = 'Add a Duration column to resize tasks in the Gantt chart'
 
+/** Zoom presets: the width of one calendar day. */
+const ZOOMS = [
+  { id: 'day', label: 'Day', width: 28 },
+  { id: 'week', label: 'Week', width: 12 },
+  { id: 'month', label: 'Month', width: 4 },
+] as const
+type ZoomId = (typeof ZOOMS)[number]['id']
+
+/** Day-number labels thin out as days get narrower: every day, then Mondays, then the 1st and 15th. */
+function showDayLabel(iso: string, dayWidth: number): boolean {
+  if (dayWidth >= 20) return true
+  const d = Number(iso.slice(8))
+  if (dayWidth >= 10) return new Date(`${iso}T00:00:00Z`).getUTCDay() === 1
+  return d === 1 || d === 15
+}
+
 export interface GanttViewProps {
-  /** Width of one calendar day in px. */
+  /** Width of one calendar day in px. When given it fixes the scale; otherwise the Day / Week / Month zoom decides. */
   dayWidth?: number
   /** Height of the scroll area in px. Measured from the layout when omitted. */
   viewportHeight?: number
@@ -85,8 +117,13 @@ function previewed(s: Scheduled, p: DragPreview | null, rowId: string, cal: Cale
  * bars, milestones, summary bars and dependency arrows. Rows are virtualized. Dragging a bar
  * writes the Start (move) or Duration (resize) cell through the store.
  */
-export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewProps) {
+export function GanttView({ dayWidth: fixedDayWidth, viewportHeight, today }: GanttViewProps) {
   const api = useSheetStoreApi()
+  const [zoom, setZoom] = useState<ZoomId>('day')
+  const dayWidth = fixedDayWidth ?? (ZOOMS.find((z) => z.id === zoom)?.width ?? 28)
+  const { rowHeight: ROW_HEIGHT } = useDensity()
+  const LABEL_WIDTH = useLabelWidth()
+  const patternId = `gantt-stripe-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
   const data = useSheetStore((s) => s.data)
   const scheduled = useSheetStore((s) => s.scheduled)
   const critical = useCriticalPath(useShowCriticalPath())
@@ -182,7 +219,7 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
               y={2 * HEADER_ROW - 6}
               textAnchor="middle"
             >
-              {Number(iso.slice(8))}
+              {showDayLabel(iso, dayWidth) ? Number(iso.slice(8)) : ''}
             </text>
           ))}
         </svg>
@@ -229,6 +266,11 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
     getItemKey: (i) => rows[i]?.id ?? i,
     ...(viewportHeight !== undefined ? fixedViewport(viewportHeight) : measuredViewport),
   })
+
+  // A density change alters every row's height: tell the virtualizer to re-measure.
+  useEffect(() => {
+    virtualizer.measure()
+  }, [ROW_HEIGHT, virtualizer])
 
   const statusRegion = (
     <div role="status" className="gantt-status">
@@ -282,8 +324,31 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
     })
 
   return (
-    <section className="gantt" aria-label="Gantt chart">
-      {statusRegion}
+    <section
+      className="gantt"
+      aria-label="Gantt chart"
+      data-zoom={dayWidth >= 20 ? 'day' : dayWidth >= 10 ? 'week' : 'month'}
+      style={
+        {
+          '--stripe': `url(#${patternId})`,
+          '--stripe-crit': `url(#${patternId}-crit)`,
+          '--row-h': `${ROW_HEIGHT}px`,
+          '--day-w': `${dayWidth}px`,
+        } as CSSProperties
+      }
+    >
+      <div className="gantt-toolbar">
+        {statusRegion}
+        {fixedDayWidth === undefined && (
+          <div role="group" aria-label="Timeline zoom" className="segmented segmented-sm gantt-zoom">
+            {ZOOMS.map((z) => (
+              <button key={z.id} type="button" aria-pressed={zoom === z.id} onClick={() => setZoom(z.id)}>
+                {z.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       {limited && (
         <p className="gantt-limit-note" role="note">
           Timeline limited to 10 years
@@ -341,6 +406,16 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
               })}
             </div>
             <svg className="gantt-timeline" width={timelineWidth} height={totalHeight}>
+              <defs>
+                <pattern id={patternId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                  <rect className="gantt-stripe-base" width="8" height="8" />
+                  <rect className="gantt-stripe-line" width="4" height="8" />
+                </pattern>
+                <pattern id={`${patternId}-crit`} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                  <rect className="gantt-stripe-base is-crit" width="8" height="8" />
+                  <rect className="gantt-stripe-line is-crit" width="4" height="8" />
+                </pattern>
+              </defs>
               {shading}
               {todayIdx >= 0 && todayIdx < range.days && (
                 <line
@@ -358,6 +433,7 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
                 inWindow={inWindow}
                 rowNumber={(id) => numbers.get(id)}
                 criticalKeys={criticalKeys}
+                rowHeight={ROW_HEIGHT}
               />
               {items.map((item) => {
                 const row = rows[item.index]
@@ -376,6 +452,7 @@ export function GanttView({ dayWidth = 28, viewportHeight, today }: GanttViewPro
                     rowTop={item.start}
                     dragging={drag.preview?.rowId === row.id}
                     critical={critical?.byRow[row.id]?.critical}
+                    rowHeight={ROW_HEIGHT}
                     floatNote={critical?.byRow[row.id] ? floatDescription(critical.byRow[row.id]) : undefined}
                     onPointerDown={startDrag}
                   />

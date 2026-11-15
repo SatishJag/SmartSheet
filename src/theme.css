@@ -137,8 +137,7 @@ a { color: var(--accent); }
 
 /* ---------- buttons ---------- */
 /* Every plain <button> is a pill ghost button; .btn-primary / .btn-danger are the filled variants. */
-button,
-.btn {
+:where(button, .btn) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -156,12 +155,9 @@ button,
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
 }
-button:hover:not(:disabled),
-.btn:hover:not(:disabled) { background: rgb(22 24 29 / 0.04); border-color: var(--ink); }
-button:disabled,
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
-button:focus-visible,
-.btn:focus-visible { outline: none; box-shadow: var(--ring), 0 0 0 2px var(--surface) inset; border-color: var(--accent); }
+:where(button:hover:not(:disabled), .btn:hover:not(:disabled)) { background: rgb(22 24 29 / 0.04); border-color: var(--ink); }
+:where(button:disabled, .btn:disabled) { opacity: 0.45; cursor: not-allowed; }
+:is(button, .btn):focus-visible { outline: none; box-shadow: var(--ring); border-color: var(--accent); }
 
 .btn-primary {
   color: var(--on-accent);
@@ -183,8 +179,7 @@ button.btn-primary:hover:not(:disabled),
 button.btn-danger:hover:not(:disabled),
 button.confirm-danger:hover:not(:disabled) { background: #912018; border-color: #912018; }
 .btn-sm { min-height: 32px; padding: 4px 12px; font-size: 0.8125rem; }
-.btn svg,
-button svg { flex: none; }
+svg { flex: none; }
 
 /* Quiet icon-only button (rename / delete / toggles). */
 .btn-icon {
@@ -209,9 +204,7 @@ button svg { flex: none; }
 }
 
 /* ---------- form fields ---------- */
-input:not([type='checkbox']):not([type='radio']),
-select,
-textarea,
+:where(input:not([type='checkbox']):not([type='radio']), select, textarea),
 .input {
   min-height: var(--control-h);
   max-width: 100%;
@@ -224,19 +217,14 @@ textarea,
   border-radius: var(--r-sm);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-input:not([type='checkbox']):not([type='radio']):hover,
-select:hover,
-textarea:hover { border-color: var(--ink); }
-input:not([type='checkbox']):not([type='radio']):focus,
-select:focus,
-textarea:focus,
-.input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+:where(input:not([type='checkbox']):not([type='radio']), select, textarea):hover { border-color: var(--ink); }
+:is(input:not([type='checkbox']):not([type='radio']), select, textarea, .input):focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 input::placeholder,
 textarea::placeholder { color: var(--ink-3); }
 input[type='checkbox'],
 input[type='radio'] { width: 18px; height: 18px; margin: 0; accent-color: rgb(var(--b700)); }
 select { padding-right: 8px; }
-input[aria-invalid='true'] { border-color: var(--danger); }
+:where(input)[aria-invalid='true'] { border-color: var(--danger); }
 .label { display: block; margin-bottom: 6px; font-size: 0.875rem; font-weight: 600; color: var(--ink-2); }
 
 /* ---------- chips, badges, segmented control ---------- */

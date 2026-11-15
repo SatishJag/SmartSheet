@@ -44,6 +44,7 @@
 }
 .template-card input {
   position: absolute;
+  z-index: 1;
   inset: 0;
   width: 100%;
   height: 100%;
@@ -61,8 +62,8 @@
   flex: none;
   width: 40px;
   height: 40px;
-  color: var(--accent-strong);
-  background: rgb(var(--b100));
+  color: var(--ink-2);
+  background: var(--surface-2);
   border-radius: 12px;
 }
 .template-card.is-selected .template-icon { color: var(--on-accent); background: var(--accent); }
@@ -194,7 +195,7 @@
   border: 1.5px dashed var(--line-strong);
   border-radius: var(--r-lg);
 }
-.empty-icon { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 8px; color: var(--accent-strong); background: rgb(var(--b100)); border-radius: 18px; }
+.empty-icon { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 8px; color: var(--ink-2); background: var(--surface-2); border-radius: 18px; }
 .empty-title { font-size: 1.125rem; font-weight: 700; }
 .empty-text { max-width: 420px; color: var(--ink-3); }
 
