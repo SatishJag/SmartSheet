@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthGate } from './AuthGate'
@@ -175,16 +175,17 @@ describe('SheetList', () => {
   describe('templates', () => {
     const insertTemplate = vi.mocked(insertSheetFromTemplate)
 
-    it('has a Template select with the three templates only, defaulting to Project schedule', async () => {
+    it('has a Template radio group with the three templates only, defaulting to Project schedule', async () => {
       const { client } = makeSheetsClient({})
       render(<SheetList client={client} userId="user-1" onOpen={() => {}} />)
-      const select = await screen.findByLabelText('Template')
-      expect(select).toHaveValue('project-schedule')
-      expect(Array.from((select as HTMLSelectElement).options).map((o) => [o.value, o.textContent])).toEqual([
+      const group = await screen.findByRole('radiogroup', { name: 'Template' })
+      const radios = within(group).getAllByRole('radio') as HTMLInputElement[]
+      expect(radios.map((r) => [r.value, r.getAttribute('aria-labelledby') && document.getElementById(r.getAttribute('aria-labelledby')!)?.textContent])).toEqual([
         ['project-schedule', 'Project schedule'],
         ['punch-list', 'Punch list'],
         ['simple-list', 'Simple list'],
       ])
+      expect(within(group).getByRole('radio', { name: 'Project schedule' })).toBeChecked()
     })
 
     it('New sheet with the default creates a Project schedule (never an empty, column-less sheet)', async () => {
@@ -206,7 +207,7 @@ describe('SheetList', () => {
       const { client, insert } = makeSheetsClient({})
       render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
 
-      fireEvent.change(await screen.findByLabelText('Template'), { target: { value: 'project-schedule' } })
+      fireEvent.click(await screen.findByRole('radio', { name: 'Project schedule' }))
       fireEvent.click(screen.getByRole('button', { name: 'New sheet' }))
 
       await waitFor(() => expect(onOpen).toHaveBeenCalledWith('tpl-id'))
@@ -221,14 +222,14 @@ describe('SheetList', () => {
       const { client } = makeSheetsClient({})
       render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
 
-      fireEvent.change(await screen.findByLabelText('Template'), { target: { value: 'punch-list' } })
+      fireEvent.click(await screen.findByRole('radio', { name: 'Punch list' }))
       fireEvent.click(screen.getByRole('button', { name: 'New sheet' }))
 
       expect(await screen.findByRole('alert')).toHaveTextContent('tpl boom')
       expect(onOpen).not.toHaveBeenCalled()
     })
 
-    it('disables the button and select while creating, so a double click makes one sheet', async () => {
+    it('disables the button and template cards while creating, so a double click makes one sheet', async () => {
       insertTemplate.mockReset()
       let resolve!: (id: string) => void
       insertTemplate.mockReturnValue(new Promise<string>((r) => (resolve = r)))
@@ -236,13 +237,13 @@ describe('SheetList', () => {
       const { client } = makeSheetsClient({})
       render(<SheetList client={client} userId="user-1" onOpen={onOpen} />)
 
-      fireEvent.change(await screen.findByLabelText('Template'), { target: { value: 'punch-list' } })
+      fireEvent.click(await screen.findByRole('radio', { name: 'Punch list' }))
       const button = screen.getByRole('button', { name: 'New sheet' })
       fireEvent.click(button)
       fireEvent.click(button)
 
       expect(button).toBeDisabled()
-      expect(screen.getByLabelText('Template')).toBeDisabled()
+      expect(screen.getByRole('radio', { name: 'Punch list' })).toBeDisabled()
       expect(insertTemplate).toHaveBeenCalledTimes(1)
       resolve('tpl-id')
       await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(1))

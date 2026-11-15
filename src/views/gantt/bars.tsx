@@ -35,6 +35,8 @@ interface GanttBarProps {
   dragging: boolean
   /** Critical-path view: drawn in the critical colour. */
   critical?: boolean
+  /** Row height in px (density); defaults to ROW_HEIGHT. */
+  rowHeight?: number
   /** Critical-path view: the float sentence added to the bar's label and tooltip. */
   floatNote?: string
   onPointerDown(e: ReactPointerEvent, rowId: string, mode: DragMode): void
@@ -43,7 +45,7 @@ interface GanttBarProps {
 const clampPct = (p: number) => Math.min(100, Math.max(0, p))
 
 /** One row's bar: a task bar, a milestone diamond or a summary bracket, with progress overlay. */
-export function GanttBar({ rowId, name, kind, sched, x, width, rowTop, dragging, critical, floatNote, onPointerDown }: GanttBarProps) {
+export function GanttBar({ rowId, name, kind, sched, x, width, rowTop, dragging, critical, rowHeight = ROW_HEIGHT, floatNote, onPointerDown }: GanttBarProps) {
   const label = barLabel(name, sched, kind, floatNote)
   const move = (e: ReactPointerEvent) => onPointerDown(e, rowId, 'move')
   const cls = `gantt-bar is-${kind}${dragging ? ' is-dragging' : ''}${critical ? ' is-critical' : ''}`
@@ -51,7 +53,7 @@ export function GanttBar({ rowId, name, kind, sched, x, width, rowTop, dragging,
 
   if (kind === 'milestone') {
     const cx = x + width / 2
-    const cy = rowTop + ROW_HEIGHT / 2
+    const cy = rowTop + rowHeight / 2
     const h = width / 2
     return (
       <g role="img" aria-label={label} data-kind={kind} data-row-id={rowId} className={cls}>
@@ -66,7 +68,7 @@ export function GanttBar({ rowId, name, kind, sched, x, width, rowTop, dragging,
   }
 
   if (kind === 'summary') {
-    const y = rowTop + (ROW_HEIGHT - SUMMARY_HEIGHT) / 2
+    const y = rowTop + (rowHeight - SUMMARY_HEIGHT) / 2
     const tip = 5
     const bottom = y + SUMMARY_HEIGHT
     return (
@@ -83,18 +85,19 @@ export function GanttBar({ rowId, name, kind, sched, x, width, rowTop, dragging,
     )
   }
 
-  const y = rowTop + (ROW_HEIGHT - BAR_HEIGHT) / 2
+  const barHeight = rowHeight > ROW_HEIGHT ? BAR_HEIGHT + 4 : BAR_HEIGHT
+  const y = rowTop + (rowHeight - barHeight) / 2
   return (
     <g role="img" aria-label={label} data-kind={kind} data-row-id={rowId} className={cls}>
       <title>{label}</title>
-      <rect className="gantt-bar-body" x={x} y={y} width={width} height={BAR_HEIGHT} rx={3} onPointerDown={move} />
-      <rect className="gantt-bar-progress" x={x} y={y} width={progress} height={BAR_HEIGHT} rx={3} pointerEvents="none" />
+      <rect className="gantt-bar-body" x={x} y={y} width={width} height={barHeight} rx={5} onPointerDown={move} />
+      <rect className="gantt-bar-progress" x={x} y={y} width={progress} height={barHeight} rx={5} pointerEvents="none" />
       <rect
         className="gantt-bar-handle"
         x={x + width - HANDLE_WIDTH}
         y={y}
         width={HANDLE_WIDTH}
-        height={BAR_HEIGHT}
+        height={barHeight}
         onPointerDown={(e) => onPointerDown(e, rowId, 'resize')}
       />
     </g>

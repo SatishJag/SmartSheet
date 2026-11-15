@@ -26,8 +26,9 @@ test('dragging a card to another lane, and the Move-to select, write the Status 
   await expect(lane(page, 'Complete')).toHaveAccessibleName('Complete (0)')
   await expect(lane(page, 'In progress').getByRole('listitem').filter({ hasText: 'Frame walls' })).toBeVisible()
 
-  // A real mouse drag (HTML5 drag and drop) into the Complete lane.
-  await card(page, 'Frame walls').dragTo(lane(page, 'Complete'))
+  // A real mouse drag (HTML5 drag and drop) into the Complete lane. Grab the card by its title: the
+  // centre of a compact card is the Move-to select, which handles its own mouse events.
+  await card(page, 'Frame walls').locator('.kanban-card-name').dragTo(lane(page, 'Complete'))
   await expect(lane(page, 'Complete')).toHaveAccessibleName('Complete (1)')
   await expect(lane(page, 'Complete').getByRole('listitem').filter({ hasText: 'Frame walls' })).toBeVisible()
   await expect(lane(page, 'In progress')).toHaveAccessibleName('In progress (0)')

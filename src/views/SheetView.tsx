@@ -12,6 +12,9 @@ import { GanttView } from './gantt/GanttView'
 import { GridView } from './grid/GridView'
 import { SaveStatusBadge } from './grid/SaveStatusBadge'
 import { KanbanView } from './kanban/KanbanView'
+import { DensityProvider, readDensity, saveDensity, type Density } from './density'
+import { Icon, type IconName } from '../ui/Icon'
+import './sheetView.css'
 
 export interface SheetViewProps {
   client: SupabaseClient
@@ -54,17 +57,18 @@ function SheetViewForSheet({ client, sheetId, onBack, onSaveStatusChange, store:
 interface SheetTab {
   id: string
   label: string
+  icon: IconName
   render(): ReactNode
 }
 
 /** The sheet's views, in tab order. Only the active one is mounted; the store keeps the data. */
 const SHEET_TABS: readonly SheetTab[] = [
-  { id: 'grid', label: 'Grid', render: () => <GridView /> },
-  { id: 'gantt', label: 'Gantt', render: () => <GanttView /> },
-  { id: 'kanban', label: 'Kanban', render: () => <KanbanView /> },
+  { id: 'grid', label: 'Grid', icon: 'sheet', render: () => <GridView /> },
+  { id: 'gantt', label: 'Gantt', icon: 'gantt', render: () => <GanttView /> },
+  { id: 'kanban', label: 'Kanban', icon: 'rows', render: () => <KanbanView /> },
 ]
 
-function SheetTabs() {
+function SheetTabs({ tools }: { tools?: ReactNode }) {
   const [activeId, setActiveId] = useState(SHEET_TABS[0].id)
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const baseId = useId()
@@ -84,7 +88,8 @@ function SheetTabs() {
 
   return (
     <>
-      <div role="tablist" aria-label="Sheet views" className="sheet-tabs" onKeyDown={onKeyDown}>
+      <div className="sheet-toolbar">
+      <div role="tablist" aria-label="Sheet views" className="sheet-tabs segmented" onKeyDown={onKeyDown}>
         {SHEET_TABS.map((t) => (
           <button
             key={t.id}
@@ -101,9 +106,13 @@ function SheetTabs() {
             className={t.id === active.id ? 'sheet-tab is-active' : 'sheet-tab'}
             onClick={() => setActiveId(t.id)}
           >
+            <Icon name={t.icon} size={16} />
             {t.label}
           </button>
         ))}
+      </div>
+      {tools && <span className="toolbar-sep" aria-hidden="true" />}
+      {tools}
       </div>
       <div role="tabpanel" id={`${baseId}-panel`} aria-labelledby={`${baseId}-tab-${active.id}`} className="sheet-tabpanel">
         {active.render()}
@@ -169,11 +178,27 @@ function SheetName({ client, sheetId, name }: { client: SupabaseClient; sheetId:
     <InlineRename initial={name} onSave={save} onCancel={() => setEditing(false)} />
   ) : (
     <>
-      <h2>{name}</h2>
-      <button type="button" aria-label="Rename sheet" onClick={() => setEditing(true)}>
-        Rename
+      <h2 className="sheet-title">{name}</h2>
+      <button type="button" className="btn-icon" aria-label="Rename sheet" title="Rename sheet" onClick={() => setEditing(true)}>
+        <Icon name="pencil" size={16} />
       </button>
     </>
+  )
+}
+
+/** Row density switch: Compact (default, dense working views) or Comfortable; remembered per browser. */
+function DensityToggle({ density, onChange }: { density: Density; onChange: (d: Density) => void }) {
+  return (
+    <div role="group" aria-label="Row density" className="segmented segmented-sm density-toggle">
+      <button type="button" aria-label="Compact" aria-pressed={density === 'compact'} title="Compact rows (denser)" onClick={() => onChange('compact')}>
+        <Icon name="rowsTight" size={15} />
+        <span className="hide-sm">Compact</span>
+      </button>
+      <button type="button" aria-label="Comfortable" aria-pressed={density === 'comfortable'} title="Comfortable rows (more space)" onClick={() => onChange('comfortable')}>
+        <Icon name="rows" size={15} />
+        <span className="hide-sm">Comfortable</span>
+      </button>
+    </div>
   )
 }
 
@@ -194,9 +219,14 @@ function SheetContent({
   const [confirmBack, setConfirmBack] = useState(false)
   const [showCritical, setShowCritical] = useState(false)
   const dependenciesOn = data?.sheet.dependenciesEnabled ?? false
+  const [density, setDensity] = useState<Density>(readDensity)
+  const changeDensity = (d: Density) => {
+    setDensity(d)
+    saveDensity(d)
+  }
 
   return (
-    <section className="sheet-view">
+    <section className="sheet-view" data-density={density}>
       {confirmBack && (
         <ConfirmDialog
           title="Unsaved changes"
@@ -211,36 +241,65 @@ function SheetContent({
         />
       )}
       <header className="sheet-view-header">
-        <button type="button" onClick={() => (status === 'saved' ? onBack() : setConfirmBack(true))}>
-          Back to sheets
-        </button>
-        {data && <SheetName client={client} sheetId={sheetId} name={data.sheet.name} />}
-        {data && <ScheduleSettingsButton />}
-        {data && (
-          <label
-            className="critical-toggle"
-            title={dependenciesOn ? undefined : 'Turn on dependencies in Schedule settings to see the critical path'}
+        <nav aria-label="Breadcrumb" className="breadcrumb">
+          <button
+            type="button"
+            className="crumb-link"
+            aria-label="Back to sheets"
+            onClick={() => (status === 'saved' ? onBack() : setConfirmBack(true))}
           >
-            <input
-              type="checkbox"
-              checked={showCritical && dependenciesOn}
-              disabled={!dependenciesOn}
-              onChange={(e) => setShowCritical(e.currentTarget.checked)}
-            />{' '}
-            Critical path
-          </label>
-        )}
+            <Icon name="back" size={16} />
+            Sheets
+          </button>
+          {data && (
+            <>
+              <Icon name="chevron" size={14} className="crumb-sep" />
+              <SheetName client={client} sheetId={sheetId} name={data.sheet.name} />
+            </>
+          )}
+        </nav>
         <span className="spacer" />
         {data && <SaveStatusBadge />}
       </header>
       {loadError ? (
         <p role="alert">Could not load the sheet: {loadError}</p>
       ) : data ? (
-        <ShowCriticalPathProvider value={showCritical && dependenciesOn}>
-          <SheetTabs />
-        </ShowCriticalPathProvider>
+        <DensityProvider value={density}>
+          <ShowCriticalPathProvider value={showCritical && dependenciesOn}>
+            <SheetTabs
+              tools={
+                <>
+                  <ScheduleSettingsButton />
+                  <label
+                    className="switch"
+                    title={dependenciesOn ? undefined : 'Turn on dependencies in Schedule settings to see the critical path'}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showCritical && dependenciesOn}
+                      disabled={!dependenciesOn}
+                      onChange={(e) => setShowCritical(e.currentTarget.checked)}
+                    />
+                    <span className="switch-track" aria-hidden="true" />
+                    Critical path
+                  </label>
+                  <span className="spacer" />
+                  <DensityToggle density={density} onChange={changeDensity} />
+                </>
+              }
+            />
+          </ShowCriticalPathProvider>
+        </DensityProvider>
       ) : (
-        <p>Loading sheet…</p>
+        <div className="sheet-loading" aria-busy="true">
+          <p className="visually-hidden">Loading sheet…</p>
+          <div aria-hidden="true">
+            <span className="skeleton skeleton-bar" />
+            {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+              <span key={i} className="skeleton skeleton-row" style={{ width: `${96 - i * 4}%` }} />
+            ))}
+          </div>
+        </div>
       )}
     </section>
   )
