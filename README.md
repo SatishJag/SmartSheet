@@ -23,6 +23,11 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
   tab-separated text compatible with other spreadsheet apps; Backspace clears a range
 - **Schedule settings**: per-sheet working weekdays, hours per day, non-working dates, and
   whether dependencies drive dates
+- **Plan with AI**: pick a schedule type (long-lead equipment procurement) and one or several
+  equipment items, each with its own on-site date; the server drafts activities and durations from
+  historical projects, the plan is worked backward to each date, and you approve it into one
+  editable sheet (a summary row per item). A batch has a 3.5-minute overall time limit; items that
+  run out of time are drafted from history alone
 - **Gantt**: bars, milestones, parent summary bars, dependency arrows, drag to move or resize
 - **Critical path and float**: the "Critical path" switch in the sheet header highlights critical
   rows and links on the Gantt and in the grid and shows each row's total and free float in

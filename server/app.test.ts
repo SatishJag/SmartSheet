@@ -489,6 +489,19 @@ describe('POST /api/planner/draft-batch', () => {
     expect(peak).toBe(2)
   })
 
+  it('a whole-batch time limit: items still waiting when it runs out are drafted from history alone', async () => {
+    const hang = fakeAnthropic('hang', 'hang', 'hang')
+    const base = await start({ anthropic: hang.client, batchConcurrency: 1, batchDeadlineMs: 150, aiDeadlineMs: 60_000 })
+    const started = Date.now()
+    const drafts = (await resultsOf(await postBatch(base, BATCH))).map(okDraft)
+    expect(Date.now() - started).toBeLessThan(5_000) // bounded by the batch limit, not by 3 x the per-item limit
+    expect(drafts.map((d) => d.source)).toEqual(['history', 'history', 'history'])
+    expect(hang.create).toHaveBeenCalledTimes(1) // the others never called the AI
+    expect(drafts[0].assumptions[0]).toMatch(/took too long/)
+    expect(drafts[1].assumptions[0]).toMatch(/time limit for a batch/i)
+    expect(drafts[2].assumptions[0]).toMatch(/time limit for a batch/i)
+  })
+
   it('the concurrency is configurable', async () => {
     let running = 0
     let peak = 0

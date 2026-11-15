@@ -24,14 +24,17 @@ export interface PlannerConfig {
   log: Logger
   /** Aborted when the client disconnects: the AI call stops instead of running on unseen. */
   signal?: AbortSignal
+  /** Draft from history only, without calling the AI, and say why (a batch that ran out of time). */
+  skipAi?: 'batch-deadline'
 }
 
-const FALLBACK_NOTES: Record<'unconfigured' | Exclude<AiOutcome, { ok: true }>['reason'], string> = {
+const FALLBACK_NOTES: Record<'unconfigured' | 'batch-deadline' | Exclude<AiOutcome, { ok: true }>['reason'], string> = {
   unconfigured: 'AI drafting is not configured on this server, so this draft is built from history only.',
   error: 'The AI drafting service was unavailable, so this draft is built from history only.',
   timeout: 'The AI drafting service took too long, so this draft is built from history only.',
   refused: 'The AI declined to draft this plan, so this draft is built from history only.',
   invalid: 'The AI draft failed validation twice, so this draft is built from history only.',
+  'batch-deadline': 'The time limit for a batch was reached before this item could be drafted by the AI, so it is built from history only.',
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -76,6 +79,7 @@ export async function createDraft(source: HistorySource, request: PlanRequest, c
     config.log('planner.catalog.invalid', { scheduleType: request.scheduleType, error: (err as Error).message })
     throw new PlannerError(500, 'The activity catalog for this schedule type is invalid.')
   }
+  if (config.skipAi) return historyOnly(FALLBACK_NOTES[config.skipAi])
   if (!config.anthropic) return fallback
 
   const outcome = await draftWithAi({

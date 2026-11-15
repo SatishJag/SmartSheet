@@ -5,7 +5,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { BatchDraftResponse, DraftResponse, HistorySource } from '../src/planner/types'
 import { DEFAULT_MODEL, type AnthropicLike } from './ai'
-import { DEFAULT_BATCH_CONCURRENCY, draftBatch as draftBatchItems } from './batch'
+import { DEFAULT_BATCH_CONCURRENCY, DEFAULT_BATCH_DEADLINE_MS, draftBatch as draftBatchItems } from './batch'
 import { createDraftLimiter, type DraftLimits } from './limits'
 import { consoleLogger, type Logger } from './log'
 import { createDraft, PlannerError } from './planner'
@@ -43,6 +43,8 @@ export interface AppDeps {
   maxBodyBytes?: number
   /** Items of one batch drafted at the same time. Default 2. */
   batchConcurrency?: number
+  /** Time for a whole batch; items not started by then are drafted from history alone. Default 210 s. */
+  batchDeadlineMs?: number
   log?: Logger
 }
 
@@ -188,6 +190,7 @@ export function createApp(deps: AppDeps): Server {
         batch,
         { ...plannerConfig, signal: disconnected.signal },
         deps.batchConcurrency ?? DEFAULT_BATCH_CONCURRENCY,
+        deps.batchDeadlineMs ?? DEFAULT_BATCH_DEADLINE_MS,
       )
       // Items never started (the client left) cost nothing.
       slot.refund(batch.items.length - started)
