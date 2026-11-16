@@ -83,6 +83,22 @@ export function compact(widgets: readonly Widget[]): Widget[] {
   return widgets.map((w) => byId.get(w.id)!)
 }
 
+/**
+ * One step in reading order (the order a phone stacks the widgets in): the widget swaps places with its
+ * neighbour before (up) or after (down) it. Works for widgets side by side, where moving up a row
+ * would do nothing. Others are pushed down only if the swap makes them overlap.
+ */
+export function reorder(widgets: readonly Widget[], id: string, dir: 'up' | 'down'): Widget[] {
+  const order = stackOrder(widgets)
+  const i = order.findIndex((w) => w.id === id)
+  const j = i + (dir === 'up' ? -1 : 1)
+  if (i === -1 || j < 0 || j >= order.length) return [...widgets]
+  const [a, b] = [order[i], order[j]]
+  const at = (w: Widget, from: Widget): Widget => ({ ...w, x: Math.min(from.x, GRID_COLUMNS - w.w), y: from.y })
+  const swapped = new Map([[a.id, at(a, b)], [b.id, at(b, a)]])
+  return resolveOverlaps(widgets.map((w) => swapped.get(w.id) ?? w), id)
+}
+
 export type MoveDirection = 'left' | 'right' | 'up' | 'down'
 
 /** One keyboard step: a move by one cell, or (resize = true) one cell wider / narrower / taller / shorter. */

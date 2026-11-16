@@ -21,7 +21,7 @@ export function AssetCard({ type, name, meta, favorite, onOpen, onToggleFavorite
         <span className="sheet-icon pop-icon">
           <AssetIcon name={ASSET_ICON[type]} size={22} />
         </span>
-        <span className="sheet-name">{name}</span>
+        <span className="sheet-name">{name}</span>{' '}
         <small className="sheet-date">{meta}</small>
       </button>
       <div className="asset-card-actions">

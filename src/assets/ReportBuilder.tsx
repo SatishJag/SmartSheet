@@ -3,7 +3,7 @@ import { ConfirmDialog } from '../views/ConfirmDialog'
 import { AssetIcon } from './AssetIcon'
 import { FilterEditor } from './FilterEditor'
 import { MAX_SUMMARIES, reportProblems, SUMMARY_FNS } from './definition'
-import { availableColumns, GROUP_LIMIT, SORT_LIMIT, type ResolvedColumn } from './reportEngine'
+import { availableColumns, GROUP_LIMIT, SHEET_KEY, SORT_LIMIT, type ResolvedColumn } from './reportEngine'
 import { ReportTable } from './ReportTable'
 import type { SheetHub } from './sheetHub'
 import { MAX_SOURCES, type ReportDefinition, type ReportMeta, type SummaryFn } from './types'
@@ -33,7 +33,8 @@ export function ReportBuilder({ report, hub, onDone }: Props) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [confirmLeave, setConfirmLeave] = useState(false)
-  const touchedColumns = useRef(report.definition.columns.length > 0)
+  // True while the columns are the automatic ones (a new report); any manual change to them turns it off.
+  const autoColumns = useRef(report.definition.columns.length === 0)
   const uid = useId()
 
   const data = useReportData(hub, def)
@@ -41,14 +42,16 @@ export function ReportBuilder({ report, hub, onDone }: Props) {
   const available = useMemo(() => availableColumns(loaded), [loaded])
   const byKey = useMemo(() => new Map(available.map((c) => [c.key, c])), [available])
 
-  // A sensible start: the first time sources are loaded and nothing is chosen, show their first columns.
+  // A sensible start: show the first columns of the chosen sheets, plus which sheet a row comes from when
+  // there are several. It follows the sheet choice until the person changes the columns themselves.
   useEffect(() => {
-    if (touchedColumns.current || def.columns.length > 0 || loaded.length === 0) return
+    if (!autoColumns.current || loaded.length === 0) return
     const real = available.filter((c) => !c.virtual).slice(0, REAL_COLUMN_DEFAULT)
     if (real.length === 0) return
-    touchedColumns.current = true
-    setDef((d) => ({ ...d, columns: real.map((c) => ({ key: c.key, title: c.title })) }))
-  }, [available, loaded.length, def.columns.length])
+    const sheetColumn = def.sources.length > 1 ? available.filter((c) => c.key === SHEET_KEY) : []
+    const columns = [...sheetColumn, ...real].map((c) => ({ key: c.key, title: c.title }))
+    setDef((d) => (JSON.stringify(d.columns) === JSON.stringify(columns) ? d : { ...d, columns }))
+  }, [available, loaded.length, def.sources.length])
 
   const dirty = name !== report.name || JSON.stringify(def) !== JSON.stringify(report.definition)
   const problems = reportProblems(def)
@@ -74,7 +77,7 @@ export function ReportBuilder({ report, hub, onDone }: Props) {
     const j = i + by
     if (j < 0 || j >= cols.length) return
     ;[cols[i], cols[j]] = [cols[j], cols[i]]
-    touchedColumns.current = true
+    autoColumns.current = false
     patch({ columns: cols })
   }
 
@@ -180,7 +183,7 @@ export function ReportBuilder({ report, hub, onDone }: Props) {
                       className="btn-icon is-danger"
                       aria-label={`Remove ${c.title}`}
                       onClick={() => {
-                        touchedColumns.current = true
+                        autoColumns.current = false
                         patch({ columns: def.columns.filter((x) => x.key !== c.key) })
                       }}
                     >
@@ -201,7 +204,7 @@ export function ReportBuilder({ report, hub, onDone }: Props) {
                 onChange={(e) => {
                   const c = byKey.get(e.target.value)
                   if (!c) return
-                  touchedColumns.current = true
+                  autoColumns.current = false
                   patch({ columns: [...def.columns, { key: c.key, title: c.title }] })
                 }}
               >
@@ -213,7 +216,7 @@ export function ReportBuilder({ report, hub, onDone }: Props) {
                 className="btn btn-sm"
                 disabled={addable.length === 0}
                 onClick={() => {
-                  touchedColumns.current = true
+                  autoColumns.current = false
                   patch({ columns: [...def.columns, ...addable.filter((c) => !c.virtual).map((c) => ({ key: c.key, title: c.title }))] })
                 }}
               >

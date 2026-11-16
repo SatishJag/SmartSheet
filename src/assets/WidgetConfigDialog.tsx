@@ -301,7 +301,7 @@ export function WidgetConfigDialog({ widget, hub, onApply, onCancel }: Props) {
         <fieldset className="widget-position">
           <legend>Position and size on the {GRID_COLUMNS}-column grid</legend>
           <div className="field-quad">
-            {([['x', 'Column', 0, GRID_COLUMNS - 1], ['y', 'Row', 0, 399], ['w', 'Width', 1, GRID_COLUMNS], ['h', 'Height', 1, MAX_HEIGHT]] as const).map(([k, label, min, max]) => (
+            {([['x', 'Grid column', 0, GRID_COLUMNS - 1], ['y', 'Grid row', 0, 399], ['w', 'Width', 1, GRID_COLUMNS], ['h', 'Height', 1, MAX_HEIGHT]] as const).map(([k, label, min, max]) => (
               <Field key={k} label={label}>
                 {(id) => <input id={id} type="number" min={min} max={max} value={draft[k] + (k === 'x' || k === 'y' ? 1 : 0)} onChange={(e) => setRect({ [k]: (Number(e.target.value) || 1) - (k === 'x' || k === 'y' ? 1 : 0) })} />}
               </Field>

@@ -110,7 +110,7 @@ export function WorkspacesPage() {
       <li className="ws-item">
         <button type="button" className="ws-open" onClick={() => viewer.open(a.type, a.id)}>
           <AssetIcon name={ASSET_ICON[a.type]} size={18} />
-          <span className="ws-name">{a.name}</span>
+          <span className="ws-name">{a.name}</span>{' '}
           <span className="chip is-quiet">{ASSET_LABEL[a.type]}</span>
         </button>
         <StarButton name={a.name} on={isStar(a.type, a.id)} onToggle={() => toggleStar(a.type, a.id)} />
@@ -130,7 +130,7 @@ export function WorkspacesPage() {
           <button type="button" className="ws-toggle" aria-expanded={open} onClick={() => toggle(folder.id)}>
             <AssetIcon name="chevron" size={14} style={{ transform: open ? 'rotate(90deg)' : undefined }} />
             <AssetIcon name="folder" size={18} />
-            <span className="ws-name">{folder.name}</span>
+            <span className="ws-name">{folder.name}</span>{' '}
             <span className="chip is-quiet">{kids.length + items.length}</span>
           </button>
           <StarButton name={folder.name} on={isStar('folder', folder.id)} onToggle={() => toggleStar('folder', folder.id)} />
@@ -294,7 +294,7 @@ export function WorkspacesPage() {
                 <li key={`${h.kind}${h.id}`} className="ws-item">
                   <button type="button" className="ws-open" onClick={() => goTo(h.kind, h.id)}>
                     <AssetIcon name={h.kind === 'workspace' ? 'home' : h.kind === 'folder' ? 'folder' : ASSET_ICON[h.kind]} size={18} />
-                    <span className="ws-name">{h.name}</span>
+                    <span className="ws-name">{h.name}</span>{' '}
                     <span className="ws-where">{h.where}</span>
                   </button>
                   <StarButton name={h.name} on={isStar(h.kind, h.id)} onToggle={() => toggleStar(h.kind, h.id)} />

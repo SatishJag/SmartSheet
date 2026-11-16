@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { newWidget } from './definition'
-import { clampRect, compact, nextFreeSlot, nudge, overlaps, placeWidget, stackOrder } from './grid'
+import { clampRect, compact, nextFreeSlot, nudge, overlaps, placeWidget, reorder, stackOrder } from './grid'
 import type { Widget } from './types'
 
 const w = (id: string, x: number, y: number, ww: number, h: number): Widget => ({ ...newWidget('text', id, x, y), w: ww, h })
@@ -82,6 +82,28 @@ describe('nudge', () => {
     expect(rect(nudge(list, 'a', 'left'), 'a')).toEqual([0, 0, 12, 1])
     expect(rect(nudge(list, 'a', 'right', true), 'a')).toEqual([0, 0, 12, 1])
     expect(rect(nudge(list, 'a', 'up'), 'a')).toEqual([0, 0, 12, 1])
+  })
+})
+
+describe('reorder', () => {
+  it('swaps a widget with the one before or after it in reading order, also when they sit side by side', () => {
+    const list = [w('a', 0, 0, 4, 2), w('b', 4, 0, 4, 2), w('c', 0, 2, 12, 1)]
+    const up = reorder(list, 'b', 'up')
+    expect(stackOrder(up).map((o) => o.id)).toEqual(['b', 'a', 'c'])
+    expect(rect(up, 'b')).toEqual([0, 0, 4, 2])
+    expect(rect(up, 'a')).toEqual([4, 0, 4, 2])
+    expect(stackOrder(reorder(list, 'a', 'down')).map((o) => o.id)).toEqual(['b', 'a', 'c'])
+    expect(noOverlap(up)).toBe(true)
+  })
+
+  it('keeps widgets of different sizes apart and does nothing at the ends', () => {
+    const list = [w('a', 0, 0, 12, 1), w('b', 0, 1, 6, 3)]
+    const next = reorder(list, 'b', 'up')
+    expect(stackOrder(next).map((o) => o.id)).toEqual(['b', 'a'])
+    expect(noOverlap(next)).toBe(true)
+    expect(reorder(list, 'a', 'up')).toEqual(list)
+    expect(reorder(list, 'b', 'down')).toEqual(list)
+    expect(reorder(list, 'zzz', 'down')).toEqual(list)
   })
 })
 

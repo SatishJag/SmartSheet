@@ -1,7 +1,7 @@
 import { useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
 import { AssetIcon, WIDGET_ICON, WIDGET_LABEL } from './AssetIcon'
 import type { DataSource } from './dashboardData'
-import { nudge, placeWidget, stackOrder, type MoveDirection } from './grid'
+import { nudge, placeWidget, reorder, stackOrder, type MoveDirection } from './grid'
 import { GRID_COLUMNS, type AssetType, type DashboardLayout, type SourceRef, type Widget } from './types'
 import { WidgetView } from './WidgetView'
 
@@ -109,10 +109,10 @@ export function DashboardCanvas({ layout, editing, sourceOf, onChange, onConfigu
                 )}
                 {editing && (
                   <span className="dash-tools">
-                    <button type="button" className="btn-icon dash-reorder" aria-label={`Move ${label} up`} onClick={() => onChange({ widgets: nudge(layout.widgets, w.id, 'up') })}>
+                    <button type="button" className="btn-icon dash-reorder" aria-label={`Move ${label} up`} onClick={() => onChange({ widgets: reorder(layout.widgets, w.id, 'up') })}>
                       <AssetIcon name="up" size={16} />
                     </button>
-                    <button type="button" className="btn-icon dash-reorder" aria-label={`Move ${label} down`} onClick={() => onChange({ widgets: nudge(layout.widgets, w.id, 'down') })}>
+                    <button type="button" className="btn-icon dash-reorder" aria-label={`Move ${label} down`} onClick={() => onChange({ widgets: reorder(layout.widgets, w.id, 'down') })}>
                       <AssetIcon name="down" size={16} />
                     </button>
                     <button type="button" className="btn-icon" aria-label={`Settings for ${label}`} title="Settings" onClick={() => onConfigure(w.id)}>

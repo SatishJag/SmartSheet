@@ -282,7 +282,7 @@ describe('fakeSupabase tables', () => {
   })
 
   it('throws loudly on anything it does not implement', async () => {
-    expect(() => client.from('workspaces')).toThrow(/fakeSupabase: unsupported call from\("workspaces"\)/)
+    expect(() => client.from('webhooks')).toThrow(/fakeSupabase: unsupported call from\("webhooks"\)/)
     const b = client.from('sheets') as unknown as Record<string, () => unknown>
     expect(() => b.rpc()).toThrow(/fakeSupabase: unsupported call .*rpc/)
     expect(() => client.from('sheets').upsert({ id: 'x' }, { onConflict: 'name' })).toThrow(/unsupported call .*onConflict/)
@@ -440,5 +440,78 @@ describe('fakeSupabase baselines', () => {
     const orphan = { baseline_id: crypto.randomUUID(), sheet_id: s, row_id: R1, start_date: '2026-11-09', end_date: '2026-11-09', duration_days: 1 }
     expect((await client.from('baseline_rows').insert(orphan)).error?.code).toBe('23503')
     expect(() => client.from('baseline_rows').update({ duration_days: 3 })).toThrow(/unsupported call .*baseline_rows.update/)
+  })
+})
+
+describe('fakeSupabase smart assets (0008_assets.sql)', () => {
+  let client: ReturnType<typeof createFakeSupabase>
+  beforeEach(async () => {
+    client = createFakeSupabase({ storage: memoryStorage() })
+    await client.auth.signUp(A)
+  })
+  const id = async (table: string, row: Record<string, unknown>): Promise<string> => {
+    const { data, error } = await client.from(table).insert(row).select('id').single()
+    expect(error).toBeNull()
+    return (data as { id: string }).id
+  }
+  const count = async (table: string) => ((await client.from(table).select('id')).data as unknown[]).length
+
+  it('derives asset_type and kind, and allows one placement per asset and one star per target', async () => {
+    const space = await id('workspaces', { name: 'W' })
+    const report = await id('reports', { name: 'R', definition: { sources: [] } })
+    const item = await client.from('workspace_items').insert({ space_id: space, report_id: report }).select('asset_type').single()
+    expect(item.data).toEqual({ asset_type: 'report' })
+    expect((await client.from('workspace_items').insert({ space_id: space, report_id: report })).error?.code).toBe('23505')
+    expect((await client.from('workspace_items').insert({ space_id: space })).error?.code).toBe('23514')
+    const star = await client.from('favorites').insert({ report_id: report }).select('kind').single()
+    expect(star.data).toEqual({ kind: 'report' })
+    expect((await client.from('favorites').insert({ report_id: report })).error?.code).toBe('23505')
+  })
+
+  it('checks names, json objects, folder parents, nesting depth and cycles', async () => {
+    expect((await client.from('workspaces').insert({ name: '  ' })).error?.code).toBe('23514')
+    expect((await client.from('reports').insert({ name: 'R', definition: [1] })).error?.code).toBe('23514')
+    const w1 = await id('workspaces', { name: 'One' })
+    const w2 = await id('workspaces', { name: 'Two' })
+    const f1 = await id('folders', { space_id: w1, name: 'f1' })
+    expect((await client.from('folders').insert({ space_id: w2, parent_id: f1, name: 'bad' })).error?.code).toBe('23503')
+    let parent = f1
+    for (let i = 2; i <= 5; i++) parent = await id('folders', { space_id: w1, parent_id: parent, name: `f${i}` })
+    expect((await client.from('folders').insert({ space_id: w1, parent_id: parent, name: 'f6' })).error?.code).toBe('23514')
+    expect((await client.from('folders').update({ parent_id: parent }).eq('id', f1)).error?.code).toBe('23514') // into its own subtree
+    expect((await client.from('folders').update({ space_id: w2 }).eq('id', f1)).error?.code).toBe('23514') // never changes workspace
+  })
+
+  it('stamps updated_at on update and cascades deletes', async () => {
+    const space = await id('workspaces', { name: 'W' })
+    const folder = await id('folders', { space_id: space, name: 'F' })
+    const dash = await id('dashboards', { name: 'D', layout: { widgets: [] } })
+    const before = (await client.from('dashboards').select('updated_at').eq('id', dash).single()).data as { updated_at: string }
+    await new Promise((r) => setTimeout(r, 3))
+    await client.from('dashboards').update({ name: 'D2' }).eq('id', dash)
+    const after = (await client.from('dashboards').select('updated_at').eq('id', dash).single()).data as { updated_at: string }
+    expect(after.updated_at > before.updated_at).toBe(true)
+
+    await client.from('workspace_items').insert({ space_id: space, folder_id: folder, dashboard_id: dash })
+    await client.from('favorites').insert({ folder_id: folder })
+    await client.from('folders').delete().eq('id', folder)
+    expect([await count('workspace_items'), await count('favorites')]).toEqual([0, 0])
+    expect(await count('dashboards')).toBe(1)
+    await client.from('dashboards').delete().eq('id', dash)
+    expect(await count('dashboards')).toBe(0)
+  })
+
+  it('a sheet delete removes its placement and star; another user sees nothing', async () => {
+    const sheet = await id('sheets', { name: 'S' })
+    const space = await id('workspaces', { name: 'W' })
+    await client.from('workspace_items').insert({ space_id: space, sheet_id: sheet })
+    await client.from('favorites').insert({ sheet_id: sheet })
+    await client.from('sheets').delete().eq('id', sheet)
+    expect([await count('workspace_items'), await count('favorites')]).toEqual([0, 0])
+
+    await client.auth.signOut()
+    await client.auth.signUp(B)
+    expect([await count('workspaces'), await count('folders'), await count('reports')]).toEqual([0, 0, 0])
+    expect((await client.from('workspace_items').insert({ space_id: space, sheet_id: crypto.randomUUID() })).error).not.toBeNull()
   })
 })
