@@ -257,7 +257,7 @@ export function RecipientsEditor({ value, columns, allowOwner, onChange }: { val
   const owner = value.some((r) => r.kind === 'owner')
   const colIds = value.flatMap((r) => (r.kind === 'column' ? [r.columnId] : []))
   const [emailsText, setEmailsText] = useState(() => value.flatMap((r) => (r.kind === 'email' ? [r.email] : [])).join(', '))
-  const people = columns.filter((c) => c.type === 'CONTACT_LIST' || c.type === 'TEXT_NUMBER')
+  const people = columns.filter((c) => c.type === 'CONTACT_LIST')
   const emit = (nextOwner: boolean, nextCols: string[], text: string) =>
     onChange([
       ...(nextOwner && allowOwner ? [{ kind: 'owner' as const }] : []),
@@ -282,7 +282,7 @@ export function RecipientsEditor({ value, columns, allowOwner, onChange }: { val
           {people.map((c) => (
             <label key={c.id} className="au-check">
               <input type="checkbox" checked={colIds.includes(c.id)} onChange={(e) => emit(owner, e.currentTarget.checked ? [...colIds, c.id] : colIds.filter((x) => x !== c.id), emailsText)} />
-              The e-mail addresses in {c.title}
+              The people in {c.title}
             </label>
           ))}
         </div>

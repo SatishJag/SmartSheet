@@ -161,3 +161,35 @@ Mobile (390x844):
 | Request | 3 items | Loading | Review | Late | Failed | Single |
 | --- | --- | --- | --- | --- | --- | --- |
 | ![](wizard-mobile-request.png) | ![](wizard-mobile-request-items.png) | ![](wizard-mobile-loading.png) | ![](wizard-mobile-review.png) | ![](wizard-mobile-review-late.png) | ![](wizard-mobile-review-failed.png) | ![](wizard-mobile-single-review.png) |
+
+## Automation and notifications
+
+The Automation section lists a sheet's rules as cards (name, the rule in plain words, last run, an On/Off
+switch, Edit, Delete) with three tabs: **Rules**, **Activity** (every run, with its outcome) and **Sent
+requests** (update requests and approvals with their status; a pending one can be withdrawn). The **rule
+builder** is three numbered cards (Trigger, Conditions, Action), an "In words" line that rewrites itself as
+you choose, a **Test run** on a real row (which conditions hold, what would happen, nothing is changed) and
+a sticky footer (switch, Cancel, Save rule). The **bell** in the header shows the unread count; its panel is
+a list of notifications with unread dots, "Mark all read" and a full-width sheet under the header on phones.
+The **public update / approval page** is one card on its own (no shell, no sign-in), 48px buttons, labelled
+fields and field-level errors. Pills, switches, cards and tokens are the shared ones; status badges are text
+plus tint, never colour alone; everything works at 390px with no horizontal scroll.
+
+| Rules | Builder |
+| --- | --- |
+| ![Rules](automation-rules-1440.png) | ![Builder](automation-builder-1440.png) |
+
+| Activity | Notification centre |
+| --- | --- |
+| ![Activity](automation-activity-1440.png) | ![Notifications](automation-notifications-1440.png) |
+
+| Update link | Approval link |
+| --- | --- |
+| ![Update link](automation-update-link-1440.png) | ![Approval link](automation-approval-link-1440.png) |
+
+Mobile (390x844):
+
+| Rules | Builder | Activity | Notifications | Update link | Approval link |
+| --- | --- | --- | --- | --- | --- |
+| ![](automation-rules-390.png) | ![](automation-builder-390.png) | ![](automation-activity-390.png) | ![](automation-notifications-390.png) | ![](automation-update-link-390.png) | ![](automation-approval-link-390.png) |
+

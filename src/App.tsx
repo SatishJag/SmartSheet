@@ -74,6 +74,7 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
             <button
               key={s.id}
               type="button"
+              aria-label={s.label}
               aria-current={s.id === section.id ? 'page' : undefined}
               onClick={() => {
                 setSectionId(s.id)

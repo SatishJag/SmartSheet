@@ -24,6 +24,8 @@ export function AutomationPage() {
   const [sheetId, setSheetId] = useState('')
   // undefined: not asked yet; null: the server cannot be reached
   const [status, setStatus] = useState<AutomationStatus | null | undefined>(undefined)
+  // The rule builder shows the server note itself, and only when the rule needs the server.
+  const [building, setBuilding] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -93,7 +95,7 @@ export function AutomationPage() {
         )}
       </header>
 
-      {serverNote && (
+      {serverNote && !building && (
         <p className="au-note" role="note">
           {serverNote}
         </p>
@@ -109,7 +111,7 @@ export function AutomationPage() {
           <p>Rules belong to a sheet. Create a sheet first, then come back.</p>
         </div>
       ) : (
-        <SheetAutomation key={sheetId} api={api} sheetId={sheetId} sheets={sheets} serverNote={serverNote} />
+        <SheetAutomation key={sheetId} api={api} sheetId={sheetId} sheets={sheets} serverNote={serverNote} onBuilding={setBuilding} />
       )}
     </div>
   )
@@ -117,7 +119,7 @@ export function AutomationPage() {
 
 type Tab = 'rules' | 'activity' | 'requests'
 
-function SheetAutomation({ api, sheetId, sheets, serverNote }: { api: AutomationApi; sheetId: string; sheets: { id: string; name: string }[]; serverNote: string | null }) {
+function SheetAutomation({ api, sheetId, sheets, serverNote, onBuilding }: { api: AutomationApi; sheetId: string; sheets: { id: string; name: string }[]; serverNote: string | null; onBuilding(b: boolean): void }) {
   const sheet = sheets.find((s) => s.id === sheetId)!
   const [columns, setColumns] = useState<Column[] | null>(null)
   const [rules, setRules] = useState<AutomationRule[] | null>(null)
@@ -127,6 +129,10 @@ function SheetAutomation({ api, sheetId, sheets, serverNote }: { api: Automation
   const [deleting, setDeleting] = useState<AutomationRule | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const otherSheets = useMemo(() => sheets.filter((s) => s.id !== sheetId), [sheets, sheetId])
+  useEffect(() => {
+    onBuilding(editing !== null)
+    return () => onBuilding(false)
+  }, [editing, onBuilding])
 
   const reload = useCallback(async () => {
     try {
