@@ -365,7 +365,7 @@ function PersonRow({
 }) {
   const start = g.periods[0].start
   const end = g.periods[g.periods.length - 1].end
-  const sub = [person.role, person.discipline].filter(Boolean).join(', ')
+  const sub = [person.role, person.discipline].filter((v) => v && v !== fullName(person)).join(', ')
   const visible = shown.filter((a) => a.ends_at >= start && a.starts_at <= end).sort((a, b) => a.starts_at.localeCompare(b.starts_at))
 
   return (

@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { AuthGate } from './auth/AuthGate'
 import { SheetList } from './auth/SheetList'
 import { createSupabaseClient, getSupabaseConfig } from './lib/supabase'
+import { CreateAppPage } from './apps/CreateAppPage'
 import { ResourceManagement } from './rm/ResourceManagement'
 import type { SaveStatus } from './store/sheetStore'
 import { ConfirmDialog } from './views/ConfirmDialog'
@@ -43,6 +44,7 @@ type Area = 'sheets' | 'resources'
 function Shell({ client, userId, email }: { client: SupabaseClient; userId: string; email: string }) {
   const [area, setArea] = useState<Area>('sheets')
   const [openSheetId, setOpenSheetId] = useState<string | null>(null)
+  const [creatingApp, setCreatingApp] = useState(false)
   // Save status of the open sheet: leaving it (Sign out, switching area) asks first while unsaved.
   const [sheetStatus, setSheetStatus] = useState<SaveStatus>('saved')
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
@@ -55,6 +57,7 @@ function Shell({ client, userId, email }: { client: SupabaseClient; userId: stri
       if (next === area) return
       setSheetStatus('saved')
       setOpenSheetId(null)
+      setCreatingApp(false)
       setArea(next)
     })
 
@@ -96,12 +99,23 @@ function Shell({ client, userId, email }: { client: SupabaseClient; userId: stri
             client={client}
             email={email}
             onOpenSheet={(sheetId) => {
+              setCreatingApp(false)
               setArea('sheets')
               setOpenSheetId(sheetId)
             }}
           />
+        ) : creatingApp ? (
+          <CreateAppPage
+            client={client}
+            userId={userId}
+            onBack={() => setCreatingApp(false)}
+            onCreated={(sheetId) => {
+              setCreatingApp(false)
+              setOpenSheetId(sheetId)
+            }}
+          />
         ) : openSheetId === null ? (
-          <SheetList client={client} userId={userId} onOpen={setOpenSheetId} />
+          <SheetList client={client} userId={userId} onOpen={setOpenSheetId} onCreateApp={() => setCreatingApp(true)} />
         ) : (
           <SheetView
             client={client}
