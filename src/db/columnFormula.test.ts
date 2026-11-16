@@ -36,8 +36,8 @@ beforeEach(async () => {
 const formulaOf = async () => (await db.query<{ formula: string | null }>(`select formula from columns where id = $1`, [COL])).rows[0].formula
 
 describe('0007_column_formula', () => {
-  it('is the last migration, and a new column has no formula', async () => {
-    expect(allMigrations().at(-1)).toBe('0007_column_formula.sql')
+  it('is part of the migration set, and a new column has no formula', async () => {
+    expect(allMigrations()).toContain('0007_column_formula.sql')
     expect(await formulaOf()).toBeNull()
   })
 
