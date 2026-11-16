@@ -2,7 +2,7 @@ import { columnResizingFeature, columnSizingFeature, tableFeatures, type ColumnD
 import type { Scheduled } from '../../engine/schedule'
 import type { RowRecord } from '../../store/persistence'
 import type { Column, ColumnRole } from '../../model/validate'
-import { formulaDisplay, type FormulaCellResult } from '../../formula/sheetFormulas'
+import { formulaDisplay, formulaErrorText, type FormulaCellResult } from '../../formula/sheetFormulas'
 import { START_SET_BY_PREDECESSORS } from '../../store/sheetStore'
 
 export const gridFeatures = tableFeatures({ columnSizingFeature, columnResizingFeature })
@@ -100,8 +100,8 @@ export function displayText(col: Column, row: GridRow): string {
   return toEditString(value)
 }
 
-/** The error message of a cell's formula, or undefined when it has none. */
+/** The error of a cell's formula as tooltip text ("#DIVIDE BY ZERO: ..."), or undefined when it has none. */
 export function formulaError(col: Column, row: GridRow): string | undefined {
   const formula = row.formulaOf?.(col.id)
-  return formula && !formula.ok ? formula.error : undefined
+  return formula && !formula.ok ? formulaErrorText(formula) : undefined
 }

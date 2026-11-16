@@ -20,6 +20,11 @@ export interface Column {
   options?: string[]
   systemType?: string
   role?: ColumnRole
+  /**
+   * A column formula (stored with its leading `=`): it applies to every row whose own cell is empty.
+   * A cell's own value or formula overrides it until the cell is cleared (src/formula/sheetFormulas.ts).
+   */
+  formula?: string
 }
 
 export interface ValidateContext {
