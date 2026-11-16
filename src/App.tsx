@@ -46,6 +46,8 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
   // A link from an e-mail or a notification can open a sheet directly: /?sheet=<id>.
   const [openSheetId, setOpenSheetId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('sheet'))
   const [sectionId, setSectionId] = useState('sheets')
+  // Choosing the section you are already in starts it over (closes an open report or dashboard).
+  const [restart, setRestart] = useState(0)
   const section = SECTIONS.find((s) => s.id === sectionId) ?? SECTIONS[0]
   const shell = useMemo(
     () => ({
@@ -77,6 +79,7 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
               aria-label={s.label}
               aria-current={s.id === section.id ? 'page' : undefined}
               onClick={() => {
+                if (s.id === section.id) setRestart((n) => n + 1)
                 setSectionId(s.id)
                 if (s.id === 'sheets') setOpenSheetId(null)
               }}
@@ -92,7 +95,7 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
       </header>
       <main className={section.id !== 'sheets' ? 'page page-list' : openSheetId === null ? 'page page-list' : 'page page-sheet'}>
         {section.Page ? (
-          <section.Page />
+          <section.Page key={restart} />
         ) : openSheetId === null ? (
           <SheetList client={client} userId={userId} onOpen={setOpenSheetId} />
         ) : (

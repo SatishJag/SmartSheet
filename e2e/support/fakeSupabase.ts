@@ -16,6 +16,8 @@
  * - tables `resources`, `resource_time_off` and `assignments` (0010_resources.sql): their checks, the
  *   (resource, owner) foreign keys with cascade, one assignment per task and resource, and NO
  *   cascade from `rows` (an assignment outlives a deleted task).
+ * - the smart-asset tables of 0008_assets.sql (workspaces, folders, reports, dashboards,
+ *   workspace_items, favorites), in fakeAssets.ts.
  * - ownership: every read and write is limited to rows owned by the signed-in user, and
  *   inserts/updates must keep `owner_id` = that user and point at the user's own sheet.
  *
@@ -41,6 +43,17 @@ import {
   copyRowToSheet,
   type AutomationTable,
 } from './fakeAutomation'
+import {
+  ASSET_SCHEMA,
+  ASSET_TABLES,
+  assetRowError,
+  assetUniqueError,
+  beforeAssetUpdate,
+  cascadeAssets,
+  computeGenerated,
+  isAssetTable,
+  type AssetTable,
+} from './fakeAssets'
 
 export const FAKE_STORAGE_KEY = 'fakeSupabase:v1'
 
@@ -55,6 +68,7 @@ export type TableName =
   | 'resource_time_off'
   | 'assignments'
   | AutomationTable
+  | AssetTable
 export type DbRecord = Record<string, unknown>
 
 export interface FakeUser {
@@ -103,6 +117,7 @@ const TABLES: readonly TableName[] = [
   'resource_time_off',
   'assignments',
   ...AUTOMATION_TABLES,
+  ...ASSET_TABLES,
 ]
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
@@ -218,6 +233,7 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     end_date: { default: () => null },
     created_at: { default: ({ now }) => now(), notNull: true },
   },
+  ...ASSET_SCHEMA,
 }
 
 const COLUMN_TYPES = ['TEXT_NUMBER', 'DATE', 'CHECKBOX', 'PICKLIST', 'MULTI_PICKLIST', 'CONTACT_LIST', 'DURATION', 'PREDECESSOR']
@@ -720,6 +736,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
         }
       }
       if (!serviceRole && row.owner_id !== uid) return rlsError(this.table)
+      if (isAssetTable(this.table)) return assetRowError(this.table, state, uid, row) // 0008_assets.sql
       if (this.table === 'resources' || this.table === 'resource_time_off') {
         const bad = resourceError(state, this.table, row)
         if (bad) return bad
@@ -782,6 +799,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
       for (const [col, s] of Object.entries(SCHEMA[this.table])) {
         if (row[col] === undefined && s.default) row[col] = s.default({ uid, now })
       }
+      computeGenerated(this.table, row)
       return row
     }
 
@@ -789,6 +807,10 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
     private uniqueError(row: DbRecord, others: DbRecord[]): FakeError | null {
       const autoDup = automationUniqueError(this.table, row, others)
       if (autoDup) return autoDup
+      if (isAssetTable(this.table)) {
+        const dup = assetUniqueError(this.table, row, others)
+        if (dup) return dup
+      }
       if (this.table === 'baseline_rows') {
         const dup = others.some((r) => r !== row && r.baseline_id === row.baseline_id && r.row_id === row.row_id)
         return dup ? pgError('duplicate key value violates unique constraint "baseline_rows_pkey"', '23505') : null
@@ -861,6 +883,16 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
     private runUpdate(state: FakeState, uid: string, patch: DbRecord): FakeResult {
       const targets = this.visible(state, uid).filter((r) => serviceRole || automationUpdatable(this.table, r, patch))
       const updated = targets.map((r) => ({ ...r, ...structuredClone(patch) }))
+      if (isAssetTable(this.table)) {
+        const now = () => {
+          state.clock = Math.max(Date.now(), state.clock + 1)
+          return new Date(state.clock).toISOString()
+        }
+        for (let i = 0; i < updated.length; i++) {
+          const err = beforeAssetUpdate(this.table, targets[i], updated[i], now)
+          if (err) return { data: null, error: err }
+        }
+      }
       for (const row of updated) {
         const err = this.checkRow(state, uid, row)
         if (err) return { data: null, error: err }
@@ -1104,8 +1136,10 @@ function compare(a: unknown, b: unknown): number {
 /** Deletes rows of `table` and everything that cascades from them (the schema's `on delete cascade`). */
 function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>): void {
   if (ids.size === 0) return
+  if (isAssetTable(table)) return cascadeAssets(state, table, ids)
   cascadeAutomation(state, table, ids)
   if (table === 'sheets') {
+    cascadeAssets(state, 'sheets', ids) // placements and stars of the sheets
     state.tables.sheets = state.tables.sheets.filter((r) => !ids.has(r.id))
     state.tables.columns = state.tables.columns.filter((r) => !ids.has(r.sheet_id))
     state.tables.dependencies = state.tables.dependencies.filter((r) => !ids.has(r.sheet_id))
