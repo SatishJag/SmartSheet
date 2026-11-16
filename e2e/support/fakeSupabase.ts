@@ -16,6 +16,8 @@
  * - ownership: every read and write is limited to rows owned by the signed-in user, and
  *   inserts/updates must keep `owner_id` = that user and point at the user's own sheet.
  *
+ * - the automation tables and `copy_row_to_sheet` (0009_automation.sql): see fakeAutomation.ts.
+ *
  * This mimics RLS ownership so the UI flows behave as they would against Supabase. It is NOT a
  * security test: the real row-level security policies are covered by the PGlite tests in
  * `src/db/rls.test.ts`.
@@ -25,9 +27,21 @@
  * `Error('fakeSupabase: unsupported call ...')` so gaps show up loudly.
  */
 
+import {
+  AUTOMATION_SCHEMA,
+  AUTOMATION_TABLES,
+  automationAccessError,
+  automationRowError,
+  automationUniqueError,
+  automationUpdatable,
+  cascadeAutomation,
+  copyRowToSheet,
+  type AutomationTable,
+} from './fakeAutomation'
+
 export const FAKE_STORAGE_KEY = 'fakeSupabase:v1'
 
-export type TableName = 'sheets' | 'columns' | 'rows' | 'dependencies' | 'baselines' | 'baseline_rows'
+export type TableName = 'sheets' | 'columns' | 'rows' | 'dependencies' | 'baselines' | 'baseline_rows' | AutomationTable
 export type DbRecord = Record<string, unknown>
 
 export interface FakeUser {
@@ -65,7 +79,7 @@ export interface FakeResult<T = unknown> {
   error: FakeError | null
 }
 
-const TABLES: readonly TableName[] = ['sheets', 'columns', 'rows', 'dependencies', 'baselines', 'baseline_rows']
+const TABLES: readonly TableName[] = ['sheets', 'columns', 'rows', 'dependencies', 'baselines', 'baseline_rows', ...AUTOMATION_TABLES]
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
 export const MAX_ROWS = 1000
@@ -80,6 +94,7 @@ interface ColumnSpec {
 }
 
 const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
+  ...AUTOMATION_SCHEMA,
   sheets: {
     id: { default: () => crypto.randomUUID(), notNull: true },
     owner_id: { default: ({ uid }) => uid, notNull: true },
@@ -149,7 +164,7 @@ const COLUMN_ROLES = ['start', 'end', 'duration', 'predecessor', 'percentComplet
 const DEP_TYPES = ['FS', 'SS', 'FF', 'SF']
 
 export function emptyState(): FakeState {
-  return { users: [], sessionUserId: null, tables: { sheets: [], columns: [], rows: [], dependencies: [], baselines: [], baseline_rows: [] }, clock: 0 }
+  return { users: [], sessionUserId: null, tables: { sheets: [], columns: [], rows: [], dependencies: [], baselines: [], baseline_rows: [], automation_rules: [], automation_runs: [], notifications: [], update_requests: [], approval_requests: [], row_locks: [] }, clock: 0 }
 }
 
 /** Adds a user to a state object (for seeding). Returns the new user. */
@@ -512,6 +527,13 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         // The anon role has no grants on these tables.
         return { data: null, error: pgError(`permission denied for table ${this.table}`, '42501') }
       }
+      const accessError = automationAccessError(
+        this.table,
+        this.op.kind,
+        this.op.kind === 'select' ? this.op.columns : undefined,
+        this.op.kind === 'update' ? this.op.patch : undefined,
+      )
+      if (accessError) return { data: null, error: accessError }
       let result: FakeResult
       switch (this.op.kind) {
         case 'select':
@@ -594,7 +616,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         }
       }
       if (row.owner_id !== uid) return rlsError(this.table)
-      if (this.table !== 'sheets') {
+      if (this.table !== 'sheets' && !(row.sheet_id == null && this.table === 'notifications')) {
         const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
         if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
         if (sheet.owner_id !== uid) return rlsError(this.table)
@@ -625,6 +647,8 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         const bad = baselineFieldError(row.slot, row.name)
         if (bad) return bad
       }
+      const autoError = automationRowError(this.table, row, state)
+      if (autoError) return autoError
       if (this.table === 'baseline_rows') {
         // The rows belong to a baseline of the same sheet; row_id has no foreign key (it outlives its row).
         if (!state.tables.baselines.some((b) => b.id === row.baseline_id && b.sheet_id === row.sheet_id)) {
@@ -651,6 +675,8 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     /** Primary key and (dependencies) the one-per-pair unique key. Null when `row` is unique among `others`. */
     private uniqueError(row: DbRecord, others: DbRecord[]): FakeError | null {
+      const autoDup = automationUniqueError(this.table, row, others)
+      if (autoDup) return autoDup
       if (this.table === 'baseline_rows') {
         const dup = others.some((r) => r !== row && r.baseline_id === row.baseline_id && r.row_id === row.row_id)
         return dup ? pgError('duplicate key value violates unique constraint "baseline_rows_pkey"', '23505') : null
@@ -715,7 +741,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     }
 
     private runUpdate(state: FakeState, uid: string, patch: DbRecord): FakeResult {
-      const targets = this.visible(state, uid)
+      const targets = this.visible(state, uid).filter((r) => automationUpdatable(this.table, r, patch))
       const updated = targets.map((r) => ({ ...r, ...structuredClone(patch) }))
       for (const row of updated) {
         const err = this.checkRow(state, uid, row)
@@ -728,10 +754,10 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     private runDelete(state: FakeState, uid: string): FakeResult {
       const targets = this.visible(state, uid)
-      if (this.table === 'baseline_rows') {
+      if (this.table === 'baseline_rows' || this.table === 'row_locks') {
         // No id column: remove the matched records themselves.
         const gone = new Set(targets)
-        state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !gone.has(r))
+        state.tables[this.table] = state.tables[this.table].filter((r) => !gone.has(r))
       } else {
         removeWithCascade(state, this.table, new Set(targets.map((r) => r.id)))
       }
@@ -771,6 +797,11 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         if (value === null) delete cells[key]
         else cells[key] = structuredClone(value)
       }
+    } else if (fn === 'copy_row_to_sheet') {
+      const res = copyRowToSheet(state, uid, args)
+      if (res.error) return res
+      write(state)
+      return res
     } else if (fn === 'save_baseline') {
       const res = saveBaseline(state, uid, args)
       if (res.error) return res
@@ -897,6 +928,7 @@ function compare(a: unknown, b: unknown): number {
 /** Deletes rows of `table` and everything that cascades from them (the schema's `on delete cascade`). */
 function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>): void {
   if (ids.size === 0) return
+  cascadeAutomation(state, table, ids)
   if (table === 'sheets') {
     state.tables.sheets = state.tables.sheets.filter((r) => !ids.has(r.id))
     state.tables.columns = state.tables.columns.filter((r) => !ids.has(r.sheet_id))
@@ -924,6 +956,7 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
         }
       }
     }
+    cascadeAutomation(state, 'rows', all) // update / approval requests and locks of the deleted rows
     // baseline_rows.row_id deliberately has no foreign key: baselines survive a deleted row.
     state.tables.rows = state.tables.rows.filter((r) => !all.has(r.id))
     state.tables.dependencies = state.tables.dependencies.filter(

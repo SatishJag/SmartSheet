@@ -442,3 +442,73 @@ describe('fakeSupabase baselines', () => {
     expect(() => client.from('baseline_rows').update({ duration_days: 3 })).toThrow(/unsupported call .*baseline_rows.update/)
   })
 })
+
+describe('fakeSupabase automation tables (0009)', () => {
+  let client: ReturnType<typeof createFakeSupabase>
+  let sheet: string
+  let row: string
+  const trigger = { type: 'row_added' }
+  const action = { type: 'notify', recipients: [{ kind: 'owner' }], frequency: 'immediately', include: 'all', linkToRow: true }
+  beforeEach(async () => {
+    client = createFakeSupabase({ storage: memoryStorage() })
+    await client.auth.signUp(A)
+    sheet = ((await client.from('sheets').insert({ name: 'S' }).select('id').single()).data as { id: string }).id
+    row = ((await client.from('rows').insert({ sheet_id: sheet, position: 'a0', cells: {} }).select('id').single()).data as { id: string }).id
+  })
+
+  it('stores rules with defaults and checks the shapes; rules go with their sheet', async () => {
+    const ok = await client.from('automation_rules').insert({ sheet_id: sheet, name: 'R', trigger, action }).select('id, enabled, conditions').single()
+    expect(ok.data).toMatchObject({ enabled: true, conditions: null })
+    expect((await client.from('automation_rules').insert({ sheet_id: sheet, name: 'R', trigger: { type: 'x' }, action })).error?.code).toBe('23514')
+    expect((await client.from('automation_rules').insert({ sheet_id: sheet, name: ' ', trigger, action })).error?.code).toBe('23514')
+    await client.from('sheets').delete().eq('id', sheet)
+    expect((await client.from('automation_rules').select('id')).data).toEqual([])
+  })
+
+  it('the run log is append-only and its dedup key is unique', async () => {
+    const run = { rule_name: 'R', sheet_id: sheet, source: 'browser', outcome: 'done', dedup_key: 'k' }
+    expect((await client.from('automation_runs').insert(run)).error).toBeNull()
+    expect((await client.from('automation_runs').insert(run)).error?.code).toBe('23505')
+    expect((await client.from('automation_runs').update({ outcome: 'error' })).error?.code).toBe('42501')
+    expect((await client.from('automation_runs').delete()).error?.code).toBe('42501')
+    expect((await client.from('automation_runs').insert({ ...run, dedup_key: null, outcome: 'weird' })).error?.code).toBe('23514')
+  })
+
+  it('notifications: app and e-mail rows, only read_at changes, a sheet is optional', async () => {
+    expect((await client.from('notifications').insert({ channel: 'app', title: 'Hi', delivery_status: 'sent' })).error).toBeNull()
+    expect((await client.from('notifications').insert({ channel: 'email', title: 'Hi' })).error?.code).toBe('23514')
+    expect((await client.from('notifications').insert({ channel: 'email', title: 'Hi', recipient_email: 'a@b.co', sheet_id: sheet })).error).toBeNull()
+    expect((await client.from('notifications').update({ title: 'x' })).error?.code).toBe('42501')
+    const read = await client.from('notifications').update({ read_at: '2026-11-16T10:00:00Z' }).eq('channel', 'app').select('read_at')
+    expect(read.data).toEqual([{ read_at: '2026-11-16T10:00:00Z' }])
+  })
+
+  it('requests cannot be created or read with their token hash by the browser', async () => {
+    const req = { sheet_id: sheet, row_id: row, token_hash: 'a'.repeat(64), recipient_email: 'p@q.co', column_ids: ['c'], expires_at: '2026-12-01T00:00:00Z' }
+    expect((await client.from('update_requests').insert(req)).error?.code).toBe('42501')
+    expect((await client.from('update_requests').select('*')).error?.code).toBe('42501')
+    expect((await client.from('update_requests').select('token_hash')).error?.code).toBe('42501')
+    expect((await client.from('update_requests').select('id, status')).data).toEqual([])
+  })
+
+  it('row locks are unique per row and go with the row; copy_row_to_sheet maps cells by title and type', async () => {
+    expect((await client.from('row_locks').insert({ row_id: row, sheet_id: sheet })).error).toBeNull()
+    expect((await client.from('row_locks').insert({ row_id: row, sheet_id: sheet })).error?.code).toBe('23505')
+    expect((await client.from('row_locks').select('row_id')).data).toEqual([{ row_id: row }])
+
+    const other = ((await client.from('sheets').insert({ name: 'Other' }).select('id').single()).data as { id: string }).id
+    const c1 = crypto.randomUUID()
+    const c2 = crypto.randomUUID()
+    await client.from('columns').insert([
+      { id: c1, sheet_id: sheet, title: 'Task', type: 'TEXT_NUMBER', position: 0 },
+      { sheet_id: other, id: c2, title: 'TASK', type: 'TEXT_NUMBER', position: 0 },
+    ])
+    await client.from('rows').update({ cells: { [c1]: 'Pour' } }).eq('id', row)
+    const copied = await client.rpc('copy_row_to_sheet', { p_row_id: row, p_target_sheet_id: other, p_position: 'a0', p_move: false })
+    expect(copied.error).toBeNull()
+    expect((await client.from('rows').select('cells').eq('sheet_id', other)).data).toEqual([{ cells: { [c2]: 'Pour' } }])
+    expect((await client.rpc('copy_row_to_sheet', { p_row_id: row, p_target_sheet_id: sheet, p_position: 'a0', p_move: false })).error?.message).toMatch(/different sheet/)
+    await client.from('rows').delete().eq('id', row)
+    expect((await client.from('row_locks').select('row_id')).data).toEqual([])
+  })
+})
