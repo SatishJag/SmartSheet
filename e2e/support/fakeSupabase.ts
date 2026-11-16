@@ -13,6 +13,8 @@
  * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`.
  * - tables `baselines` and `baseline_rows` and the function `save_baseline` (0006_baselines.sql):
  *   cascade on sheet delete, NO cascade from `rows` (a baseline outlives a deleted row).
+ * - the smart-asset tables of 0008_assets.sql (workspaces, folders, reports, dashboards,
+ *   workspace_items, favorites), in fakeAssets.ts.
  * - ownership: every read and write is limited to rows owned by the signed-in user, and
  *   inserts/updates must keep `owner_id` = that user and point at the user's own sheet.
  *
@@ -25,9 +27,22 @@
  * `Error('fakeSupabase: unsupported call ...')` so gaps show up loudly.
  */
 
+import {
+  ASSET_SCHEMA,
+  ASSET_TABLES,
+  assetRowError,
+  assetUniqueError,
+  beforeAssetUpdate,
+  cascadeAssets,
+  computeGenerated,
+  emptyAssetTables,
+  isAssetTable,
+  type AssetTable,
+} from './fakeAssets'
+
 export const FAKE_STORAGE_KEY = 'fakeSupabase:v1'
 
-export type TableName = 'sheets' | 'columns' | 'rows' | 'dependencies' | 'baselines' | 'baseline_rows'
+export type TableName = 'sheets' | 'columns' | 'rows' | 'dependencies' | 'baselines' | 'baseline_rows' | AssetTable
 export type DbRecord = Record<string, unknown>
 
 export interface FakeUser {
@@ -65,7 +80,7 @@ export interface FakeResult<T = unknown> {
   error: FakeError | null
 }
 
-const TABLES: readonly TableName[] = ['sheets', 'columns', 'rows', 'dependencies', 'baselines', 'baseline_rows']
+const TABLES: readonly TableName[] = ['sheets', 'columns', 'rows', 'dependencies', 'baselines', 'baseline_rows', ...ASSET_TABLES]
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
 export const MAX_ROWS = 1000
@@ -142,6 +157,7 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     end_date: { notNull: true },
     duration_days: { notNull: true },
   },
+  ...ASSET_SCHEMA,
 }
 
 const COLUMN_TYPES = ['TEXT_NUMBER', 'DATE', 'CHECKBOX', 'PICKLIST', 'MULTI_PICKLIST', 'CONTACT_LIST', 'DURATION', 'PREDECESSOR']
@@ -149,7 +165,7 @@ const COLUMN_ROLES = ['start', 'end', 'duration', 'predecessor', 'percentComplet
 const DEP_TYPES = ['FS', 'SS', 'FF', 'SF']
 
 export function emptyState(): FakeState {
-  return { users: [], sessionUserId: null, tables: { sheets: [], columns: [], rows: [], dependencies: [], baselines: [], baseline_rows: [] }, clock: 0 }
+  return { users: [], sessionUserId: null, tables: { sheets: [], columns: [], rows: [], dependencies: [], baselines: [], baseline_rows: [], ...emptyAssetTables() }, clock: 0 }
 }
 
 /** Adds a user to a state object (for seeding). Returns the new user. */
@@ -594,6 +610,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         }
       }
       if (row.owner_id !== uid) return rlsError(this.table)
+      if (isAssetTable(this.table)) return assetRowError(this.table, state, uid, row) // 0008_assets.sql
       if (this.table !== 'sheets') {
         const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
         if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
@@ -646,11 +663,16 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       for (const [col, s] of Object.entries(SCHEMA[this.table])) {
         if (row[col] === undefined && s.default) row[col] = s.default({ uid, now })
       }
+      computeGenerated(this.table, row)
       return row
     }
 
     /** Primary key and (dependencies) the one-per-pair unique key. Null when `row` is unique among `others`. */
     private uniqueError(row: DbRecord, others: DbRecord[]): FakeError | null {
+      if (isAssetTable(this.table)) {
+        const dup = assetUniqueError(this.table, row, others)
+        if (dup) return dup
+      }
       if (this.table === 'baseline_rows') {
         const dup = others.some((r) => r !== row && r.baseline_id === row.baseline_id && r.row_id === row.row_id)
         return dup ? pgError('duplicate key value violates unique constraint "baseline_rows_pkey"', '23505') : null
@@ -717,6 +739,16 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     private runUpdate(state: FakeState, uid: string, patch: DbRecord): FakeResult {
       const targets = this.visible(state, uid)
       const updated = targets.map((r) => ({ ...r, ...structuredClone(patch) }))
+      if (isAssetTable(this.table)) {
+        const now = () => {
+          state.clock = Math.max(Date.now(), state.clock + 1)
+          return new Date(state.clock).toISOString()
+        }
+        for (let i = 0; i < updated.length; i++) {
+          const err = beforeAssetUpdate(this.table, targets[i], updated[i], now)
+          if (err) return { data: null, error: err }
+        }
+      }
       for (const row of updated) {
         const err = this.checkRow(state, uid, row)
         if (err) return { data: null, error: err }
@@ -897,7 +929,9 @@ function compare(a: unknown, b: unknown): number {
 /** Deletes rows of `table` and everything that cascades from them (the schema's `on delete cascade`). */
 function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>): void {
   if (ids.size === 0) return
+  if (isAssetTable(table)) return cascadeAssets(state, table, ids)
   if (table === 'sheets') {
+    cascadeAssets(state, 'sheets', ids) // placements and stars of the sheets
     state.tables.sheets = state.tables.sheets.filter((r) => !ids.has(r.id))
     state.tables.columns = state.tables.columns.filter((r) => !ids.has(r.sheet_id))
     state.tables.dependencies = state.tables.dependencies.filter((r) => !ids.has(r.sheet_id))
