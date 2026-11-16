@@ -6,7 +6,7 @@
  *
  * What it models:
  * - auth: email + password users, one persisted session, auth state events.
- * - tables `sheets`, `columns`, `rows`, `dependencies` with the schema's defaults, not-null
+ * - tables `sheets`, `columns` (incl. `formula`, 0007_column_formula.sql), `rows`, `dependencies` with the schema's defaults, not-null
  *   columns, foreign keys and cascade deletes (supabase/migrations/0001_schema.sql), plus
  *   0002_hardening.sql's same-sheet parents/endpoints and one dependency per pair.
  * - PostgREST's 1000-row response cap (`.range()` pages), and `upsert` (ON CONFLICT DO UPDATE).
@@ -101,6 +101,7 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     system_type: { default: () => null },
     role: { default: () => null },
     width: { default: () => null },
+    formula: { default: () => null },
   },
   rows: {
     id: { default: () => crypto.randomUUID(), notNull: true },

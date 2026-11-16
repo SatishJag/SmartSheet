@@ -82,6 +82,8 @@ export interface DbColumn {
   system_type: string | null
   role: string | null
   width: number | null
+  /** Column formula (0007_column_formula.sql); absent in rows read before the migration was applied. */
+  formula?: string | null
 }
 
 export interface DbRow {
@@ -142,6 +144,7 @@ export function columnFromDb(r: DbColumn): Column {
   if (r.options != null) col.options = r.options
   if (r.system_type != null) col.systemType = r.system_type
   if (r.role != null) col.role = r.role as ColumnRole
+  if (r.formula != null) col.formula = r.formula
   return col
 }
 
@@ -162,6 +165,8 @@ export function columnToDb(
     system_type: col.systemType ?? null,
     role: col.role ?? null,
     width: null,
+    // Only sent when set, so adding a column keeps working on a database without 0007_column_formula.sql.
+    ...(col.formula ? { formula: col.formula } : {}),
   }
 }
 
@@ -479,7 +484,7 @@ function columnPersistence(
       check(
         await client
           .from('columns')
-          .update({ title: col.title, type: col.type, options: col.options ?? null, role: col.role ?? null })
+          .update({ title: col.title, type: col.type, options: col.options ?? null, role: col.role ?? null, formula: col.formula ?? null })
           .eq('id', col.id),
       )
     },

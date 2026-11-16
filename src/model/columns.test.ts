@@ -64,6 +64,20 @@ describe('renameFormulaReferences', () => {
     const f = '=SUM([Qty])'
     expect(renameFormulaReferences(f, 'Cost', 'Price')).toBe(f)
   })
+
+  it('follows the other reference forms: [Old]@row, [Old]5, [Old]:[Old] and a bare Old@row / Old:Old', () => {
+    expect(renameFormulaReferences('=[Cost]@row*2+[Cost]5+SUM([Cost]:[Cost])', 'Cost', 'Price')).toBe(
+      '=[Price]@row*2+[Price]5+SUM([Price]:[Price])',
+    )
+    expect(renameFormulaReferences('=Cost@row+SUM(Cost:Cost)', 'Cost', 'Price')).toBe('=Price@row+SUM(Price:Price)')
+    // A new title that is not a plain name needs brackets.
+    expect(renameFormulaReferences('=Cost@row', 'Cost', 'Unit Price')).toBe('=[Unit Price]@row')
+  })
+
+  it('does not touch function names or TRUE/FALSE that share the old title', () => {
+    expect(renameFormulaReferences('=SUM(1,2)+IF(TRUE,1,2)', 'SUM', 'Total')).toBe('=SUM(1,2)+IF(TRUE,1,2)')
+    expect(renameFormulaReferences('=SUM(Sum@row)', 'Sum', 'Total')).toBe('=SUM(Total@row)')
+  })
 })
 
 describe('columnLock', () => {

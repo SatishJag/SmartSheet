@@ -300,24 +300,3 @@ export function parseFormula(src: string): Node {
   if (result instanceof FormulaError) throw result
   return result
 }
-
-/** Every column title a formula's references name (for dependency tracking and renames). */
-export function referencedColumns(node: Node, into = new Set<string>()): Set<string> {
-  switch (node.k) {
-    case 'ref':
-      into.add(node.col)
-      if (node.col2) into.add(node.col2)
-      break
-    case 'neg':
-      referencedColumns(node.e, into)
-      break
-    case 'bin':
-      referencedColumns(node.l, into)
-      referencedColumns(node.r, into)
-      break
-    case 'call':
-      for (const a of node.args) referencedColumns(a, into)
-      break
-  }
-  return into
-}
