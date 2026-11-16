@@ -30,6 +30,11 @@ export interface AppDeps {
    * itself fails. Null when the server has no Supabase configuration: the planner API then answers 503.
    */
   authenticate: ((token: string) => Promise<AuthenticatedUser | null>) | null
+  /**
+   * Automation routes (server/automation): answers `/api/automation/*`, `/api/u/:token` and
+   * `/api/a/:token`, returning false for any other path.
+   */
+  automation?: (req: IncomingMessage, res: ServerResponse, pathname: string) => Promise<boolean>
   /** Limits on drafts; defaults to DEFAULT_DRAFT_LIMITS. */
   draftLimits?: DraftLimits
   /** Null when no API key is configured: drafts come from history only. */
@@ -264,6 +269,7 @@ export function createApp(deps: AppDeps): Server {
     const rawPath = req.url?.startsWith('/') ? req.url.split(/[?#]/)[0] : pathname
 
     if (pathname === '/api' || pathname.startsWith('/api/')) {
+      if (deps.automation && (await deps.automation(req, res, pathname))) return
       const route = routes[pathname]
       if (!route) return json(res, 404, { ok: false, error: 'Not found.' })
       if (req.method !== route.method && !(route.method === 'GET' && req.method === 'HEAD')) {

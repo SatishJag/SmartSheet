@@ -10,11 +10,15 @@
  *   PLANNER_DRAFTS_PER_HOUR       optional, per user, default 10
  *   PLANNER_MAX_CONCURRENT_DRAFTS optional, all users together, default 8
  *   PLANNER_DRAFTS_PER_HOUR_TOTAL optional, all users together, default 60
+ *   SUPABASE_SERVICE_ROLE_KEY     enables time based rules, digests, update requests and approvals (server only)
+ *   RESEND_API_KEY, MAIL_FROM     real e-mail; without them e-mail is simulated. PUBLIC_APP_URL builds the links.
+ *   See server/automation/config.ts for the other AUTOMATION_* settings.
  */
 import path from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
 import { DEFAULT_MODEL } from './ai'
 import { createApp, DEFAULT_DRAFT_LIMITS } from './app'
+import { createAutomation } from './automation'
 import { consoleLogger as log } from './log'
 import { createSupabaseAuthenticator } from './supabase'
 
@@ -29,8 +33,11 @@ const staticDir = path.resolve(env.STATIC_DIR || 'dist')
 if (!supabaseUrl || !supabaseAnonKey) log('config.warning', { message: 'SUPABASE_URL / SUPABASE_ANON_KEY not set: the planner API answers 503.' })
 if (!apiKey) log('config.warning', { message: 'ANTHROPIC_API_KEY not set: drafts are built from history only.' })
 
+const automation = createAutomation(env, log)
+
 const server = createApp({
   staticDir,
+  automation: automation.handle,
   authenticate: supabaseUrl && supabaseAnonKey ? createSupabaseAuthenticator(supabaseUrl, supabaseAnonKey) : null,
   anthropic: apiKey ? new Anthropic({ apiKey }) : null,
   model,
@@ -43,10 +50,14 @@ const server = createApp({
   },
 })
 
-server.listen(port, () => log('server.listening', { port, staticDir, model, ai: Boolean(apiKey) }))
+server.listen(port, () => {
+  log('server.listening', { port, staticDir, model, ai: Boolean(apiKey) })
+  automation.scheduler?.start()
+})
 
 function shutdown(signal: string) {
   log('server.stopping', { signal })
+  automation.scheduler?.stop()
   server.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 10_000).unref()
 }

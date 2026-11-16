@@ -252,15 +252,15 @@ export function automationApi(client: SupabaseClient) {
       return fetchAllPages<{ id: string; name: string }>((from, to) => client.from('sheets').select('id, name').order('name').order('id').range(from, to))
     },
 
-    /** Copies a row to the end of another sheet (the caller deletes the original for a move). */
-    async copyRow(rowId: string, targetSheetId: string): Promise<string> {
+    /** Copies a row to the end of another sheet; `move` also deletes the original (the browser deletes it itself, through the store). */
+    async copyRow(rowId: string, targetSheetId: string, move = false): Promise<string> {
       const positions = (await fetchAllPages<{ id: string; position: string; parent_id: string | null }>((from, to) =>
         client.from('rows').select('id, position, parent_id').eq('sheet_id', targetSheetId).order('id').range(from, to),
       )) as { position: string; parent_id: string | null }[]
       const top = positions.filter((p) => p.parent_id == null).map((p) => p.position)
       const last = top.reduce<string | null>((m, p) => (m === null || p > m ? p : m), null)
       const position = generateKeyBetween(last, null)
-      const res = await client.rpc('copy_row_to_sheet', { p_row_id: rowId, p_target_sheet_id: targetSheetId, p_position: position, p_move: false })
+      const res = await client.rpc('copy_row_to_sheet', { p_row_id: rowId, p_target_sheet_id: targetSheetId, p_position: position, p_move: move })
       return check(res) as string
     },
   }

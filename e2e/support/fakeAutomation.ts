@@ -200,9 +200,9 @@ export function cascadeAutomation(state: FakeState, table: string, ids: Set<unkn
 const norm = (s: unknown) => String(s ?? '').toLowerCase()
 
 /** `copy_row_to_sheet(p_row_id, p_target_sheet_id, p_position, p_move)`; all or nothing. */
-export function copyRowToSheet(state: FakeState, uid: string, args: Record<string, unknown>): FakeResult<string | null> {
+export function copyRowToSheet(state: FakeState, uid: string | null, args: Record<string, unknown>): FakeResult<string | null> {
   const fail = (message: string, code: string): FakeResult<string | null> => ({ data: null, error: pgError(message, code) })
-  const src = state.tables.rows.find((r) => r.id === args.p_row_id && r.owner_id === uid)
+  const src = state.tables.rows.find((r) => r.id === args.p_row_id && (uid === null || r.owner_id === uid))
   if (!src) return fail('row not found', 'P0002')
   if (src.sheet_id === args.p_target_sheet_id) return fail('the target must be a different sheet', '22023')
   const target = state.tables.sheets.find((s) => s.id === args.p_target_sheet_id && s.owner_id === src.owner_id)
