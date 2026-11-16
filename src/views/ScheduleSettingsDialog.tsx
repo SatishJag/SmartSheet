@@ -48,11 +48,13 @@ export function ScheduleSettingsDialog({ onClose }: { onClose: () => void }) {
   const titleId = useId()
   const hoursId = useId()
   const dateId = useId()
+  const nwStartId = useId()
   const errorId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
 
   const [weekdays, setWeekdays] = useState<number[]>(() => sheet?.calendar.workingWeekdays ?? [])
   const [hours, setHours] = useState(() => String(sheet?.calendar.hoursPerDay ?? 8))
+  const [nwStart, setNwStart] = useState<'shift' | 'keep'>(() => sheet?.calendar.nonWorkingStart ?? 'shift')
   const [dates, setDates] = useState<string[]>(() => [...(sheet?.calendar.nonWorkingDates ?? [])].sort())
   const [newDate, setNewDate] = useState('')
   const [depsOn, setDepsOn] = useState(() => sheet?.dependenciesEnabled ?? false)
@@ -104,7 +106,7 @@ export function ScheduleSettingsDialog({ onClose }: { onClose: () => void }) {
   function save(e: FormEvent) {
     e.preventDefault()
     if (!sheet) return
-    const cal: Calendar = { workingWeekdays: weekdays, nonWorkingDates: dates, hoursPerDay: hours.trim() === '' ? NaN : Number(hours) }
+    const cal: Calendar = { workingWeekdays: weekdays, nonWorkingDates: dates, hoursPerDay: hours.trim() === '' ? NaN : Number(hours), nonWorkingStart: nwStart }
     // Validate the calendar before touching the store so a refused save changes nothing.
     const norm = normalizeCalendar(cal)
     if (!norm.ok) {
@@ -151,6 +153,17 @@ export function ScheduleSettingsDialog({ onClose }: { onClose: () => void }) {
               onChange={(e) => setHours(e.target.value)}
               {...invalid('hours')}
             />
+          </div>
+
+          <div className="schedule-settings-field">
+            <label htmlFor={nwStartId}>Start dates on non-working days</label>
+            <select id={nwStartId} value={nwStart} onChange={(e) => setNwStart(e.target.value === 'keep' ? 'keep' : 'shift')}>
+              <option value="shift">Move to the next working day</option>
+              <option value="keep">Keep as entered</option>
+            </select>
+            <p className="schedule-settings-hint">
+              A Start typed on a weekend or holiday. Keeping it counts that day as day 1 of the duration.
+            </p>
           </div>
 
           <fieldset className="schedule-settings-dates">

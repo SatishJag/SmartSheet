@@ -22,6 +22,18 @@ describe('normalizeCalendar', () => {
     ).toEqual({ ok: true, calendar: { workingWeekdays: [1, 3, 5], nonWorkingDates: ['2026-01-01', '2026-12-25'], hoursPerDay: 7.5 } })
   })
 
+  it("stores nonWorkingStart 'keep', and drops the default 'shift' so older calendars stay unchanged", () => {
+    const cal = { workingWeekdays: [1, 2, 3, 4, 5], nonWorkingDates: [], hoursPerDay: 8 }
+    expect(normalizeCalendar({ ...cal, nonWorkingStart: 'keep' })).toEqual({ ok: true, calendar: { ...cal, nonWorkingStart: 'keep' } })
+    expect(normalizeCalendar({ ...cal, nonWorkingStart: 'shift' })).toEqual({ ok: true, calendar: cal })
+    expect(normalizeCalendar(cal)).toEqual({ ok: true, calendar: cal })
+  })
+
+  it('rejects an unknown nonWorkingStart', () => {
+    const r = normalizeCalendar({ ...MON_FRI, nonWorkingStart: 'later' as never })
+    expect(r).toEqual({ ok: false, error: "Start dates on non-working days must be 'shift' or 'keep'" })
+  })
+
   it('requires at least one working weekday', () => {
     expect(normalizeCalendar({ ...MON_FRI, workingWeekdays: [] })).toEqual({ ok: false, error: 'Choose at least one working day of the week' })
   })
@@ -65,6 +77,27 @@ describe('setCalendar', () => {
     expect(sched(store, 'r-survey')).toMatchObject({ start: '2026-11-10', end: '2026-11-11' })
     // The typed value itself is kept.
     expect(store.getState().data!.rows.find((r) => r.id === 'r-survey')!.cells[COL.start]).toBe('2026-11-09')
+  })
+
+  it("nonWorkingStart 'keep' keeps a typed Saturday start and re-runs the schedule from it; back to 'shift' restores the old dates", async () => {
+    const { store, persistence } = await makeTestStore()
+    expect(store.getState().setCell('r-survey', COL.start, '2026-11-14')).toEqual({ ok: true }) // a Saturday, 2d
+    expect(sched(store, 'r-survey')).toMatchObject({ start: '2026-11-16', end: '2026-11-17' })
+    expect(sched(store, 'r-clear')).toMatchObject({ start: '2026-11-18' })
+
+    expect(store.getState().setCalendar({ ...MON_FRI, nonWorkingStart: 'keep' })).toEqual({ ok: true })
+    expect(store.getState().data!.sheet.calendar.nonWorkingStart).toBe('keep')
+    expect(sched(store, 'r-survey')).toMatchObject({ start: '2026-11-14', end: '2026-11-16' }) // Sat, Mon
+    expect(sched(store, 'r-clear')).toMatchObject({ start: '2026-11-17' })
+    await settled(store)
+    expect(persistence.saveSheetSettings).toHaveBeenLastCalledWith('sheet-1', {
+      calendar: { ...MON_FRI, nonWorkingStart: 'keep' },
+      dependenciesEnabled: true,
+    })
+
+    expect(store.getState().setCalendar({ ...MON_FRI, nonWorkingStart: 'shift' })).toEqual({ ok: true })
+    expect(store.getState().data!.sheet.calendar).toEqual(MON_FRI)
+    expect(sched(store, 'r-survey')).toMatchObject({ start: '2026-11-16', end: '2026-11-17' })
   })
 
   it('stores the normalised calendar and saves it with the dependencies flag', async () => {

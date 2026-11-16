@@ -38,6 +38,12 @@
 
 .schedule-settings-field { margin: 0 0 16px; }
 
+.schedule-settings-field > select {
+  display: block;
+  max-width: 100%;
+  margin-top: 4px;
+}
+
 .schedule-settings-field input[type='number'] {
   width: 6em;
   margin-left: 8px;
