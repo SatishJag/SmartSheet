@@ -10,10 +10,12 @@
  *   columns, foreign keys and cascade deletes (supabase/migrations/0001_schema.sql), plus
  *   0002_hardening.sql's same-sheet parents/endpoints and one dependency per pair.
  * - PostgREST's 1000-row response cap (`.range()` pages), and `upsert` (ON CONFLICT DO UPDATE).
- * - access (0001-0003): a sheet is visible to its owner and to the users it is shared with
+ * - access (0001, 0002, 0005_sharing): a sheet is visible to its owner and to the users it is shared with
  *   (`sheet_members`); owners and editors may write its rows, columns and dependencies (stamped
  *   with the SHEET owner's id), viewers may not, and only the owner may rename, delete or share
  *   it. Members are added only through `rpc('share_sheet')`.
+ * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`;
+ *   they run as the caller, so they act on any sheet the caller may write (owner or editor).
  *
  * This mimics RLS ownership so the UI flows behave as they would against Supabase. It is NOT a
  * security test: the real row-level security policies are covered by the PGlite tests in
@@ -706,31 +708,67 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     }
   }
 
-  /** The only rpc: 0003_sharing.sql's share_sheet(p_sheet, p_email, p_role). */
-  async function rpc(fn: string, args: { p_sheet: string; p_email: string; p_role: string }): Promise<FakeResult> {
-    if (fn !== 'share_sheet') unsupported(`rpc(${JSON.stringify(fn)})`)
+  /**
+   * The database functions: share_sheet(p_sheet, p_email, p_role) (sharing migration, SECURITY
+   * DEFINER, owner only), and delete_column / set_column_cells (0003_columns.sql, SECURITY INVOKER:
+   * they act on the sheets the caller may write, i.e. as owner or editor).
+   */
+  async function rpc(fn: string, args: Record<string, unknown> = {}): Promise<FakeResult<null>> {
     await tick()
     const state = read()
     const uid = state.sessionUserId
-    if (!uid) return { data: null, error: pgError('permission denied for function share_sheet', '42501') }
+    if (!uid || !state.users.some((u) => u.id === uid)) {
+      return { data: null, error: pgError(`permission denied for function ${fn}`, '42501') }
+    }
     const fail = (message: string, code = 'P0001') => ({ data: null, error: pgError(message, code) })
-    if (sheetRole(state, uid, args.p_sheet) !== 'owner') return fail('Only the sheet owner can share it', '42501')
-    if (args.p_role !== 'viewer' && args.p_role !== 'editor') return fail('Role must be viewer or editor')
-    const email = args.p_email.trim().toLowerCase()
-    const target = state.users.find((u) => u.email === email)
-    if (!target) return fail(`No account found for ${email}`)
-    if (target.id === uid) return fail('You already own this sheet')
-    const existing = state.tables.sheet_members.find((m) => m.sheet_id === args.p_sheet && m.user_id === target.id)
-    if (existing) existing.role = args.p_role
-    else {
-      state.tables.sheet_members.push({
-        id: crypto.randomUUID(),
-        sheet_id: args.p_sheet,
-        user_id: target.id,
-        email,
-        role: args.p_role,
-        created_at: new Date().toISOString(),
-      })
+    const canWrite = (sheetId: unknown) => {
+      const role = sheetRole(state, uid, sheetId)
+      return role === 'owner' || role === 'editor'
+    }
+    const writableRows = (sheetId: unknown) => (canWrite(sheetId) ? state.tables.rows.filter((r) => r.sheet_id === sheetId) : [])
+    if (fn === 'share_sheet') {
+      const sheetId = String(args.p_sheet)
+      const roleArg = String(args.p_role)
+      if (sheetRole(state, uid, sheetId) !== 'owner') return fail('Only the sheet owner can share it', '42501')
+      if (roleArg !== 'viewer' && roleArg !== 'editor') return fail('Role must be viewer or editor')
+      const email = String(args.p_email ?? '').trim().toLowerCase()
+      const target = state.users.find((u) => u.email === email)
+      if (!target) return fail(`No account found for ${email}`)
+      if (target.id === uid) return fail('You already own this sheet')
+      const existing = state.tables.sheet_members.find((m) => m.sheet_id === sheetId && m.user_id === target.id)
+      if (existing) existing.role = roleArg
+      else {
+        state.tables.sheet_members.push({
+          id: crypto.randomUUID(),
+          sheet_id: sheetId,
+          user_id: target.id,
+          email,
+          role: roleArg,
+          created_at: new Date().toISOString(),
+        })
+      }
+    } else if (fn === 'delete_column') {
+      const colId = args.p_column_id
+      const col = state.tables.columns.find((c) => c.id === colId && canWrite(c.sheet_id))
+      if (!col) return { data: null, error: null } // already gone, or not writable by the caller: a no-op
+      const key = String(colId)
+      for (const r of writableRows(col.sheet_id)) {
+        const cells = r.cells as Record<string, unknown>
+        if (key in cells) delete cells[key]
+      }
+      state.tables.columns = state.tables.columns.filter((c) => c !== col)
+    } else if (fn === 'set_column_cells') {
+      const key = String(args.p_column_id)
+      const values = (args.p_values ?? {}) as Record<string, unknown>
+      const byId = new Map(writableRows(args.p_sheet_id).map((r) => [r.id, r]))
+      for (const [rowId, value] of Object.entries(values)) {
+        const cells = byId.get(rowId)?.cells as Record<string, unknown> | undefined
+        if (!cells) continue
+        if (value === null) delete cells[key]
+        else cells[key] = structuredClone(value)
+      }
+    } else {
+      unsupported(`rpc(${JSON.stringify(fn)})`)
     }
     write(state)
     return { data: null, error: null }
@@ -747,7 +785,7 @@ const PAIR_KEY = ['sheet_id', 'predecessor_row_id', 'successor_row_id'] as const
 
 const samePair = (a: DbRecord, b: DbRecord) => PAIR_KEY.every((c) => a[c] === b[c])
 
-/** 0003_sharing.sql sheet_role(): 'owner', 'editor', 'viewer' or null. */
+/** 0005_sharing.sql sheet_role(): 'owner', 'editor', 'viewer' or null. */
 function sheetRole(state: FakeState, uid: string, sheetId: unknown): 'owner' | 'editor' | 'viewer' | null {
   const sheet = state.tables.sheets.find((s) => s.id === sheetId)
   if (!sheet) return null

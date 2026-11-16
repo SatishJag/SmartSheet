@@ -80,7 +80,8 @@ export function validateCell(col: Column, raw: string, ctx: ValidateContext): Va
 
   const hoursPerDay = ctx.hoursPerDay ?? 8
 
-  if (text.startsWith('=')) {
+  // A checkbox cell only toggles, so it can neither show nor edit a formula.
+  if (text.startsWith('=') && col.type !== 'CHECKBOX') {
     if (col.role && FORMULA_BLOCKED_ROLES.includes(col.role) && ctx.dependenciesEnabled !== false) {
       return fail(`Formulas are not allowed in ${col.role} columns`)
     }

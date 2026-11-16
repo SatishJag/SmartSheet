@@ -45,6 +45,12 @@ function fakePersistence(data: SheetData = sheetData()) {
     saveRowTree: vi.fn(async () => {}),
     saveDependencies: vi.fn(async () => {}),
     deleteRows: vi.fn(async () => {}),
+    saveSheetSettings: vi.fn(async () => {}),
+    insertColumn: vi.fn(async (_sheetId: string, _col: Column, _position: number) => {}),
+    updateColumn: vi.fn(async (_col: Column) => {}),
+    saveColumnOrder: vi.fn(async (_sheetId: string, _colIds: string[]) => {}),
+    deleteColumn: vi.fn(async (_sheetId: string, _colId: string) => {}),
+    saveColumnCells: vi.fn(async (_sheetId: string, _colId: string, _values: Record<string, unknown>) => {}),
   } satisfies Persistence
 }
 
@@ -230,9 +236,9 @@ describe('schedule without a start column', () => {
   it('is empty with no errors', async () => {
     const data = sheetData({ columns: columns.filter((c) => c.role !== 'start') })
     const { store } = await loaded(fakePersistence(data))
-    expect(store.getState().scheduled).toEqual({ byRow: {}, errors: [], critical: [] })
+    expect(store.getState().scheduled).toEqual({ byRow: {}, errors: [] })
     store.getState().setCell('r1', 'dur', '5d')
-    expect(store.getState().scheduled).toEqual({ byRow: {}, errors: [], critical: [] })
+    expect(store.getState().scheduled).toEqual({ byRow: {}, errors: [] })
   })
 })
 
@@ -393,7 +399,8 @@ describe('save status across overlapping and failed saves', () => {
     })
     store.getState().setCell('r1', 'name', 'old')
     await settled(store)
-    expect(p.saveCell.mock.calls.map((c) => c[2])).toEqual(['old', 'old', 'old', 'old', 'new'])
+    // Each attempt sends the cell's value at that moment, so retries after the edit carry 'new'.
+    expect(p.saveCell.mock.calls.map((c) => c[2])).toEqual(['old', 'old', 'new', 'new', 'new'])
     expect(cell(store, 'r1', 'name')).toBe('new')
   })
 
@@ -619,6 +626,45 @@ describe('retryFailed and failedCount', () => {
   })
 })
 
+describe('batch', () => {
+  it('defers rescheduling until the batch ends, then schedules once', async () => {
+    const { store } = await loaded()
+    const before = store.getState().scheduled
+    const out = store.getState().batch(() => {
+      expect(store.getState().setCell('r1', 'dur', '4d')).toEqual({ ok: true })
+      expect(store.getState().setCell('r2', 'dur', '1d')).toEqual({ ok: true })
+      // Cells change at once; the schedule waits for the end of the batch.
+      expect(cell(store, 'r1', 'dur')).toBe('4d')
+      expect(store.getState().scheduled).toBe(before)
+      return 'done'
+    })
+    expect(out).toBe('done')
+    expect(store.getState().scheduled.byRow.r1.end).toBe('2026-11-12')
+    expect(store.getState().scheduled.byRow.r2.start).toBe('2026-11-13')
+    expect(store.getState().scheduled.byRow.r2.end).toBe('2026-11-13')
+  })
+
+  it('reschedules even when the callback throws, and nested batches schedule only at the outer end', async () => {
+    const { store } = await loaded()
+    const before = store.getState().scheduled
+    expect(() =>
+      store.getState().batch(() => {
+        store.getState().batch(() => store.getState().setCell('r1', 'dur', '4d'))
+        expect(store.getState().scheduled).toBe(before)
+        throw new Error('boom')
+      }),
+    ).toThrow('boom')
+    expect(store.getState().scheduled.byRow.r1.end).toBe('2026-11-12')
+  })
+
+  it('does not reschedule when nothing changed', async () => {
+    const { store } = await loaded()
+    const before = store.getState().scheduled
+    store.getState().batch(() => store.getState().setCell('r1', 'start', 'bad'))
+    expect(store.getState().scheduled).toBe(before)
+  })
+})
+
 describe('read-only store (a viewer)', () => {
   it('refuses every edit and leaves the data alone', async () => {
     const { makeTestStore } = await import('../test/fixtures')
@@ -635,6 +681,11 @@ describe('read-only store (a viewer)', () => {
     s.deleteRow(row)
     s.indentRow(row)
     s.removeDependency('a', 'b')
+    expect(store.getState().data).toBe(before)
+    expect(s.addColumn('New', 'TEXT_NUMBER')).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
+    expect(s.renameColumn(col, 'Renamed')).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
+    expect(s.deleteColumn(col)).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
+    expect(s.setDependenciesEnabled(!before!.sheet.dependenciesEnabled)).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
     expect(store.getState().data).toBe(before)
     store.getState().setReadOnly(false)
     expect(store.getState().setCell(row, col, 'x').ok).toBe(true)

@@ -6,7 +6,9 @@ import { SheetStoreProvider, useSheetStore, useSheetStoreApi } from '../store/Sh
 import { createSheetStore, type SaveStatus, type SheetState } from '../store/sheetStore'
 import { ConfirmDialog } from './ConfirmDialog'
 import { ShareDialog } from './ShareDialog'
+import { ShowCriticalPathProvider } from './criticalPathContext'
 import { InlineRename } from './InlineRename'
+import { ScheduleSettingsButton } from './ScheduleSettingsDialog'
 import { GanttView } from './gantt/GanttView'
 import { GridView } from './grid/GridView'
 import { SaveStatusBadge } from './grid/SaveStatusBadge'
@@ -237,6 +239,8 @@ function SheetContent({
   const [confirmBack, setConfirmBack] = useState(false)
   const [sharing, setSharing] = useState(false)
   const role = useSheetRole(client, userId, sheetId)
+  const [showCritical, setShowCritical] = useState(false)
+  const dependenciesOn = data?.sheet.dependenciesEnabled ?? false
 
   return (
     <section className="sheet-view">
@@ -259,6 +263,8 @@ function SheetContent({
           Back to sheets
         </button>
         {data && <SheetName client={client} sheetId={sheetId} name={data.sheet.name} canRename={role === 'owner'} />}
+        {/* Sheet settings live on the sheets row, which only the owner may change. */}
+        {data && role === 'owner' && <ScheduleSettingsButton />}
         {role === 'owner' && (
           <button type="button" onClick={() => setSharing(true)}>
             Share
@@ -266,13 +272,29 @@ function SheetContent({
         )}
         {role === 'viewer' && <span className="role-badge">View only</span>}
         {role === 'editor' && <span className="role-badge">Shared with you · can edit</span>}
+                {data && (
+          <label
+            className="critical-toggle"
+            title={dependenciesOn ? undefined : 'Turn on dependencies in Schedule settings to see the critical path'}
+          >
+            <input
+              type="checkbox"
+              checked={showCritical && dependenciesOn}
+              disabled={!dependenciesOn}
+              onChange={(e) => setShowCritical(e.currentTarget.checked)}
+            />{' '}
+            Critical path
+          </label>
+        )}
         <span className="spacer" />
         {data && <SaveStatusBadge />}
       </header>
       {loadError ? (
         <p role="alert">Could not load the sheet: {loadError}</p>
       ) : data ? (
-        <SheetTabs />
+        <ShowCriticalPathProvider value={showCritical && dependenciesOn}>
+          <SheetTabs />
+        </ShowCriticalPathProvider>
       ) : (
         <p>Loading sheet…</p>
       )}

@@ -274,6 +274,38 @@ describe('SheetView', () => {
     expect(screen.getByRole('button', { name: 'Back to sheets' })).toBeInTheDocument()
   })
 
+  describe('critical path toggle', () => {
+    async function open(data = makeSheetData()) {
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const { store } = await makeTestStore(data)
+      render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} store={store} />)
+      await screen.findByRole('grid')
+      return { store, user: userEvent.setup() }
+    }
+
+    it('flags critical rows in the grid once switched on, and stops when switched off', async () => {
+      const { user } = await open()
+      const toggle = screen.getByRole('checkbox', { name: 'Critical path' })
+      expect(toggle).toBeEnabled()
+      expect(toggle).not.toBeChecked()
+      expect(document.querySelector('.grid-row.is-critical')).toBeNull()
+      await user.click(toggle)
+      expect(toggle).toBeChecked()
+      expect(document.querySelector('.grid-row.is-critical')).not.toBeNull()
+      await user.click(toggle)
+      expect(document.querySelector('.grid-row.is-critical')).toBeNull()
+    })
+
+    it('is disabled, with a reason, while dependencies are off', async () => {
+      const data = makeSheetData()
+      data.sheet.dependenciesEnabled = false
+      await open(data)
+      const toggle = screen.getByRole('checkbox', { name: 'Critical path' })
+      expect(toggle).toBeDisabled()
+      expect(toggle.closest('label')).toHaveAttribute('title', expect.stringMatching(/Schedule settings/))
+    })
+  })
+
   describe('sharing roles', () => {
     /** A client whose sheet_members lookup answers with `role` (or nothing). */
     function memberClient(role: string | null) {
@@ -304,6 +336,7 @@ describe('SheetView', () => {
       expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Rename sheet' })).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Add row' })).toBeDisabled()
+      expect(screen.queryByRole('button', { name: /Schedule settings/ })).not.toBeInTheDocument()
     })
 
     it('an editor can edit but not rename or share', async () => {
@@ -317,6 +350,7 @@ describe('SheetView', () => {
       expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Rename sheet' })).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Add row' })).toBeEnabled()
+      expect(screen.queryByRole('button', { name: /Schedule settings/ })).not.toBeInTheDocument()
     })
 
     it('stays read-only when the role lookup finds nothing', async () => {

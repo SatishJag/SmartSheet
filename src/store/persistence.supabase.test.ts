@@ -186,3 +186,101 @@ describe('supabasePersistence.loadSheet paging', () => {
     expect((await supabasePersistence(client).loadSheet(sheetId)).rows).toHaveLength(1000)
   })
 })
+
+describe('supabasePersistence.saveSheetSettings', () => {
+  it('updates the sheet row so the next load returns the new calendar and flag', async () => {
+    const { client, sheetId } = seeded(1, 0)
+    const p = supabasePersistence(client)
+    const calendar = { workingWeekdays: [1, 2, 3, 4], nonWorkingDates: ['2026-12-25'], hoursPerDay: 10 }
+    await p.saveSheetSettings(sheetId, { calendar, dependenciesEnabled: false })
+    const data = await supabasePersistence(client).loadSheet(sheetId)
+    expect(data.sheet.calendar).toEqual(calendar)
+    expect(data.sheet.dependenciesEnabled).toBe(false)
+    expect(data.sheet.name).toBe('Big') // other fields untouched
+  })
+
+  it('fails when the sheet does not exist (so the store retries and reports it)', async () => {
+    const { client } = seeded(1, 0)
+    const settings = { calendar: { workingWeekdays: [1], nonWorkingDates: [], hoursPerDay: 8 }, dependenciesEnabled: true }
+    await expect(supabasePersistence(client).saveSheetSettings(crypto.randomUUID(), settings)).rejects.toThrow(/not found/)
+  })
+})
+
+describe('supabasePersistence column management', () => {
+  /** The seeded sheet plus two columns, and a client that records rpc calls. */
+  async function withColumns(rows = 3) {
+    const { client: raw, sheetId, rowIds } = seeded(rows, 0)
+    const rpcCalls: { fn: string; args: Record<string, unknown> }[] = []
+    const fake = raw as unknown as { auth: unknown; from: unknown; rpc: (fn: string, args: Record<string, unknown>) => unknown }
+    const client = {
+      auth: fake.auth,
+      from: fake.from,
+      rpc: (fn: string, args: Record<string, unknown>) => {
+        rpcCalls.push({ fn, args })
+        return fake.rpc(fn, args)
+      },
+    } as unknown as SupabaseClient
+    const p = supabasePersistence(client)
+    const a = { id: crypto.randomUUID(), title: 'Task', type: 'TEXT_NUMBER' as const }
+    const b = { id: crypto.randomUUID(), title: 'Status', type: 'PICKLIST' as const, options: ['Open', 'Done'] }
+    await p.insertColumn(sheetId, a, 0)
+    await p.insertColumn(sheetId, b, 1)
+    return { p, client, sheetId, rowIds, a, b, rpcCalls }
+  }
+
+  it('insertColumn adds a column at its position (and is an upsert, so a retry is safe)', async () => {
+    const { p, sheetId, a, b } = await withColumns()
+    const c = { id: crypto.randomUUID(), title: 'Cost', type: 'TEXT_NUMBER' as const }
+    await p.insertColumn(sheetId, c, 2)
+    await p.insertColumn(sheetId, c, 2)
+    expect((await p.loadSheet(sheetId)).columns).toEqual([a, b, c])
+  })
+
+  it('updateColumn writes title, type, options and role', async () => {
+    const { p, sheetId, b } = await withColumns()
+    await p.updateColumn({ ...b, title: 'State', type: 'MULTI_PICKLIST', options: ['X'] })
+    const cols = (await p.loadSheet(sheetId)).columns
+    expect(cols[1]).toEqual({ id: b.id, title: 'State', type: 'MULTI_PICKLIST', options: ['X'] })
+  })
+
+  it('saveColumnOrder writes only the positions that changed', async () => {
+    const { p, client, sheetId, a, b } = await withColumns()
+    const c = { id: crypto.randomUUID(), title: 'Cost', type: 'TEXT_NUMBER' as const }
+    await p.insertColumn(sheetId, c, 1) // shares position 1 with Status until the order is saved
+    const { client: counted, calls } = instrument(client)
+    const p2 = supabasePersistence(counted)
+    await p2.loadSheet(sheetId)
+    calls.length = 0
+    await p2.saveColumnOrder(sheetId, [a.id, c.id, b.id])
+    expect(calls.filter((x) => x.method === 'update').map((x) => x.args[0])).toEqual([{ position: 2 }])
+    expect((await p.loadSheet(sheetId)).columns.map((x) => x.title)).toEqual(['Task', 'Cost', 'Status'])
+  })
+
+  it('deleteColumn removes the column and its values from every row in one call', async () => {
+    const { p, client, sheetId, rowIds, a, b, rpcCalls } = await withColumns(2500)
+    await client.from('rows').update({ cells: { [a.id]: 'x', [b.id]: 'Open' } }).eq('sheet_id', sheetId)
+    await p.deleteColumn(sheetId, b.id)
+    expect(rpcCalls).toEqual([{ fn: 'delete_column', args: { p_column_id: b.id } }])
+    const data = await p.loadSheet(sheetId)
+    expect(data.columns).toEqual([a])
+    expect(data.rows).toHaveLength(rowIds.length)
+    expect(data.rows.every((r) => JSON.stringify(r.cells) === JSON.stringify({ [a.id]: 'x' }))).toBe(true)
+    await p.deleteColumn(sheetId, b.id) // idempotent
+  })
+
+  it('saveColumnCells sets values and removes undefined/null ones, in chunks of 1000 rows', async () => {
+    const { p, client, sheetId, rowIds, b, rpcCalls } = await withColumns(2500)
+    await client.from('rows').update({ cells: { [b.id]: 'Open', keep: 1 } }).eq('sheet_id', sheetId)
+    const values: Record<string, unknown> = {}
+    rowIds.forEach((id, i) => (values[id] = i % 2 === 0 ? ['Open'] : undefined))
+    await p.saveColumnCells(sheetId, b.id, values)
+    expect(rpcCalls.map((c) => [c.fn, Object.keys(c.args.p_values as object).length])).toEqual([
+      ['set_column_cells', 1000],
+      ['set_column_cells', 1000],
+      ['set_column_cells', 500],
+    ])
+    const byId = new Map((await p.loadSheet(sheetId)).rows.map((r) => [r.id, r.cells]))
+    expect(byId.get(rowIds[0])).toEqual({ [b.id]: ['Open'], keep: 1 })
+    expect(byId.get(rowIds[1])).toEqual({ keep: 1 })
+  })
+})

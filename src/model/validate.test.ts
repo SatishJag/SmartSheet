@@ -90,6 +90,9 @@ describe('CHECKBOX', () => {
   it('rejects anything else', () => {
     expect(validateCell(col('CHECKBOX'), 'yes', ctx).ok).toBe(false)
   })
+  it('rejects formulas, which a checkbox cannot show or edit', () => {
+    expect(validateCell(col('CHECKBOX'), '=1+2', ctx)).toEqual({ ok: false, error: 'Checkbox must be true or false' })
+  })
 })
 
 describe('PICKLIST', () => {

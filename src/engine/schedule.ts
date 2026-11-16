@@ -34,28 +34,26 @@ export interface ScheduleError {
 export interface ScheduleResult {
   byRow: Record<string, Scheduled>
   errors: ScheduleError[]
-  /** Ids of the tasks on the critical path: zero float, a delay in any of them delays the finish. */
-  critical: string[]
 }
 
 /** Day count for a row: calendar days if elapsed, else working days. 0 minutes is a milestone. */
-function durationDaysOf(row: SchedRow, cal: Calendar): number {
+export function durationDaysOf(row: SchedRow, cal: Calendar): number {
   if (row.durationMinutes <= 0) return 0
   return Math.max(1, toWorkingDays({ minutes: row.durationMinutes, elapsed: row.elapsed }, cal.hoursPerDay))
 }
 
-function lagDaysOf(dep: SchedDep, cal: Calendar): number {
+export function lagDaysOf(dep: SchedDep, cal: Calendar): number {
   return Math.round(dep.lagMinutes / (cal.hoursPerDay * 60))
 }
 
 /** End date for a row of durationDays starting on start (a working day). */
-function endFromStart(start: string, durationDays: number, elapsed: boolean, cal: Calendar): string {
+export function endFromStart(start: string, durationDays: number, elapsed: boolean, cal: Calendar): string {
   if (durationDays <= 1) return start
   return elapsed ? shiftIso(start, durationDays - 1) : addWorkingDays(cal, start, durationDays - 1)
 }
 
 /** Start date for a row of durationDays ending on end (a working day). */
-function startFromEnd(end: string, durationDays: number, elapsed: boolean, cal: Calendar): string {
+export function startFromEnd(end: string, durationDays: number, elapsed: boolean, cal: Calendar): string {
   if (durationDays <= 1) return end
   return elapsed ? shiftIso(end, -(durationDays - 1)) : addWorkingDays(cal, end, -(durationDays - 1))
 }
@@ -194,41 +192,6 @@ function rollUp(children: Scheduled[], cal: Calendar): Scheduled | null {
 }
 
 /**
- * Critical path: the leaf tasks reachable backwards, through driving dependencies only, from the
- * tasks that finish last. A dependency drives when it alone sets its successor's start.
- * shortcut: only the finish-driving chains count; near-critical (low float) tasks are not shown.
- */
-function criticalPath(
-  rows: SchedRow[],
-  incoming: Map<string, SchedDep[]>,
-  childrenOf: Map<string, string[]>,
-  byRow: Record<string, Scheduled>,
-  cal: Calendar,
-): string[] {
-  const leaves = rows.filter((r) => !childrenOf.has(r.id) && byRow[r.id])
-  if (leaves.length === 0) return []
-  const finish = leaves.reduce((m, r) => (byRow[r.id].end > m ? byRow[r.id].end : m), '')
-  const rowById = new Map(rows.map((r) => [r.id, r]))
-  const critical = new Set<string>()
-  const stack = leaves.filter((r) => byRow[r.id].end === finish).map((r) => r.id)
-  while (stack.length > 0) {
-    const id = stack.pop()!
-    if (critical.has(id)) continue
-    critical.add(id)
-    const row = rowById.get(id)!
-    const me = byRow[id]
-    for (const d of incoming.get(id) ?? []) {
-      const pred = byRow[d.predecessorId]
-      if (pred && nextWorkingDay(cal, candidateStart(d, pred, me.durationDays, row.elapsed, cal)) === me.start) {
-        stack.push(d.predecessorId)
-      }
-    }
-  }
-  // A single task is not a path: nothing is linked to it, so there is nothing to highlight.
-  return critical.size < 2 ? [] : rows.filter((r) => critical.has(r.id)).map((r) => r.id)
-}
-
-/**
  * Forward pass plus parent rollups: computes start, end, duration and percent for every row
  * from manual starts, dependencies and (for parent rows) their children.
  * Rows in or downstream of a dependency cycle are not scheduled and get an error.
@@ -308,5 +271,5 @@ export function schedule(rows: SchedRow[], deps: SchedDep[], cal: Calendar): Sch
     if (!inCycle.has(id)) errors.push({ rowId: id, message: 'Depends on a row in a dependency cycle' })
   }
 
-  return { byRow, errors, critical: criticalPath(rows, incoming, childrenOf, byRow, cal) }
+  return { byRow, errors }
 }

@@ -69,10 +69,13 @@ function TextEditor({ column, initial, onCommit, onCancel }: CellEditorProps) {
 function DateEditor({ column, initial, onCommit, onCancel }: CellEditorProps) {
   const { commit, cancel } = useOnce(onCommit, onCancel)
   const read = (el: HTMLInputElement) => (el.validity?.badInput ? 'invalid date' : el.value)
+  // A native date input cannot hold a formula (it would read back empty and erase it), so a cell
+  // holding one is edited as text.
+  const isFormula = initial.trimStart().startsWith('=')
   return (
     <input
       className="cell-editor"
-      type="date"
+      type={isFormula ? 'text' : 'date'}
       aria-label={column.title}
       defaultValue={initial}
       autoFocus
