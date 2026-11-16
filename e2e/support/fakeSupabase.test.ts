@@ -442,3 +442,94 @@ describe('fakeSupabase baselines', () => {
     expect(() => client.from('baseline_rows').update({ duration_days: 3 })).toThrow(/unsupported call .*baseline_rows.update/)
   })
 })
+
+describe('fakeSupabase resources', () => {
+  let client: ReturnType<typeof createFakeSupabase>
+  const ROW = '00000000-0000-4000-8000-0000000000b1'
+
+  beforeEach(async () => {
+    client = createFakeSupabase({ storage: memoryStorage() })
+    await client.auth.signUp(A)
+  })
+
+  async function newSheet(): Promise<string> {
+    return ((await client.from('sheets').insert({ name: 'S' }).select('id').single()).data as { id: string }).id
+  }
+  async function newResource(name = 'Ada'): Promise<string> {
+    return ((await client.from('resources').insert({ name }).select('id').single()).data as { id: string }).id
+  }
+  const assignment = (sheet: string, resource: string, over: Record<string, unknown> = {}) =>
+    client.from('assignments').insert({ sheet_id: sheet, row_id: ROW, resource_id: resource, allocation_kind: 'percent', allocation_value: 50, ...over })
+
+  it('fills the resource defaults (a person with a Monday to Friday 8 hour week)', async () => {
+    const id = await newResource()
+    const r = (await client.from('resources').select('*').eq('id', id).single()).data as Record<string, unknown>
+    expect(r).toMatchObject({ kind: 'person', skills: [], cost_rate: 0, hours_by_weekday: [0, 8, 8, 8, 8, 8, 0], department: null })
+  })
+
+  it('enforces the resource checks', async () => {
+    const bad = async (v: Record<string, unknown>) => (await client.from('resources').insert({ name: 'x', ...v })).error?.code
+    expect(await bad({ name: '  ' })).toBe('23514')
+    expect(await bad({ kind: 'robot' })).toBe('23514')
+    expect(await bad({ cost_rate: -1 })).toBe('23514')
+    expect(await bad({ hours_by_weekday: [8, 8, 8] })).toBe('23514')
+    expect(await bad({ hours_by_weekday: [0, 8, 8, 8, 8, 8, 25] })).toBe('23514')
+    expect(await bad({ skills: Array.from({ length: 31 }, (_, i) => `s${i}`) })).toBe('23514')
+    expect(await bad({ department: '  ' })).toBe('23514')
+  })
+
+  it('time off needs one of the owner’s resources, ordered dates and sane hours', async () => {
+    const r = await newResource()
+    const ok = { resource_id: r, start_date: '2026-12-21', end_date: '2027-01-01' }
+    expect((await client.from('resource_time_off').insert(ok)).error).toBeNull()
+    expect((await client.from('resource_time_off').insert({ ...ok, end_date: '2026-12-01' })).error?.code).toBe('23514')
+    expect((await client.from('resource_time_off').insert({ ...ok, hours: 25 })).error?.code).toBe('23514')
+    expect((await client.from('resource_time_off').insert({ ...ok, resource_id: crypto.randomUUID() })).error?.code).toBe('23503')
+  })
+
+  it('enforces the assignment checks, one assignment per task and resource, and the owner’s resource', async () => {
+    const s = await newSheet()
+    const r = await newResource()
+    const other = () => crypto.randomUUID()
+    expect((await assignment(s, r)).error).toBeNull()
+    expect((await assignment(s, r, { allocation_value: 70 })).error?.code).toBe('23505')
+    expect((await assignment(s, r, { row_id: other(), allocation_value: 0 })).error?.code).toBe('23514')
+    expect((await assignment(s, r, { row_id: other(), allocation_value: 1001 })).error?.code).toBe('23514')
+    expect((await assignment(s, r, { row_id: other(), allocation_kind: 'hours_per_day', allocation_value: 25 })).error?.code).toBe('23514')
+    expect((await assignment(s, r, { row_id: other(), allocation_kind: 'weeks' })).error?.code).toBe('23514')
+    expect((await assignment(s, r, { row_id: other(), start_date: '2026-11-20', end_date: '2026-11-16' })).error?.code).toBe('23514')
+    expect((await assignment(s, other(), { row_id: other() })).error?.code).toBe('23503')
+    expect((await assignment(other(), r, { row_id: other() })).error?.code).toBe('23503')
+  })
+
+  it('cascades: a resource takes its time off and assignments; a sheet takes its assignments; a deleted row keeps them', async () => {
+    const s = await newSheet()
+    const r = await newResource()
+    await client.from('rows').insert({ sheet_id: s, position: 'a0', id: ROW })
+    await client.from('resource_time_off').insert({ resource_id: r, start_date: '2026-12-21', end_date: '2026-12-22' })
+    await assignment(s, r)
+    await client.from('rows').delete().eq('id', ROW)
+    expect((await client.from('assignments').select('id')).data).toHaveLength(1)
+
+    await client.from('resources').delete().eq('id', r)
+    expect((await client.from('resource_time_off').select('id')).data).toEqual([])
+    expect((await client.from('assignments').select('id')).data).toEqual([])
+
+    const r2 = await newResource('Ben')
+    await assignment(s, r2)
+    await client.from('sheets').delete().eq('id', s)
+    expect((await client.from('assignments').select('id')).data).toEqual([])
+    expect((await client.from('resources').select('id')).data).toHaveLength(1) // resources outlive a sheet
+  })
+
+  it('hides resources and assignments from other users and refuses their sheets', async () => {
+    const s = await newSheet()
+    const r = await newResource()
+    await assignment(s, r)
+    await client.auth.signOut()
+    await client.auth.signUp({ email: 'e2e-user-b@example.com', password: 'e2e-password-b' })
+    expect((await client.from('resources').select('id')).data).toEqual([])
+    expect((await client.from('assignments').select('id')).data).toEqual([])
+    expect((await assignment(s, r)).error).not.toBeNull()
+  })
+})

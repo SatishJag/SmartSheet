@@ -14,6 +14,7 @@ import { SaveStatusBadge } from './grid/SaveStatusBadge'
 import { KanbanView } from './kanban/KanbanView'
 import { DensityProvider, readDensity, saveDensity, type Density } from './density'
 import { Icon, type IconName } from '../ui/Icon'
+import { ResourcesButton } from '../resources/AssignPanel'
 import './sheetView.css'
 
 export interface SheetViewProps {
@@ -270,6 +271,7 @@ function SheetContent({
               tools={
                 <>
                   <ScheduleSettingsButton />
+                  <ResourcesButton client={client} sheetId={sheetId} />
                   <label
                     className="switch"
                     title={dependenciesOn ? undefined : 'Turn on dependencies in Schedule settings to see the critical path'}
