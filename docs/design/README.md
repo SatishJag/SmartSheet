@@ -161,3 +161,44 @@ Mobile (390x844):
 | Request | 3 items | Loading | Review | Late | Failed | Single |
 | --- | --- | --- | --- | --- | --- | --- |
 | ![](wizard-mobile-request.png) | ![](wizard-mobile-request-items.png) | ![](wizard-mobile-loading.png) | ![](wizard-mobile-review.png) | ![](wizard-mobile-review-late.png) | ![](wizard-mobile-review-failed.png) | ![](wizard-mobile-single-review.png) |
+
+## Resources
+
+Resource management lives in the **Resources** section (`src/resources/`) and in a **Resources** button in
+every sheet's toolbar. The full semantics (how an allocation becomes hours, what counts as
+over-allocated, how leveling decides) are in
+`docs/superpowers/specs/2026-11-16-resources-design.md`.
+
+![Workload heat map](resources-workload.png)
+
+- **Heat map.** Resource rows (name, type and department, utilisation for the range, a "5d over" badge)
+  by day / week / month columns. Cells show assigned hours; shading is the share of capacity (free,
+  under 50%, 50 to 85%, 85 to 100%) in a fixed blue ramp that does not change with the theme, so it never
+  clashes with a red or orange brand. **Over-allocation is never colour alone**: red diagonal stripes, an
+  inset red outline, a "!" mark and the words "over-allocated on N days" in the cell's accessible name.
+  A week cell is flagged when any day inside it is over, so a Monday peak is not hidden by a quiet Friday.
+  The grid has one tab stop with arrow-key navigation; rows are virtualised (60px).
+- **Cell detail.** Click or press Enter on a cell: a non-modal side panel (a bottom sheet on phones) with
+  assigned vs available hours, a per-day strip and the tasks behind the number with an Open sheet button.
+
+![Cell detail](resources-cell-detail.png)
+
+- **Assign panel (in a sheet).** A non-modal drawer: pick tasks (checkboxes, or click a task in the grid
+  or Gantt), see who is assigned, then choose a resource (listed most-free first, with free hours in the
+  task's dates), an allocation (% of capacity, hours per day, hours per week, total hours) and optionally
+  dates of its own. Before saving it previews the hours added, the resource's weekly load with this
+  assignment and a warning naming the over-allocated days. You can still assign.
+
+![Assign panel](resources-assign.png)
+
+| Find a resource | Leveling suggestions |
+| --- | --- |
+| ![Find](resources-find.png) | ![Leveling](resources-leveling.png) |
+
+Mobile (390x844): the toolbar collapses to zoom, date navigation and a Filters button; the summary becomes
+a 2x2 strip so the heat map starts above the fold; the heat map scrolls inside its own box with a sticky
+resource column; drawers become bottom sheets.
+
+| Workload | Assign panel |
+| --- | --- |
+| ![](mobile-resources-workload.png) | ![](mobile-resources-assign.png) |
