@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { StoreApi } from 'zustand/vanilla'
+import { AutomationRuntime } from '../automation/AutomationRuntime'
 import { supabasePersistence } from '../store/persistence'
 import { SheetStoreProvider, useSheetStore, useSheetStoreApi } from '../store/SheetStoreContext'
 import { createSheetStore, type SaveStatus, type SheetState } from '../store/sheetStore'
@@ -50,6 +51,7 @@ function SheetViewForSheet({ client, sheetId, onBack, onSaveStatusChange, store:
 
   return (
     <SheetStoreProvider store={store}>
+      <AutomationRuntime client={client} />
       <SheetContent client={client} sheetId={sheetId} onBack={onBack} onSaveStatusChange={onSaveStatusChange} />
     </SheetStoreProvider>
   )

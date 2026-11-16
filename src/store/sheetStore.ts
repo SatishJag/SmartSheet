@@ -12,6 +12,7 @@ import {
   type RowNode,
 } from '../model/hierarchy'
 import { validateCell, type ColumnRole } from '../model/validate'
+import { isRowLocked, LOCKED_MESSAGE } from '../automation/locks'
 import { createBaselineActions, type BaselineActions } from './baselineActions'
 import { createColumnActions, type ColumnActions } from './columnActions'
 import type { Persistence, RowRecord, SheetData } from './persistence'
@@ -496,6 +497,10 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (!row) return { ok: false, error: `Unknown row ${rowId}` }
         const col = data.columns.find((c) => c.id === colId)
         if (!col) return { ok: false, error: `Unknown column ${colId}` }
+        if (isRowLocked(data.sheet.id, rowId)) {
+          set({ errors: cellErrors(rowId, colId, LOCKED_MESSAGE) })
+          return { ok: false, error: LOCKED_MESSAGE }
+        }
         // Predecessors are not stored in cells: the text is derived from the dependencies.
         if (col.role === 'predecessor') return get().setPredecessors(rowId, raw)
         if (col.role && ROLLUP_ROLES.includes(col.role) && isParent(data, rowId)) {
@@ -564,6 +569,10 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       deleteRow(id) {
         const data = get().data
         if (!data) return
+        if (isRowLocked(data.sheet.id, id)) {
+          set({ notices: [...get().notices, LOCKED_MESSAGE] })
+          return
+        }
         const { rows, removedIds } = deleteWithChildren(data.rows, id)
         if (removedIds.length === 0) return
         const removed = new Set(removedIds)

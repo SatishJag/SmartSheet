@@ -107,8 +107,8 @@ test('resources: create, assign on a project sheet, see the load, over-allocate,
 
   // Find a resource: Ben fits, Ada does not.
   await page.getByRole('tab', { name: 'Find a resource' }).click()
-  await page.getByLabel('From').fill(week1)
-  await page.getByLabel('To').fill(week1)
+  await page.getByLabel('From', { exact: true }).fill(week1)
+  await page.getByLabel('To', { exact: true }).fill(week1)
   const results = page.getByRole('list', { name: 'Results' })
   await expect(results.getByRole('listitem').first()).toContainText('Ben Hartley')
   await expect(results.getByRole('listitem').first()).toContainText('Fits')
@@ -175,8 +175,8 @@ test('resources: leveling suggests moving a task with float, and the page fits a
 
   await nav(page, 'Resources')
   await page.getByRole('tab', { name: 'Leveling' }).click()
-  await page.getByLabel('From').fill(week1)
-  await page.getByLabel('To').fill(mondayIn(8))
+  await page.getByLabel('From', { exact: true }).fill(week1)
+  await page.getByLabel('To', { exact: true }).fill(mondayIn(8))
   await page.getByRole('button', { name: 'Find suggestions' }).click()
   const item = page.getByRole('list', { name: 'Suggestions' }).getByRole('listitem').first()
   await expect(item).toContainText('Delay “Task 2” by 3 working days')

@@ -8,6 +8,7 @@ import { Icon } from './ui/Icon'
 import { ShellProvider } from './shell/ShellContext'
 import { SECTIONS } from './shell/sections'
 import './shell/shell.css'
+import { NotificationBell } from './automation/NotificationBell'
 import { ThemePicker } from './ui/ThemePicker'
 import './theme.css'
 import './App.css'
@@ -42,7 +43,8 @@ function ConfiguredApp({ url, anonKey }: { url: string; anonKey: string }) {
 }
 
 function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
-  const [openSheetId, setOpenSheetId] = useState<string | null>(null)
+  // A link from an e-mail or a notification can open a sheet directly: /?sheet=<id>.
+  const [openSheetId, setOpenSheetId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('sheet'))
   const [sectionId, setSectionId] = useState('sheets')
   const section = SECTIONS.find((s) => s.id === sectionId) ?? SECTIONS[0]
   const shell = useMemo(
@@ -72,6 +74,7 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
             <button
               key={s.id}
               type="button"
+              aria-label={s.label}
               aria-current={s.id === section.id ? 'page' : undefined}
               onClick={() => {
                 setSectionId(s.id)
@@ -84,6 +87,7 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
           ))}
         </nav>
         <span className="spacer" />
+        <NotificationBell />
         <ThemePicker />
       </header>
       <main className={section.id !== 'sheets' ? 'page page-list' : openSheetId === null ? 'page page-list' : 'page page-sheet'}>

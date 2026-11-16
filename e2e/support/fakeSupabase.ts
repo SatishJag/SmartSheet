@@ -19,6 +19,8 @@
  * - ownership: every read and write is limited to rows owned by the signed-in user, and
  *   inserts/updates must keep `owner_id` = that user and point at the user's own sheet.
  *
+ * - the automation tables and `copy_row_to_sheet` (0009_automation.sql): see fakeAutomation.ts.
+ *
  * This mimics RLS ownership so the UI flows behave as they would against Supabase. It is NOT a
  * security test: the real row-level security policies are covered by the PGlite tests in
  * `src/db/rls.test.ts`.
@@ -27,6 +29,18 @@
  * reload keeps both the data and the session. Any call the fake does not implement throws
  * `Error('fakeSupabase: unsupported call ...')` so gaps show up loudly.
  */
+
+import {
+  AUTOMATION_SCHEMA,
+  AUTOMATION_TABLES,
+  automationAccessError,
+  automationRowError,
+  automationUniqueError,
+  automationUpdatable,
+  cascadeAutomation,
+  copyRowToSheet,
+  type AutomationTable,
+} from './fakeAutomation'
 
 export const FAKE_STORAGE_KEY = 'fakeSupabase:v1'
 
@@ -40,6 +54,7 @@ export type TableName =
   | 'resources'
   | 'resource_time_off'
   | 'assignments'
+  | AutomationTable
 export type DbRecord = Record<string, unknown>
 
 export interface FakeUser {
@@ -87,6 +102,7 @@ const TABLES: readonly TableName[] = [
   'resources',
   'resource_time_off',
   'assignments',
+  ...AUTOMATION_TABLES,
 ]
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
@@ -102,6 +118,7 @@ interface ColumnSpec {
 }
 
 const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
+  ...AUTOMATION_SCHEMA,
   sheets: {
     id: { default: () => crypto.randomUUID(), notNull: true },
     owner_id: { default: ({ uid }) => uid, notNull: true },
@@ -280,6 +297,11 @@ function project(row: DbRecord, columns: string): DbRecord {
 export interface FakeSupabaseOptions {
   storage: StorageLike
   key?: string
+  /**
+   * Act as the service role (the planning server): row-level security and the user-facing grants are
+   * bypassed, `auth.admin.getUserById` works, and nothing defaults to the signed-in user.
+   */
+  serviceRole?: boolean
 }
 
 type AuthEvent = 'INITIAL_SESSION' | 'SIGNED_IN' | 'SIGNED_OUT'
@@ -298,7 +320,9 @@ export interface FakeSession {
  * Creates the fake client. Typed loosely: the app casts it to `SupabaseClient`, and only the
  * methods implemented here may be used.
  */
-export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupabaseOptions) {
+export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRole = false }: FakeSupabaseOptions) {
+  /** What `uid` is while acting as the service role: it owns nothing and defaults nothing. */
+  const SERVICE_UID = ''
   function read(): FakeState {
     const raw = storage.getItem(key)
     if (!raw) return emptyState()
@@ -414,6 +438,17 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         return { data: { user: session.user, session }, error: null }
       },
 
+      /** Service role only (the Auth admin API). */
+      admin: {
+        async getUserById(id: string) {
+          await tick()
+          if (!serviceRole) return { data: { user: null }, error: { message: 'User not allowed', status: 403 } }
+          const u = read().users.find((x) => x.id === id)
+          if (!u) return { data: { user: null }, error: { message: 'User not found', status: 404 } }
+          return { data: { user: { id: u.id, email: u.email || undefined, is_anonymous: u.email === '' } }, error: null }
+        },
+      },
+
       async signOut() {
         await tick()
         const state = read()
@@ -518,6 +553,26 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       return this
     }
 
+    lte(col: string, value: unknown): this {
+      this.needFilterable('lte')
+      this.filters.push((r) => r[col] != null && compare(r[col], value) <= 0)
+      return this
+    }
+
+    gte(col: string, value: unknown): this {
+      this.needFilterable('gte')
+      this.filters.push((r) => r[col] != null && compare(r[col], value) >= 0)
+      return this
+    }
+
+    /** `is(col, null)`: the column is NULL. */
+    is(col: string, value: null): this {
+      this.needFilterable('is')
+      if (value !== null) unsupported(`${this.table}.is(${col}, non-null)`)
+      this.filters.push((r) => r[col] == null)
+      return this
+    }
+
     in(col: string, values: readonly unknown[]): this {
       this.needFilterable('in')
       if (!Array.isArray(values)) unsupported(`${this.table}.in(${col}, non-array)`)
@@ -571,11 +626,18 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       if (!this.op) unsupported(`${this.table}: awaited without select/insert/update/delete`)
       await tick()
       const state = read()
-      const uid = state.sessionUserId
-      if (!uid || !state.users.some((u) => u.id === uid)) {
+      const uid = serviceRole ? SERVICE_UID : (state.sessionUserId ?? '')
+      if (!serviceRole && (!uid || !state.users.some((u) => u.id === uid))) {
         // The anon role has no grants on these tables.
         return { data: null, error: pgError(`permission denied for table ${this.table}`, '42501') }
       }
+      const accessError = serviceRole ? null : automationAccessError(
+        this.table,
+        this.op.kind,
+        this.op.kind === 'select' ? this.op.columns : undefined,
+        this.op.kind === 'update' ? this.op.patch : undefined,
+      )
+      if (accessError) return { data: null, error: accessError }
       let result: FakeResult
       switch (this.op.kind) {
         case 'select':
@@ -622,7 +684,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     /** Rows of this table the user may see (RLS `using owner_id = auth.uid()`), after filters. */
     private visible(state: FakeState, uid: string): DbRecord[] {
-      return state.tables[this.table].filter((r) => r.owner_id === uid && this.filters.every((f) => f(r)))
+      return state.tables[this.table].filter((r) => (serviceRole || r.owner_id === uid) && this.filters.every((f) => f(r)))
     }
 
     private runSelect(state: FakeState, uid: string, columns: string): FakeResult {
@@ -657,15 +719,15 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
           return pgError(`null value in column "${col}" of relation "${this.table}" violates not-null constraint`, '23502')
         }
       }
-      if (row.owner_id !== uid) return rlsError(this.table)
+      if (!serviceRole && row.owner_id !== uid) return rlsError(this.table)
       if (this.table === 'resources' || this.table === 'resource_time_off') {
         const bad = resourceError(state, this.table, row)
         if (bad) return bad
       }
-      if (this.table !== 'sheets' && this.table !== 'resources' && this.table !== 'resource_time_off') {
+      if (this.table !== 'sheets' && this.table !== 'resources' && this.table !== 'resource_time_off' && !(row.sheet_id == null && this.table === 'notifications')) {
         const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
         if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
-        if (sheet.owner_id !== uid) return rlsError(this.table)
+        if (!serviceRole && sheet.owner_id !== uid) return rlsError(this.table)
       }
       // 0002_hardening.sql: parents and dependency endpoints must be rows of the SAME sheet.
       const rowExists = (id: unknown) =>
@@ -697,6 +759,8 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         const bad = baselineFieldError(row.slot, row.name)
         if (bad) return bad
       }
+      const autoError = automationRowError(this.table, row, state)
+      if (autoError) return autoError
       if (this.table === 'baseline_rows') {
         // The rows belong to a baseline of the same sheet; row_id has no foreign key (it outlives its row).
         if (!state.tables.baselines.some((b) => b.id === row.baseline_id && b.sheet_id === row.sheet_id)) {
@@ -723,6 +787,8 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     /** Primary key and (dependencies) the one-per-pair unique key. Null when `row` is unique among `others`. */
     private uniqueError(row: DbRecord, others: DbRecord[]): FakeError | null {
+      const autoDup = automationUniqueError(this.table, row, others)
+      if (autoDup) return autoDup
       if (this.table === 'baseline_rows') {
         const dup = others.some((r) => r !== row && r.baseline_id === row.baseline_id && r.row_id === row.row_id)
         return dup ? pgError('duplicate key value violates unique constraint "baseline_rows_pkey"', '23505') : null
@@ -774,7 +840,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         let row: DbRecord
         if (i >= 0) {
           // The conflicting row must be visible to the caller for the UPDATE (RLS `using`).
-          if (working[i].owner_id !== uid) return { data: null, error: rlsError(this.table) }
+          if (!serviceRole && working[i].owner_id !== uid) return { data: null, error: rlsError(this.table) }
           row = { ...working[i], ...structuredClone(v) }
           working[i] = row
         } else {
@@ -793,7 +859,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     }
 
     private runUpdate(state: FakeState, uid: string, patch: DbRecord): FakeResult {
-      const targets = this.visible(state, uid)
+      const targets = this.visible(state, uid).filter((r) => serviceRole || automationUpdatable(this.table, r, patch))
       const updated = targets.map((r) => ({ ...r, ...structuredClone(patch) }))
       for (const row of updated) {
         const err = this.checkRow(state, uid, row)
@@ -806,10 +872,10 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     private runDelete(state: FakeState, uid: string): FakeResult {
       const targets = this.visible(state, uid)
-      if (this.table === 'baseline_rows') {
+      if (this.table === 'baseline_rows' || this.table === 'row_locks') {
         // No id column: remove the matched records themselves.
         const gone = new Set(targets)
-        state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !gone.has(r))
+        state.tables[this.table] = state.tables[this.table].filter((r) => !gone.has(r))
       } else {
         removeWithCascade(state, this.table, new Set(targets.map((r) => r.id)))
       }
@@ -824,11 +890,11 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
   async function rpc(fn: string, args: Record<string, unknown> = {}): Promise<FakeResult<string | null>> {
     await tick()
     const state = read()
-    const uid = state.sessionUserId
-    if (!uid || !state.users.some((u) => u.id === uid)) {
+    const uid = serviceRole ? SERVICE_UID : (state.sessionUserId ?? '')
+    if (!serviceRole && (!uid || !state.users.some((u) => u.id === uid))) {
       return { data: null, error: pgError(`permission denied for function ${fn}`, '42501') }
     }
-    const ownRows = (sheetId: unknown) => state.tables.rows.filter((r) => r.owner_id === uid && r.sheet_id === sheetId)
+    const ownRows = (sheetId: unknown) => state.tables.rows.filter((r) => (serviceRole || r.owner_id === uid) && r.sheet_id === sheetId)
     if (fn === 'delete_column') {
       const colId = args.p_column_id
       const col = state.tables.columns.find((c) => c.id === colId && c.owner_id === uid)
@@ -849,6 +915,11 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         if (value === null) delete cells[key]
         else cells[key] = structuredClone(value)
       }
+    } else if (fn === 'copy_row_to_sheet') {
+      const res = copyRowToSheet(state, serviceRole ? null : uid, args)
+      if (res.error) return res
+      write(state)
+      return res
     } else if (fn === 'save_baseline') {
       const res = saveBaseline(state, uid, args)
       if (res.error) return res
@@ -1033,6 +1104,7 @@ function compare(a: unknown, b: unknown): number {
 /** Deletes rows of `table` and everything that cascades from them (the schema's `on delete cascade`). */
 function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>): void {
   if (ids.size === 0) return
+  cascadeAutomation(state, table, ids)
   if (table === 'sheets') {
     state.tables.sheets = state.tables.sheets.filter((r) => !ids.has(r.id))
     state.tables.columns = state.tables.columns.filter((r) => !ids.has(r.sheet_id))
@@ -1068,6 +1140,7 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
         }
       }
     }
+    cascadeAutomation(state, 'rows', all) // update / approval requests and locks of the deleted rows
     // baseline_rows.row_id and assignments.row_id deliberately have no foreign key: they survive a deleted row.
     state.tables.rows = state.tables.rows.filter((r) => !all.has(r.id))
     state.tables.dependencies = state.tables.dependencies.filter(
