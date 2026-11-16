@@ -32,6 +32,15 @@ function monthStarts(from: string, to: string): string[] {
   return out
 }
 
+/** Every Monday inside [from, to]. */
+function mondays(from: string, to: string): string[] {
+  const [y, m, d] = from.split('-').map(Number)
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay()
+  const out: string[] = []
+  for (let day = addDays(from, (8 - dow) % 7); day <= to && out.length < 80; day = addDays(day, 7)) out.push(day)
+  return out
+}
+
 const fmt = (iso: string) => {
   const [y, m, d] = iso.split('-').map(Number)
   return `${d} ${MONTHS[m - 1]} ${y}`
@@ -56,7 +65,10 @@ export function TimelineChart({ data, mode, label, today }: Props) {
   const x = (iso: string) => left + (daysBetween(from, iso) / span) * plotW
   const months = monthStarts(from, to)
   const monthW = plotW / (span / 30.4)
-  const head = 30
+  // Short programmes get a week scale under the months, so the axis is never just one month label.
+  const weekW = plotW / (span / 7)
+  const weeks = span <= 150 && weekW >= 30 ? mondays(from, to) : []
+  const head = weeks.length > 0 ? 46 : 30
   const rowH = gantt ? 28 : 34
 
   // Timeline lanes: the first lane whose last item ended before this one starts (its label included).
@@ -81,12 +93,20 @@ export function TimelineChart({ data, mode, label, today }: Props) {
     <div ref={box} className="timeline-box">
       <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${label}: ${data.items.length} items from ${fmt(data.min)} to ${fmt(data.max)}`}>
         <g className="chart-axis">
+          {weeks.map((wk) => (
+            <g key={wk}>
+              <line x1={x(wk)} x2={x(wk)} y1={head - 6} y2={height - 4} className="timeline-week" />
+              <text x={x(wk) + 3} y={head - 12} className="timeline-week-label">
+                {weekW >= 52 ? `${Number(wk.slice(8))} ${MONTHS[Number(wk.slice(5, 7)) - 1]}` : Number(wk.slice(8))}
+              </text>
+            </g>
+          ))}
           {months.map((m) => {
             const [, mo] = m.split('-').map(Number)
             return (
               <g key={m}>
-                <line x1={x(m)} x2={x(m)} y1={head - 6} y2={height - 4} className="chart-grid" />
-                <text x={x(m) + 4} y={head - 12}>
+                <line x1={x(m)} x2={x(m)} y1={head - (weeks.length > 0 ? 30 : 6)} y2={height - 4} className="chart-grid" />
+                <text x={x(m) + 4} y={head - (weeks.length > 0 ? 32 : 12)} className="timeline-month-label">
                   {monthW >= 44 ? `${MONTHS[mo - 1]}${mo === 1 || m === months[0] ? ` ${m.slice(0, 4)}` : ''}` : MONTHS[mo - 1][0]}
                 </text>
               </g>

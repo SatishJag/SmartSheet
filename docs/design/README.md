@@ -161,3 +161,56 @@ Mobile (390x844):
 | Request | 3 items | Loading | Review | Late | Failed | Single |
 | --- | --- | --- | --- | --- | --- | --- |
 | ![](wizard-mobile-request.png) | ![](wizard-mobile-request-items.png) | ![](wizard-mobile-loading.png) | ![](wizard-mobile-review.png) | ![](wizard-mobile-review-late.png) | ![](wizard-mobile-review-failed.png) | ![](wizard-mobile-single-review.png) |
+
+## Smart assets: Workspaces, Reports, Dashboards
+
+The three pages share one visual language with the sheet list (airy cards, pill buttons, the brand
+accent) and live in `src/assets/` with a single stylesheet, `assets.css`. They use only global tokens
+and shared classes; assets-only classes are described below. Everything was checked at 1440x900 and
+390x844 (no page-level horizontal scroll; 44px touch targets on touch devices).
+
+| Workspaces | Report |
+| --- | --- |
+| ![Workspaces](assets-workspaces.png) | ![Report](assets-report.png) |
+
+| Report builder | Dashboard |
+| --- | --- |
+| ![Builder](assets-report-builder.png) | ![Dashboard](assets-dashboard.png) |
+
+| Dashboard in edit mode | |
+| --- | --- |
+| ![Edit mode](assets-dashboard-edit.png) | |
+
+Mobile (390x844):
+
+| Workspaces | Report | Dashboard | Dashboard, edit |
+| --- | --- | --- | --- |
+| ![](assets-mobile-workspaces.png) | ![](assets-mobile-report.png) | ![](assets-mobile-dashboard.png) | ![](assets-mobile-dashboard-edit.png) |
+
+- **Workspaces.** Favorites and Recent as chip rows, then one card per workspace with a folder tree
+  (chevron toggles, a count chip per folder, star, "+" add menu, "..." actions menu), then "Not in a
+  workspace" for assets that are nowhere yet. Search replaces the tree with a flat result list that
+  shows where each hit lives. On a phone the name gets its own line and the buttons sit under it; the
+  type chip is dropped (the icon says it).
+- **Report.** A virtualized, grouped grid (`.rt-*`): group rows carry a count chip and their summaries
+  under the matching columns, a sticky Total row, sticky header and first column, numeric columns
+  right-aligned (header included). A cell that can be edited shows a pointer text cursor and a tinted
+  hover; a click opens an editor in the cell (select for picklists, date input for dates), Enter saves
+  and Escape cancels; a refused value shows the source sheet's own message in an alert bar. The grid is
+  a real `role="grid"` with a roving tab stop and arrow-key movement. The optional Gantt sits below it.
+- **Builder.** Six numbered cards (sheets, columns, filter, sort, group and summarize, Gantt) next to a
+  live preview that stays in view on wide screens and drops under the form on narrow ones.
+- **Dashboard.** A 12-column grid of cards (`.dash-grid`, 72px rows, 16px gaps). Each widget is placed
+  with the CSS variables `--gc` / `--gr`; under 720px they become one column in reading order, so the
+  phone layout needs no separate data. Edit mode adds dashed outlines, a drag handle, a resize corner
+  and a small toolbar (up, down, settings, delete); on a phone the handle and corner are replaced by the
+  up / down buttons, and the settings dialog has numeric position and size fields.
+- **Charts** (`Chart.tsx`, `TimelineChart.tsx`) are plain SVG sized to their box with a
+  `ResizeObserver`. Series colours are the brand scale plus the neutral and status tokens (so a theme
+  change recolours them); every chart has a native tooltip per mark, value labels or a legend with
+  values, and a visually hidden table of the same numbers as its text alternative. Axis ticks are whole
+  numbers for counts. A Gantt gets a month row and, for short programmes, a week row, plus a "Today" line.
+- **Menus and dialogs** (`ActionMenu`, `Dialog`) render in a portal on `<body>` with fixed positions,
+  so the springy `.lift` cards (which are transformed) and scroll containers cannot clip or displace
+  them. Menus follow the menu-button pattern (arrows, Home / End, Escape returns focus); dialogs trap
+  focus and restore it.

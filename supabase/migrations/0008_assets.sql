@@ -211,7 +211,7 @@ create trigger folders_keep_workspace
   before update of space_id on folders
   for each row execute function public.folders_keep_workspace();
 
-create function public.touch_updated_at()
+create function public.assets_touch_updated_at()
 returns trigger
 language plpgsql
 security invoker
@@ -223,8 +223,8 @@ begin
 end;
 $$;
 
-create trigger reports_touch before update on reports for each row execute function public.touch_updated_at();
-create trigger dashboards_touch before update on dashboards for each row execute function public.touch_updated_at();
+create trigger reports_touch before update on reports for each row execute function public.assets_touch_updated_at();
+create trigger dashboards_touch before update on dashboards for each row execute function public.assets_touch_updated_at();
 
 alter table workspaces enable row level security;
 alter table folders enable row level security;
@@ -266,4 +266,4 @@ create policy favorites_owner on favorites
 revoke all on workspaces, folders, reports, dashboards, workspace_items, favorites from anon, public;
 grant select, insert, update, delete on workspaces, folders, reports, dashboards, workspace_items, favorites to authenticated;
 
-revoke all on function public.folders_check_nesting(), public.folders_keep_workspace(), public.touch_updated_at() from public, anon;
+revoke all on function public.folders_check_nesting(), public.folders_keep_workspace(), public.assets_touch_updated_at() from public, anon;
