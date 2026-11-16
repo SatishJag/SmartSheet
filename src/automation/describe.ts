@@ -1,7 +1,7 @@
 /** Plain-language summaries of rules, for the rule list and the builder. Pure. */
 import type { Column } from '../model/validate'
 import { CONDITION_OPS, opNeedsValue } from './conditions'
-import type { Action, AutomationRule, Condition, ConditionGroup, Recipient, Trigger } from './types'
+import type { Action, AutomationRule, Condition, ConditionGroup, PlannedAction, Recipient, Trigger } from './types'
 import { isGroup } from './types'
 import { formatValue } from './values'
 
@@ -83,3 +83,28 @@ export function describeRule(rule: Pick<AutomationRule, 'trigger' | 'conditions'
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** What one planned action will do, as a sentence for the test run. */
+export function describePlanned(a: PlannedAction, cols: readonly Column[]): string {
+  const colTitle = (id: string) => title(cols, id)
+  switch (a.type) {
+    case 'notify': {
+      const to = [a.inApp ? 'you (in the app)' : '', ...a.emails].filter(Boolean).join(', ')
+      const when = a.emails.length > 0 && a.frequency !== 'immediately' ? ` as part of a ${a.frequency === 'daily' ? 'daily' : 'weekly'} digest` : ''
+      const rows = a.items.length > 1 ? ` about ${a.items.length} rows` : ''
+      return `Notify ${to || 'nobody'}${rows}${when}: "${a.subject}"`
+    }
+    case 'update_request':
+      return `Send ${a.emails.join(', ')} a link to update ${a.columnIds.map(colTitle).join(', ')} (valid ${a.expiresInDays} days)`
+    case 'approval':
+      return `Send ${a.emails.join(', ')} a link to approve or decline; the answer goes to ${colTitle(a.statusColumnId)} as "${a.approvedValue}" or "${a.declinedValue}"`
+    case 'set_cell':
+      return `Set ${colTitle(a.columnId)} to ${formatValue(a.value)}`
+    case 'lock':
+      return a.locked ? 'Lock the row' : 'Unlock the row'
+    case 'move':
+      return 'Move the row to the other sheet'
+    case 'copy':
+      return 'Copy the row to the other sheet'
+  }
+}

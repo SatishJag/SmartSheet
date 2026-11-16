@@ -1,9 +1,11 @@
 /** Browser-side data access for automation (rules, run log, notifications, requests, locks). */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { generateKeyBetween } from 'fractional-indexing'
+import type { Column } from '../model/validate'
+import { columnFromDb, type DbColumn } from '../store/persistence'
 import { fetchAllPages } from '../store/paging'
 import type { NewNotification, RunRecord } from './execute'
-import type { Action, AutomationRule, ConditionGroup, Trigger } from './types'
+import type { Action, AutomationRule, ConditionGroup, RowSnapshot, Trigger } from './types'
 
 export interface DbRule {
   id: string
@@ -91,6 +93,17 @@ export type AutomationApi = ReturnType<typeof automationApi>
 
 export function automationApi(client: SupabaseClient) {
   return {
+    async listColumns(sheetId: string): Promise<Column[]> {
+      const cols = await fetchAllPages<DbColumn>((from, to) => client.from('columns').select('*').eq('sheet_id', sheetId).order('position', { ascending: true }).order('id').range(from, to))
+      return cols.map(columnFromDb)
+    },
+
+    /** Some rows of the sheet (for the test run): at most `limit`, in no particular order. */
+    async listRows(sheetId: string, limit = 200): Promise<RowSnapshot[]> {
+      const rows = check(await client.from('rows').select('id, cells').eq('sheet_id', sheetId).order('id').range(0, limit - 1)) as { id: string; cells: Record<string, unknown> | null }[]
+      return rows.map((r) => ({ id: r.id, cells: r.cells ?? {} }))
+    },
+
     async listRules(sheetId: string): Promise<AutomationRule[]> {
       const rows = await fetchAllPages<DbRule>((from, to) =>
         client.from('automation_rules').select(RULE_COLUMNS).eq('sheet_id', sheetId).order('created_at', { ascending: true }).order('id').range(from, to),
