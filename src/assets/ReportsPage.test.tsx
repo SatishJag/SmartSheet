@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ReportsPage } from './ReportsPage'
 import { renderAssets } from './testRender'
 
@@ -117,6 +117,7 @@ describe('ReportsPage', () => {
   it('exports the rows as CSV', async () => {
     const created: string[] = []
     const realCreate = URL.createObjectURL
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {}) // jsdom cannot navigate to a download
     URL.createObjectURL = (b: Blob | MediaSource) => {
       void (b as Blob).text().then((t) => created.push(t))
       return 'blob:test'
@@ -138,6 +139,7 @@ describe('ReportsPage', () => {
       void ctx
     } finally {
       URL.createObjectURL = realCreate
+      click.mockRestore()
     }
   })
 
