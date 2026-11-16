@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Column } from '../model/validate'
 import type { RuleDraft } from './db'
+import type { NotifyAction } from './types'
 import { validateRule } from './validateRule'
 
 const cols: Column[] = [
@@ -52,7 +53,7 @@ describe('validateRule', () => {
   })
 
   it('checks notify recipients', () => {
-    const notify = (recipients: RuleDraft['action'] extends infer A ? (A extends { type: 'notify' } ? A['recipients'] : never) : never) =>
+    const notify = (recipients: NotifyAction['recipients']) =>
       check({ action: { type: 'notify', recipients, frequency: 'daily', include: 'all', linkToRow: true } })
     expect(notify([])).toEqual(['Choose who to notify.'])
     expect(notify([{ kind: 'email', email: 'nope' }])).toEqual(['"nope" is not a valid e-mail address.'])

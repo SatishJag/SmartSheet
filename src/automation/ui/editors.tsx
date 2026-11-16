@@ -21,6 +21,17 @@ export const TRIGGER_LABELS: Record<TriggerType, string> = {
   schedule: 'On a schedule',
 }
 
+/** The sheet's status column (a dropdown with the status role), else its first dropdown. */
+export function statusColumn(cols: readonly Column[]): Column | undefined {
+  return cols.find((c) => c.type === 'PICKLIST' && c.role === 'status') ?? cols.find((c) => c.type === 'PICKLIST')
+}
+
+/** The option that means finished ("Done", "Complete"...), else the last option. */
+export function doneOption(col: Column | undefined): string {
+  const opts = col?.options ?? []
+  return opts.find((o) => /^(done|complete|completed|closed)$/i.test(o)) ?? opts[opts.length - 1] ?? ''
+}
+
 export function defaultTrigger(type: TriggerType, cols: readonly Column[]): Trigger {
   switch (type) {
     case 'row_added':
@@ -28,8 +39,8 @@ export function defaultTrigger(type: TriggerType, cols: readonly Column[]): Trig
     case 'row_changed':
       return { type, columnIds: [] }
     case 'cell_becomes': {
-      const pick = cols.find((c) => c.type === 'PICKLIST') ?? cols[0]
-      return { type, columnId: pick?.id ?? '', value: pick?.type === 'PICKLIST' ? (pick.options?.[pick.options.length - 1] ?? '') : '' }
+      const pick = statusColumn(cols) ?? cols[0]
+      return { type, columnId: pick?.id ?? '', value: pick?.type === 'PICKLIST' ? doneOption(pick) : '' }
     }
     case 'date':
       return { type, columnId: cols.find((c) => c.type === 'DATE')?.id ?? '', when: 'before', days: 3 }

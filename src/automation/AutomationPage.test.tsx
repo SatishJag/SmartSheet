@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { createFakeSupabase, type StorageLike } from '../../e2e/support/fakeSupabase'
 import { ShellProvider } from '../shell/ShellContext'
 import { AutomationPage } from './AutomationPage'
@@ -18,7 +18,7 @@ const memoryStorage = (): StorageLike => {
 
 let fake: Fake
 let service: Fake
-let openSheet: ReturnType<typeof vi.fn>
+let openSheet: Mock<(sheetId: string) => void>
 let sheetId: string
 let cols: Record<string, string>
 
@@ -48,7 +48,7 @@ async function seed() {
 }
 
 function renderPage(ui = <AutomationPage />) {
-  openSheet = vi.fn()
+  openSheet = vi.fn<(sheetId: string) => void>()
   localStorage.setItem('automation:sheet', sheetId) // the page remembers the last sheet; the list is alphabetical
   return render(
     <ShellProvider value={{ client: fake as unknown as SupabaseClient, userId: 'u', openSheet }}>

@@ -6,7 +6,7 @@ import { automationApi, type AutomationApi, type DbRun, type RequestRow, type Ru
 import { describeRule } from './describe'
 import { fetchStatus, type AutomationStatus } from './serverApi'
 import type { AutomationRule } from './types'
-import { defaultAction, defaultTrigger } from './ui/editors'
+import { defaultAction, defaultTrigger, doneOption, statusColumn } from './ui/editors'
 import { RuleBuilder } from './ui/RuleBuilder'
 import './automation.css'
 
@@ -53,7 +53,7 @@ export function AutomationPage() {
       : status === null
         ? 'The planning server could not be reached. Rules that react to your own edits still run here; date and schedule rules, e-mail, update requests and approvals need the server.'
         : !status.enabled
-          ? 'The server is missing SUPABASE_SERVICE_ROLE_KEY, so date and schedule rules, e-mail, update requests and approvals are off. Rules that react to your own edits and in-app notifications still work.'
+          ? 'The server has no service key configured (see .env.example), so date and schedule rules, e-mail, update requests and approvals are off. Rules that react to your own edits and in-app notifications still work.'
           : status.mail === 'simulator'
             ? 'E-mail is simulated on this server: messages appear in your notification centre instead of being sent.'
             : null
@@ -271,9 +271,9 @@ function SheetAutomation({ api, sheetId, sheets, serverNote }: { api: Automation
 
 /** First-run help: two starters built from the sheet's own columns. */
 function Empty({ columns, sheetId, onStart, onNew, otherSheets }: { columns: readonly Column[]; sheetId: string; onStart(d: RuleDraft): void; onNew(): void; otherSheets: readonly { id: string }[] }) {
-  const status = columns.find((c) => c.type === 'PICKLIST' && c.role === 'status') ?? columns.find((c) => c.type === 'PICKLIST')
+  const status = statusColumn(columns)
   const date = columns.find((c) => c.type === 'DATE' && c.role !== 'start' && c.role !== 'end') ?? columns.find((c) => c.type === 'DATE')
-  const done = status?.options?.find((o) => /^(done|complete|completed|closed)$/i.test(o)) ?? status?.options?.[status.options.length - 1]
+  const done = doneOption(status)
   return (
     <div className="card au-empty">
       <h2>No rules on this sheet yet</h2>
