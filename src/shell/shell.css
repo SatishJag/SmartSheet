@@ -1,0 +1,33 @@
+.section-nav {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.section-nav::-webkit-scrollbar { display: none; }
+.section-nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-2, #3e4c59);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.section-nav button:hover { background: rgb(var(--b50)); }
+.section-nav button[aria-current='page'] {
+  background: rgb(var(--b100));
+  color: rgb(var(--b800));
+}
+.section-stub { max-width: 720px; margin: 48px auto; padding: 0 16px; }
+.section-stub h1 { margin: 0 0 8px; }
+@media (max-width: 720px) {
+  .section-nav button span.label { display: none; }
+  .section-nav button[aria-current='page'] span.label { display: inline; }
+}

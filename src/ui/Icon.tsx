@@ -21,6 +21,11 @@ const PATHS = {
   rows: 'M4 6h16M4 12h16M4 18h16',
   rowsTight: 'M4 5h16M4 9.5h16M4 14h16M4 18.5h16',
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-9v5m0-8.5h.01',
+  folder: 'M3 7a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z',
+  chart: 'M4 20V9m6 11V4m6 16v-8m5 8H3',
+  users: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm-6 9a6 6 0 0 1 12 0M16.5 4.5a3.5 3.5 0 0 1 0 6.5M18 14.5a6 6 0 0 1 3 5.5',
+  bolt: 'M13 3 5 13h6l-1 8 8-10h-6l1-8Z',
+  bell: 'M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16Zm4 4a2 2 0 0 0 4 0',
 } as const
 
 export type IconName = keyof typeof PATHS

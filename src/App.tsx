@@ -5,6 +5,9 @@ import { SheetList } from './auth/SheetList'
 import { createSupabaseClient, getSupabaseConfig } from './lib/supabase'
 import { SheetView } from './views/SheetView'
 import { Icon } from './ui/Icon'
+import { ShellProvider } from './shell/ShellContext'
+import { SECTIONS } from './shell/sections'
+import './shell/shell.css'
 import { ThemePicker } from './ui/ThemePicker'
 import './theme.css'
 import './App.css'
@@ -40,8 +43,22 @@ function ConfiguredApp({ url, anonKey }: { url: string; anonKey: string }) {
 
 function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
   const [openSheetId, setOpenSheetId] = useState<string | null>(null)
+  const [sectionId, setSectionId] = useState('sheets')
+  const section = SECTIONS.find((s) => s.id === sectionId) ?? SECTIONS[0]
+  const shell = useMemo(
+    () => ({
+      client,
+      userId,
+      openSheet: (id: string) => {
+        setOpenSheetId(id)
+        setSectionId('sheets')
+      },
+    }),
+    [client, userId],
+  )
 
   return (
+    <ShellProvider value={shell}>
     <div className="app">
       <header className="app-header">
         <span className="brand">
@@ -50,16 +67,35 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
           </span>
           <strong className="brand-name">Construction Work Management</strong>
         </span>
+        <nav className="section-nav" aria-label="Main">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              aria-current={s.id === section.id ? 'page' : undefined}
+              onClick={() => {
+                setSectionId(s.id)
+                if (s.id === 'sheets') setOpenSheetId(null)
+              }}
+            >
+              <Icon name={s.icon} size={16} />
+              <span className="label">{s.label}</span>
+            </button>
+          ))}
+        </nav>
         <span className="spacer" />
         <ThemePicker />
       </header>
-      <main className={openSheetId === null ? 'page page-list' : 'page page-sheet'}>
-        {openSheetId === null ? (
+      <main className={section.id !== 'sheets' ? 'page page-list' : openSheetId === null ? 'page page-list' : 'page page-sheet'}>
+        {section.Page ? (
+          <section.Page />
+        ) : openSheetId === null ? (
           <SheetList client={client} userId={userId} onOpen={setOpenSheetId} />
         ) : (
           <SheetView client={client} sheetId={openSheetId} onBack={() => setOpenSheetId(null)} />
         )}
       </main>
     </div>
+    </ShellProvider>
   )
 }

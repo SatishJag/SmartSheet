@@ -1,0 +1,1187 @@
+[
+ {
+  "expr": "=1=1",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=1<>1",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=\"a\"=\"A\"",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=2>1",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=2>=2",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=1<2",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=\"b\">\"a\"",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=AND(TRUE,FALSE)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=OR(TRUE,FALSE)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=NOT(TRUE)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=NOT(FALSE)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=AND(1=1,2=2)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=OR(1=2,2=3)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=ISBLANK(Num@row)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=ISBLANK(Dt@row)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=ISNUMBER(1)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=ISNUMBER(\"1\")",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=ISTEXT(\"a\")",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=ISBOOLEAN(TRUE)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=ISERROR(1/0)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=ISDATE(DATE(2026,3,1))",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=ISDATE(\"x\")",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=Chk@row",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=Chk@row=TRUE",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=NOT(Chk@row)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=Num@row=1",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=Num@row>0",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=Num@row=\"1\"",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=TODAY()>DATE(2020,1,1)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=DATE(2026,3,15)>DATE(2026,3,1)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=DATE(2026,3,15)=DATE(2026,3,15)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=DATE(2026,2,30)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-02",
+   "d": null
+  }
+ },
+ {
+  "expr": "=DATE(2026,1,31)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-01-31",
+   "d": null
+  }
+ },
+ {
+  "expr": "=DATE(2026,12,31)+1",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2027-01-01",
+   "d": null
+  }
+ },
+ {
+  "expr": "=DATE(2026,3,15)+1",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-16",
+   "d": null
+  }
+ },
+ {
+  "expr": "=DATE(2026,3,15)-1",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-14",
+   "d": null
+  }
+ },
+ {
+  "expr": "=DATE(2026,3,15)+30",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-04-14",
+   "d": null
+  }
+ },
+ {
+  "expr": "=DATE(2026,3,15)-DATE(2026,3,1)",
+  "T": {
+   "v": 14.0,
+   "d": "14"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=DATE(2026,2,1)+28",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-01",
+   "d": null
+  }
+ },
+ {
+  "expr": "=Dt@row+1",
+  "T": {
+   "v": null,
+   "d": null
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": null,
+   "d": null
+  }
+ },
+ {
+  "expr": "=Dt@row-Dt2@row",
+  "T": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "B": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "D": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  }
+ },
+ {
+  "expr": "=Dt@row",
+  "T": {
+   "v": null,
+   "d": null
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": null,
+   "d": null
+  }
+ },
+ {
+  "expr": "=Dt2@row",
+  "T": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "B": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "D": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  }
+ },
+ {
+  "expr": "=TODAY()",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-11-16",
+   "d": null
+  }
+ },
+ {
+  "expr": "=TODAY()+7",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-11-23",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,13),1)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-16",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,13),2)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-17",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,13),-1)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-12",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,13),0)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-13",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,14),1)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-16",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,14),0)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-14",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,14),-1)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-13",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,13),5)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-20",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,13),10)",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-27",
+   "d": null
+  }
+ },
+ {
+  "expr": "=WORKDAY(DATE(2026,3,13),1,{})",
+  "T": {
+   "v": "#INVALID REF",
+   "d": "#INVALID REF"
+  },
+  "B": {
+   "v": "#INVALID REF",
+   "d": "#INVALID REF"
+  },
+  "D": {
+   "v": "#INVALID REF",
+   "d": "#INVALID REF"
+  }
+ },
+ {
+  "expr": "=EOMONTH(DATE(2026,1,15),1)",
+  "T": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "B": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "D": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  }
+ },
+ {
+  "expr": "=DATEONLY(DATE(2026,3,1))",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-01",
+   "d": null
+  }
+ },
+ {
+  "expr": "=DAYS(DATE(2026,3,15),DATE(2026,3,1))",
+  "T": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "B": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "D": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  }
+ },
+ {
+  "expr": "=IF(1=1,DATE(2026,3,1),DATE(2026,4,1))",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-01",
+   "d": null
+  }
+ },
+ {
+  "expr": "=IF(1=2,DATE(2026,3,1),DATE(2026,4,1))",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-04-01",
+   "d": null
+  }
+ },
+ {
+  "expr": "=MAX(DATE(2026,3,1),DATE(2026,4,1))",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-04-01",
+   "d": null
+  }
+ },
+ {
+  "expr": "=MIN(DATE(2026,3,1),DATE(2026,4,1))",
+  "T": {
+   "v": "#INVALID COLUMN VALUE",
+   "d": "#INVALID COLUMN VALUE"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "2026-03-01",
+   "d": null
+  }
+ },
+ {
+  "expr": "=Dt@row+Num@row",
+  "T": {
+   "v": "#INVALID OPERATION",
+   "d": "#INVALID OPERATION"
+  },
+  "B": {
+   "v": "#INVALID OPERATION",
+   "d": "#INVALID OPERATION"
+  },
+  "D": {
+   "v": "#INVALID OPERATION",
+   "d": "#INVALID OPERATION"
+  }
+ },
+ {
+  "expr": "=IF(1>2,\"y\")",
+  "T": {
+   "v": null,
+   "d": null
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": null,
+   "d": null
+  }
+ },
+ {
+  "expr": "=IF(1>2,1,2)",
+  "T": {
+   "v": 2.0,
+   "d": "2"
+  },
+  "B": {
+   "v": "#BOOLEAN EXPECTED",
+   "d": "#BOOLEAN EXPECTED"
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=IF(\"a\",\"y\",\"n\")",
+  "T": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  },
+  "B": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  },
+  "D": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  }
+ },
+ {
+  "expr": "=IF(0,\"y\",\"n\")",
+  "T": {
+   "v": "n",
+   "d": "n"
+  },
+  "B": {
+   "v": "n",
+   "d": "n"
+  },
+  "D": {
+   "v": "n",
+   "d": "n"
+  }
+ },
+ {
+  "expr": "=IF(\"\",\"y\",\"n\")",
+  "T": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  },
+  "B": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  },
+  "D": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  }
+ },
+ {
+  "expr": "=IF(Num@row,\"y\",\"n\")",
+  "T": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  },
+  "B": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  },
+  "D": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  }
+ },
+ {
+  "expr": "=IF(1,\"y\",\"n\")",
+  "T": {
+   "v": "y",
+   "d": "y"
+  },
+  "B": {
+   "v": "y",
+   "d": "y"
+  },
+  "D": {
+   "v": "y",
+   "d": "y"
+  }
+ },
+ {
+  "expr": "=IF(2,\"y\",\"n\")",
+  "T": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  },
+  "B": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  },
+  "D": {
+   "v": "#INVALID DATA TYPE",
+   "d": "#INVALID DATA TYPE"
+  }
+ },
+ {
+  "expr": "=\"a\"+1",
+  "T": {
+   "v": "a1",
+   "d": "a1"
+  },
+  "B": {
+   "v": "a1",
+   "d": "a1"
+  },
+  "D": {
+   "v": "a1",
+   "d": "a1"
+  }
+ },
+ {
+  "expr": "=1+\"a\"",
+  "T": {
+   "v": "1a",
+   "d": "1a"
+  },
+  "B": {
+   "v": "1a",
+   "d": "1a"
+  },
+  "D": {
+   "v": "1a",
+   "d": "1a"
+  }
+ },
+ {
+  "expr": "=\"a\"+\"b\"",
+  "T": {
+   "v": "ab",
+   "d": "ab"
+  },
+  "B": {
+   "v": "ab",
+   "d": "ab"
+  },
+  "D": {
+   "v": "ab",
+   "d": "ab"
+  }
+ },
+ {
+  "expr": "=1+\"2\"",
+  "T": {
+   "v": "12",
+   "d": "12"
+  },
+  "B": {
+   "v": "12",
+   "d": "12"
+  },
+  "D": {
+   "v": "12",
+   "d": "12"
+  }
+ },
+ {
+  "expr": "=\"1\"+\"2\"",
+  "T": {
+   "v": "12",
+   "d": "12"
+  },
+  "B": {
+   "v": "12",
+   "d": "12"
+  },
+  "D": {
+   "v": "12",
+   "d": "12"
+  }
+ },
+ {
+  "expr": "=Num@row+1",
+  "T": {
+   "v": 1.0,
+   "d": "1"
+  },
+  "B": {
+   "v": true,
+   "d": null
+  },
+  "D": {
+   "v": "#DATE EXPECTED",
+   "d": "#DATE EXPECTED"
+  }
+ },
+ {
+  "expr": "=Num@row&\"x\"",
+  "T": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "B": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  },
+  "D": {
+   "v": "#UNPARSEABLE",
+   "d": "#UNPARSEABLE"
+  }
+ },
+ {
+  "expr": "=-Num@row",
+  "T": {
+   "v": 0.0,
+   "d": "0"
+  },
+  "B": {
+   "v": false,
+   "d": null
+  },
+  "D": {
+   "v": null,
+   "d": null
+  }
+ }
+]

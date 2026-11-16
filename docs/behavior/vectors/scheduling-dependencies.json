@@ -1,0 +1,411 @@
+{
+ "calendar": {
+  "workingDays": [
+   "MONDAY",
+   "TUESDAY",
+   "WEDNESDAY",
+   "THURSDAY",
+   "FRIDAY"
+  ],
+  "nonWorkingDays": [
+   "2026-03-12"
+  ],
+  "lengthOfDay": 8
+ },
+ "results": [
+  {
+   "n": 1,
+   "name": "A",
+   "typed_start": "2026-03-02",
+   "typed_dur": 3,
+   "preds": [],
+   "start": "2026-03-02",
+   "end": "2026-03-04",
+   "duration": "3d",
+   "pred_shown": null,
+   "pct": null
+  },
+  {
+   "n": 2,
+   "name": "B",
+   "typed_start": "2026-03-06",
+   "typed_dur": 2,
+   "preds": [],
+   "start": "2026-03-06",
+   "end": "2026-03-09",
+   "duration": "2d",
+   "pred_shown": null,
+   "pct": null
+  },
+  {
+   "n": 3,
+   "name": "C",
+   "typed_start": "2026-03-09",
+   "typed_dur": 5,
+   "preds": [],
+   "start": "2026-03-09",
+   "end": "2026-03-16",
+   "duration": "5d",
+   "pred_shown": null,
+   "pct": null
+  },
+  {
+   "n": 4,
+   "name": "D (starts Sat)",
+   "typed_start": "2026-03-14",
+   "typed_dur": 2,
+   "preds": [],
+   "start": "2026-03-14",
+   "end": "2026-03-16",
+   "duration": "2d",
+   "pred_shown": null,
+   "pct": null
+  },
+  {
+   "n": 5,
+   "name": "E (starts Sun)",
+   "typed_start": "2026-03-15",
+   "typed_dur": 1,
+   "preds": [],
+   "start": "2026-03-15",
+   "end": "2026-03-15",
+   "duration": "1d",
+   "pred_shown": null,
+   "pct": null
+  },
+  {
+   "n": 6,
+   "name": "FS",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "FS",
+     0
+    ]
+   ],
+   "start": "2026-03-05",
+   "end": "2026-03-06",
+   "duration": "2d",
+   "pred_shown": "1",
+   "pct": null
+  },
+  {
+   "n": 7,
+   "name": "FS+1d",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "FS",
+     1
+    ]
+   ],
+   "start": "2026-03-06",
+   "end": "2026-03-09",
+   "duration": "2d",
+   "pred_shown": "1FS +1d",
+   "pct": null
+  },
+  {
+   "n": 8,
+   "name": "FS-1d",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "FS",
+     -1
+    ]
+   ],
+   "start": "2026-03-04",
+   "end": "2026-03-05",
+   "duration": "2d",
+   "pred_shown": "1FS -1d",
+   "pct": null
+  },
+  {
+   "n": 9,
+   "name": "FS+3d",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "FS",
+     3
+    ]
+   ],
+   "start": "2026-03-10",
+   "end": "2026-03-11",
+   "duration": "2d",
+   "pred_shown": "1FS +3d",
+   "pct": null
+  },
+  {
+   "n": 10,
+   "name": "SS",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "SS",
+     0
+    ]
+   ],
+   "start": "2026-03-02",
+   "end": "2026-03-03",
+   "duration": "2d",
+   "pred_shown": "1SS",
+   "pct": null
+  },
+  {
+   "n": 11,
+   "name": "SS+2d",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "SS",
+     2
+    ]
+   ],
+   "start": "2026-03-04",
+   "end": "2026-03-05",
+   "duration": "2d",
+   "pred_shown": "1SS +2d",
+   "pct": null
+  },
+  {
+   "n": 12,
+   "name": "FF",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "FF",
+     0
+    ]
+   ],
+   "start": "2026-03-03",
+   "end": "2026-03-04",
+   "duration": "2d",
+   "pred_shown": "1FF",
+   "pct": null
+  },
+  {
+   "n": 13,
+   "name": "FF+1d",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "FF",
+     1
+    ]
+   ],
+   "start": "2026-03-04",
+   "end": "2026-03-05",
+   "duration": "2d",
+   "pred_shown": "1FF +1d",
+   "pct": null
+  },
+  {
+   "n": 14,
+   "name": "SF",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "SF",
+     0
+    ]
+   ],
+   "start": "2026-02-26",
+   "end": "2026-02-27",
+   "duration": "2d",
+   "pred_shown": "1SF",
+   "pct": null
+  },
+  {
+   "n": 15,
+   "name": "SF+2d",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "SF",
+     2
+    ]
+   ],
+   "start": "2026-03-02",
+   "end": "2026-03-03",
+   "duration": "2d",
+   "pred_shown": "1SF +2d",
+   "pct": null
+  },
+  {
+   "n": 16,
+   "name": "FS milestone",
+   "typed_start": null,
+   "typed_dur": 0,
+   "preds": [
+    [
+     1,
+     "FS",
+     0
+    ]
+   ],
+   "start": "2026-03-04",
+   "end": "2026-03-04",
+   "duration": "0",
+   "pred_shown": "1",
+   "pct": null
+  },
+  {
+   "n": 17,
+   "name": "FS dur1",
+   "typed_start": null,
+   "typed_dur": 1,
+   "preds": [
+    [
+     1,
+     "FS",
+     0
+    ]
+   ],
+   "start": "2026-03-05",
+   "end": "2026-03-05",
+   "duration": "1d",
+   "pred_shown": "1",
+   "pct": null
+  },
+  {
+   "n": 18,
+   "name": "FS after B (crosses weekend)",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     2,
+     "FS",
+     0
+    ]
+   ],
+   "start": "2026-03-10",
+   "end": "2026-03-11",
+   "duration": "2d",
+   "pred_shown": "2",
+   "pct": null
+  },
+  {
+   "n": 19,
+   "name": "FS after C (holiday)",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     3,
+     "FS",
+     0
+    ]
+   ],
+   "start": "2026-03-17",
+   "end": "2026-03-18",
+   "duration": "2d",
+   "pred_shown": "3",
+   "pct": null
+  },
+  {
+   "n": 20,
+   "name": "multi FS A, SS C+3",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     1,
+     "FS",
+     0
+    ],
+    [
+     3,
+     "SS",
+     3
+    ]
+   ],
+   "start": "2026-03-13",
+   "end": "2026-03-16",
+   "duration": "2d",
+   "pred_shown": "1, 3SS +3d",
+   "pct": null
+  },
+  {
+   "n": 21,
+   "name": "multi FS B, FS C",
+   "typed_start": null,
+   "typed_dur": 2,
+   "preds": [
+    [
+     2,
+     "FS",
+     0
+    ],
+    [
+     3,
+     "FS",
+     0
+    ]
+   ],
+   "start": "2026-03-17",
+   "end": "2026-03-18",
+   "duration": "2d",
+   "pred_shown": "2, 3",
+   "pct": null
+  },
+  {
+   "n": 22,
+   "name": "Parent",
+   "typed_start": null,
+   "typed_dur": null,
+   "preds": [],
+   "start": "2026-03-02",
+   "end": "2026-03-11",
+   "duration": "8d",
+   "pred_shown": null,
+   "pct": null
+  },
+  {
+   "n": 23,
+   "name": "q1",
+   "typed_start": "2026-03-02",
+   "typed_dur": 2,
+   "preds": [],
+   "start": "2026-03-02",
+   "end": "2026-03-03",
+   "duration": "2d",
+   "pred_shown": null,
+   "pct": null
+  },
+  {
+   "n": 24,
+   "name": "q2",
+   "typed_start": "2026-03-09",
+   "typed_dur": 3,
+   "preds": [],
+   "start": "2026-03-09",
+   "end": "2026-03-11",
+   "duration": "3d",
+   "pred_shown": null,
+   "pct": null
+  }
+ ]
+}
