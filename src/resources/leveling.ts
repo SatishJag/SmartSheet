@@ -150,7 +150,7 @@ export function suggestLeveling(
     return { newStart, newEnd, newDays }
   }
 
-  function tryShift(key: string, task: TaskFact, k: number, rid: string, d: number) {
+  function tryShift(key: string, task: TaskFact, k: number, rid: string) {
     evaluations++
     const entries = (entriesByTask.get(key) ?? []).filter((e) => e.follows)
     const { newStart, newEnd, newDays } = shifted(task, k)
@@ -224,7 +224,7 @@ export function suggestLeveling(
               truncated = true
               break outer
             }
-            const res = tryShift(c.key, c.task, k, rid, d)
+            const res = tryShift(c.key, c.task, k, rid)
             if (res) {
               accepted = { key: c.key, task: c.task, k, res }
               break
