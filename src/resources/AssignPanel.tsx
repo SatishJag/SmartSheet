@@ -348,19 +348,27 @@ function AssignForm({ chosen, tasksLoading, onDone }: { chosen: TaskFact[]; task
   }, [previews])
   const allMilestones = previews !== null && previews.every((x) => x.p.days.length === 0)
 
-  // The chosen resource's weeks: what they carry now and what this adds.
+  // The chosen resource's weeks: what they carry now and what this adds (minus the assignment being replaced).
   const strip = useMemo(() => {
     if (!resourceId || !previews) return []
+    const weekOf = (d: number) => isoOfDay(d - ((new Date(d * 86_400_000).getUTCDay() + 6) % 7))
     const weeks = bucketsFor(model, resourceId, 'week', window.from, window.to).slice(0, 8)
     const added = new Map<string, number>()
+    const overWeeks = new Set<string>()
     for (const x of previews) {
       x.p.days.forEach((d, i) => {
-        const wk = isoOfDay(d - ((new Date(d * 86_400_000).getUTCDay() + 6) % 7))
-        added.set(wk, (added.get(wk) ?? 0) + x.p.hours[i])
+        added.set(weekOf(d), (added.get(weekOf(d)) ?? 0) + x.p.hours[i])
       })
+      x.p.overDays.forEach((d) => overWeeks.add(weekOf(d)))
     }
-    return weeks.map((w) => ({ w, add: added.get(w.start) ?? 0 }))
-  }, [model, resourceId, previews, window])
+    const removed = new Map<string, number>()
+    for (const t of chosen) {
+      const ex = assignments.find((a) => a.sheetId === t.sheetId && a.rowId === t.rowId && a.resourceId === resourceId)
+      const spread = ex && model.byResource.get(resourceId)?.spreads.find((s) => s.assignmentId === ex.id)
+      spread?.days.forEach((d, i) => removed.set(weekOf(d), (removed.get(weekOf(d)) ?? 0) + spread.hours[i]))
+    }
+    return weeks.map((w) => ({ w, total: w.assigned - (removed.get(w.start) ?? 0) + (added.get(w.start) ?? 0), over: overWeeks.has(w.start) }))
+  }, [model, resourceId, previews, window, chosen, assignments])
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -470,18 +478,17 @@ function AssignForm({ chosen, tasksLoading, onDone }: { chosen: TaskFact[]; task
               {tasksLoading && <p className="res-hint">Still reading other sheets; the load shown may be incomplete.</p>}
               {strip.length > 0 && (
                 <ul className="asg-strip" aria-label="Weekly load with this assignment">
-                  {strip.map(({ w, add }) => {
-                    const total = w.assigned + add
-                    const over = total > w.available + 1e-6
+                  {strip.map(({ w, total, over: dayOver }) => {
+                    const over = dayOver || total > w.available + 1e-6
                     return (
-                      <li key={w.start} data-level={over ? 'over' : total <= 0 ? 'none' : total / (w.available || 1) < 0.5 ? 'low' : total / (w.available || 1) < 0.85 ? 'mid' : 'high'}>
+                      <li key={w.start} data-level={over ? 'over' : total <= 1e-6 ? 'none' : total / (w.available || 1) < 0.5 ? 'low' : total / (w.available || 1) < 0.85 ? 'mid' : 'high'}>
                         <small>{fmtShort(w.start)}</small>
                         <strong>
                           {over && <span aria-hidden="true">! </span>}
                           {fmtHours(total)}/{fmtHours(w.available)}
                         </strong>
                         <span className="visually-hidden">
-                          Week of {fmtDay(w.start)}: {fmtHours(w.assigned)} now, {fmtHours(total)} with this, of {fmtHours(w.available)} hours{over ? ', over-allocated' : ''}
+                          Week of {fmtDay(w.start)}: {fmtHours(total)} of {fmtHours(w.available)} hours with this assignment{over ? ', over-allocated' : ''}
                         </span>
                       </li>
                     )

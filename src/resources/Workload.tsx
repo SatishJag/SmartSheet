@@ -1,6 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useShell } from '../shell/ShellContext'
+import { measuredViewport } from '../views/grid/viewport'
 import { Drawer } from './Drawer'
 import {
   bucketsFor,
@@ -249,7 +250,7 @@ function HeatMap({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [active, setActive] = useState({ r: 0, c: 0 })
   const focusAfter = useRef(false)
-  const virtualizer = useVirtualizer({ count: resources.length, getScrollElement: () => scrollRef.current, estimateSize: () => ROW_H, overscan: 6, initialRect: { width: 800, height: 600 } })
+  const virtualizer = useVirtualizer({ count: resources.length, getScrollElement: () => scrollRef.current, estimateSize: () => ROW_H, overscan: 6, ...measuredViewport })
   const items = virtualizer.getVirtualItems()
   const cols = win.starts.length
   const r0 = Math.min(active.r, resources.length - 1)

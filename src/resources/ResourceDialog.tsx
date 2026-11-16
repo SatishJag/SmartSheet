@@ -176,7 +176,10 @@ export function ResourceDialog({ resource, departments, onClose }: { resource: R
                     inputMode="decimal"
                     aria-label={`${d.label} hours`}
                     value={hours[d.value]}
-                    onChange={(e) => setHours((h) => h.map((x, i) => (i === d.value ? e.currentTarget.value : x)))}
+                    onChange={(e) => {
+                      const v = e.currentTarget.value
+                      setHours((h) => h.map((x, i) => (i === d.value ? v : x)))
+                    }}
                   />
                 </label>
               ))}

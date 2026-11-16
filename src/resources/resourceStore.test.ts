@@ -2,38 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { defaultCalendar } from '../engine/calendar'
 import type { SchedDep } from '../engine/schedule'
 import type { Column } from '../model/validate'
-import type { Persistence, RowRecord, SheetData } from '../store/persistence'
+import type { RowRecord, SheetData } from '../store/persistence'
 import { createSheetStore } from '../store/sheetStore'
-import { dayLoad, dayNumber, type Assignment, type Resource } from './engine'
-import type { ResourcePersistence } from './persistence'
+import { dayLoad, dayNumber } from './engine'
 import { allTasks, createResourceStore, loadModel } from './resourceStore'
 import { taskFactsFromSheet } from './taskFacts'
-import { person, task } from './testkit'
-
-function memory(initial: { resources?: Resource[]; assignments?: Assignment[]; sheets?: Record<string, { name: string; tasks: ReturnType<typeof task>[] }> } = {}) {
-  let resources = [...(initial.resources ?? [])]
-  let assignments = [...(initial.assignments ?? [])]
-  const sheets = initial.sheets ?? {}
-  const p: ResourcePersistence = {
-    loadResources: vi.fn(async () => resources),
-    saveResource: vi.fn(async (r: Resource) => {
-      resources = resources.some((x) => x.id === r.id) ? resources.map((x) => (x.id === r.id ? r : x)) : [...resources, r]
-    }),
-    deleteResource: vi.fn(async (id: string) => {
-      resources = resources.filter((r) => r.id !== id)
-      assignments = assignments.filter((a) => a.resourceId !== id)
-    }),
-    loadAssignments: vi.fn(async (sheetId?: string) => assignments.filter((a) => !sheetId || a.sheetId === sheetId)),
-    saveAssignment: vi.fn(async (a: Assignment) => {
-      assignments = assignments.some((x) => x.id === a.id) ? assignments.map((x) => (x.id === a.id ? a : x)) : [...assignments, a]
-    }),
-    deleteAssignment: vi.fn(async (id: string) => {
-      assignments = assignments.filter((a) => a.id !== id)
-    }),
-    loadSheetTasks: vi.fn(async (sheetId: string) => ({ sheetId, sheetName: sheets[sheetId].name, tasks: sheets[sheetId].tasks })),
-  }
-  return p
-}
+import { memory, person, sheetPersistence, task } from './testkit'
 
 const full = { kind: 'percent', value: 100 } as const
 
@@ -169,26 +143,6 @@ const columns: Column[] = [
 ]
 const rec = (id: string, position: string, cells: Record<string, unknown>, parentId: string | null = null): RowRecord => ({ id, parentId, position, cells, version: 0 })
 const fs = (predecessorId: string, successorId: string): SchedDep => ({ predecessorId, successorId, type: 'FS', lagMinutes: 0 })
-
-function sheetPersistence(data: SheetData): Persistence {
-  return {
-    loadSheet: vi.fn(async () => structuredClone(data)),
-    saveCell: vi.fn(async (_r: string, _c: string, _v: unknown, version: number) => ({ version: version + 1 })),
-    insertRow: vi.fn(async () => {}),
-    saveRowTree: vi.fn(async () => {}),
-    saveDependencies: vi.fn(async () => {}),
-    deleteRows: vi.fn(async () => {}),
-    saveSheetSettings: vi.fn(async () => {}),
-    insertColumn: vi.fn(async () => {}),
-    updateColumn: vi.fn(async () => {}),
-    saveColumnOrder: vi.fn(async () => {}),
-    deleteColumn: vi.fn(async () => {}),
-    saveColumnCells: vi.fn(async () => {}),
-    loadBaselineRows: vi.fn(async () => []),
-    saveBaseline: vi.fn(),
-    deleteBaseline: vi.fn(async () => {}),
-  } as unknown as Persistence
-}
 
 describe('taskFactsFromSheet and following the task', () => {
   const data: SheetData = {
