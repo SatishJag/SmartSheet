@@ -51,10 +51,10 @@ describe('schedule', () => {
     expect(byRow.B.start).toBe('2026-11-10')
   })
 
-  it('SF: successor ends when the predecessor starts, start crossing a weekend backwards', () => {
+  it('SF: successor ends the working day before the predecessor starts (observed), crossing a weekend backwards', () => {
     const { byRow } = schedule([A, row('B', 2)], [dep('A', 'B', 'SF')], defaultCalendar)
-    expect(byRow.B.end).toBe('2026-11-09')
-    expect(byRow.B.start).toBe('2026-11-06') // Friday before
+    expect(byRow.B.end).toBe('2026-11-06') // the Friday before A starts (reference: lag 0 = the working day before)
+    expect(byRow.B.start).toBe('2026-11-05')
   })
 
   it('two predecessors: the later constraint wins', () => {
@@ -69,7 +69,7 @@ describe('schedule', () => {
 
   it('a 0-minute row is a milestone (start equals end)', () => {
     const { byRow } = schedule([A, row('M', 0)], [dep('A', 'M')], defaultCalendar)
-    expect(byRow.M).toEqual({ start: '2026-11-12', end: '2026-11-12', durationDays: 0, percentComplete: 0 })
+    expect(byRow.M).toEqual({ start: '2026-11-11', end: '2026-11-11', durationDays: 0, percentComplete: 0 }) // A's end date (observed)
   })
 
   it('a partial day counts as at least one day', () => {
@@ -196,7 +196,7 @@ describe('schedule: predecessors ending on a non-working day (elapsed)', () => {
       defaultCalendar,
     )
     expect(byRow.S.start).toBe('2026-11-10')
-    expect(byRow.F.end).toBe('2026-11-10')
+    expect(byRow.F.end).toBe('2026-11-09') // SF +1d: P start + 1 - 1 working day
   })
 })
 
@@ -352,5 +352,144 @@ describe('schedule: cycle reporting', () => {
     expect(errors).toContainEqual({ rowId: 'Z', message: 'Depends on a row in a dependency cycle' })
     expect(errors).toContainEqual({ rowId: 'W', message: 'Depends on a row in a dependency cycle' })
     expect(errors.find((e) => e.rowId === 'X')!.message).toMatch(/^Dependency cycle: /)
+  })
+})
+
+// Observed in the reference product (docs/behavior/scheduling.md): an FS milestone lands on the
+// predecessor's end date, and an SF successor ends the working day before the predecessor starts.
+describe('milestones and SF (observed reference rules)', () => {
+  // A: Mon 11-09 -> Wed 11-11.
+  const at = (type: DepType, lag: number, successorDays: number) =>
+    schedule([A, row('X', successorDays)], [dep('A', 'X', type, lag)], defaultCalendar).byRow.X
+
+  describe('FS onto a milestone: predecessor end date plus lag working days', () => {
+    it.each([
+      [0, '2026-11-11'], // the same day A ends (a task would start Thursday)
+      [1, '2026-11-12'],
+      [-1, '2026-11-10'],
+      [3, '2026-11-16'], // crossing the weekend
+    ])('lag %i -> %s', (lag, date) => {
+      expect(at('FS', lag, 0)).toMatchObject({ start: date, end: date, durationDays: 0 })
+    })
+
+    it('a one-day successor still starts the working day after (unchanged)', () => {
+      expect(at('FS', 0, 1)).toMatchObject({ start: '2026-11-12', end: '2026-11-12' })
+    })
+
+    it('after a predecessor ending on a weekend it lands on the next working day, then lag counts from there', () => {
+      const P = row('P', 6, '2026-11-09', true) // elapsed: ends Sat 11-14
+      const m = (lag: number) => schedule([P, row('M', 0)], [dep('P', 'M', 'FS', lag)], defaultCalendar).byRow.M
+      expect(m(0)).toMatchObject({ start: '2026-11-16', end: '2026-11-16' })
+      expect(m(1)).toMatchObject({ start: '2026-11-17', end: '2026-11-17' })
+      expect(m(-1)).toMatchObject({ start: '2026-11-13', end: '2026-11-13' })
+    })
+
+    it('the latest of several constraints still wins for a milestone', () => {
+      const C = row('C', 5, '2026-11-09') // Mon 11-09 -> Fri 11-13
+      const { byRow } = schedule([A, C, row('M', 0)], [dep('A', 'M'), dep('C', 'M')], defaultCalendar)
+      expect(byRow.M.start).toBe('2026-11-13')
+    })
+  })
+
+  describe('SS, FF and SF onto a milestone keep their task rules (no extra shift)', () => {
+    it('SS: the predecessor start plus lag', () => {
+      expect(at('SS', 0, 0)).toMatchObject({ start: '2026-11-09', end: '2026-11-09' })
+      expect(at('SS', 2, 0)).toMatchObject({ start: '2026-11-11', end: '2026-11-11' })
+    })
+    it('FF: the predecessor end plus lag', () => {
+      expect(at('FF', 0, 0)).toMatchObject({ start: '2026-11-11', end: '2026-11-11' })
+      expect(at('FF', 1, 0)).toMatchObject({ start: '2026-11-12', end: '2026-11-12' })
+    })
+    it('SF: the working day before the predecessor starts, plus lag', () => {
+      expect(at('SF', 0, 0)).toMatchObject({ start: '2026-11-06', end: '2026-11-06' })
+      expect(at('SF', 1, 0)).toMatchObject({ start: '2026-11-09', end: '2026-11-09' })
+    })
+  })
+
+  describe('SF onto a task: end = predecessor start + lag - 1 working day', () => {
+    it.each([
+      [0, '2026-11-05', '2026-11-06'],
+      [1, '2026-11-06', '2026-11-09'],
+      [2, '2026-11-09', '2026-11-10'],
+      [-1, '2026-11-04', '2026-11-05'],
+    ])('lag %i, 2 days -> %s to %s', (lag, start, end) => {
+      expect(at('SF', lag, 2)).toMatchObject({ start, end })
+    })
+
+    it('a one-day successor starts and ends the day before', () => {
+      expect(at('SF', 0, 1)).toMatchObject({ start: '2026-11-06', end: '2026-11-06' })
+    })
+  })
+})
+
+describe("nonWorkingStart 'keep'", () => {
+  const keep = { ...defaultCalendar, nonWorkingStart: 'keep' as const }
+  // Sat 2026-11-14, Sun 11-15, Mon 11-16.
+
+  it('keeps a typed Saturday start and counts it as day 1', () => {
+    const { byRow } = schedule([row('S', 2, '2026-11-14'), row('T', 3, '2026-11-14')], [], keep)
+    expect(byRow.S).toMatchObject({ start: '2026-11-14', end: '2026-11-16' }) // Sat, Mon
+    expect(byRow.T).toMatchObject({ start: '2026-11-14', end: '2026-11-17' }) // Sat, Mon, Tue
+  })
+
+  it('a one-day task typed on a Sunday starts and ends that Sunday; a milestone too', () => {
+    const { byRow } = schedule([row('O', 1, '2026-11-15'), row('M', 0, '2026-11-15')], [], keep)
+    expect(byRow.O).toMatchObject({ start: '2026-11-15', end: '2026-11-15', durationDays: 1 })
+    expect(byRow.M).toMatchObject({ start: '2026-11-15', end: '2026-11-15', durationDays: 0 })
+  })
+
+  it('a typed start on a non-working holiday is kept in the same way', () => {
+    const cal = { ...keep, nonWorkingDates: ['2026-11-11'] }
+    const { byRow } = schedule([row('H', 2, '2026-11-11')], [], cal)
+    expect(byRow.H).toMatchObject({ start: '2026-11-11', end: '2026-11-12' })
+  })
+
+  it('an elapsed row counts calendar days from the kept start', () => {
+    const { byRow } = schedule([row('E', 2, '2026-11-14', true)], [], keep)
+    expect(byRow.E).toMatchObject({ start: '2026-11-14', end: '2026-11-15' })
+  })
+
+  it('a working-day start is unchanged by the option', () => {
+    const { byRow } = schedule([A], [], keep)
+    expect(byRow.A).toMatchObject({ start: '2026-11-09', end: '2026-11-11' })
+  })
+
+  it("the default and an explicit 'shift' move the start to the next working day", () => {
+    const rows = [row('S', 2, '2026-11-14')]
+    expect(schedule(rows, [], defaultCalendar).byRow.S).toMatchObject({ start: '2026-11-16', end: '2026-11-17' })
+    expect(schedule(rows, [], { ...defaultCalendar, nonWorkingStart: 'shift' }).byRow.S).toMatchObject({ start: '2026-11-16', end: '2026-11-17' })
+  })
+
+  describe('successors of a kept non-working start always land on working days', () => {
+    const S1 = row('P', 1, '2026-11-14') // Sat -> Sat
+    const S2 = row('P', 2, '2026-11-14') // Sat -> Mon
+    it('FS after a one-day Saturday task starts Monday', () => {
+      expect(schedule([S1, row('B', 1)], [dep('P', 'B')], keep).byRow.B.start).toBe('2026-11-16')
+    })
+    it('FS after the Saturday-Monday task starts Tuesday', () => {
+      expect(schedule([S2, row('B', 1)], [dep('P', 'B')], keep).byRow.B.start).toBe('2026-11-17')
+    })
+    it('SS: lag 0 starts the first working day on or after the predecessor start; lag counts from there', () => {
+      const b = (lag: number) => schedule([S2, row('B', 1)], [dep('P', 'B', 'SS', lag)], keep).byRow.B.start
+      expect(b(0)).toBe('2026-11-16')
+      expect(b(1)).toBe('2026-11-17')
+      expect(b(-1)).toBe('2026-11-13')
+    })
+    it('SF lag 0: ends the working day before the (Saturday) predecessor start', () => {
+      expect(schedule([S2, row('B', 1)], [dep('P', 'B', 'SF')], keep).byRow.B).toMatchObject({ start: '2026-11-13', end: '2026-11-13' })
+    })
+    it('FS onto a milestone after a Sunday one-day task lands on Monday', () => {
+      const sun = row('P', 1, '2026-11-15')
+      expect(schedule([sun, row('M', 0)], [dep('P', 'M')], keep).byRow.M.start).toBe('2026-11-16')
+    })
+  })
+
+  it('a summary row spans its children, counting working days between them', () => {
+    const rows: SchedRow[] = [
+      { ...row('P', 0), durationMinutes: 0 },
+      { ...row('C1', 2, '2026-11-14'), parentId: 'P' }, // Sat -> Mon
+      { ...row('C2', 1, '2026-11-17'), parentId: 'P' },
+    ]
+    expect(schedule(rows, [], keep).byRow.P).toMatchObject({ start: '2026-11-14', end: '2026-11-17', durationDays: 2 })
   })
 })

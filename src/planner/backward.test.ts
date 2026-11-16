@@ -69,7 +69,8 @@ describe('planBackward: exact dates', () => {
     const plan = planBackward(draft, cal, TODAY)
     const a = byCode(plan)
     expect(a.T).toMatchObject({ start: '2026-12-04', end: '2026-12-04' })
-    expect(a.A).toMatchObject({ start: '2026-11-27', end: '2026-12-03' })
+    // The milestone sits on its predecessor's end date (observed reference rule), so A ends the same day.
+    expect(a.A).toMatchObject({ start: '2026-11-30', end: '2026-12-04' })
   })
 
   it('FS lag and lead shift the chain by working days', () => {
@@ -88,9 +89,9 @@ describe('planBackward: exact dates', () => {
     const ff = byCode(planBackward(makeDraft([activity('A', 10), activity('T', 2)], [link('A', 'T', 'FF')], 'T', '2026-12-04'), cal, TODAY))
     expect(ff.A).toMatchObject({ start: '2026-11-23', end: '2026-12-04' })
     expect(ff.T).toMatchObject({ start: '2026-12-03', end: '2026-12-04' })
-    // SF: T finishes when A starts.
+    // SF: T finishes the working day before A starts (observed reference rule).
     const sf = byCode(planBackward(makeDraft([activity('A', 3), activity('T', 2)], [link('A', 'T', 'SF')], 'T', '2026-12-04'), cal, TODAY))
-    expect(sf.A.start).toBe('2026-12-04')
+    expect(sf.A.start).toBe('2026-12-07')
     expect(sf.T).toMatchObject({ start: '2026-12-03', end: '2026-12-04' })
   })
 
@@ -124,7 +125,7 @@ describe('planBackward: exact dates', () => {
     expect(a.T.end).toBe('2026-12-04')
     expect(a.INSTALL).toMatchObject({ start: '2026-12-07', end: '2026-12-18' })
     expect(plan.projectEnd).toBe('2026-12-18')
-    expect(plan.mustStartBy).toBe('2026-11-27')
+    expect(plan.mustStartBy).toBe('2026-11-30')
   })
 
   it('a lead that pulls a successor before every root sets mustStartBy', () => {
@@ -249,6 +250,45 @@ describe('planBackward: convergence on random networks', () => {
     const rootStarts = new Set(plan.activities.filter((a) => a.isRoot).map((a) => a.start))
     expect(rootStarts.size).toBe(1)
     for (const a of plan.activities) expect(isWorkingDay(calendar, a.start)).toBe(true)
+  })
+})
+
+describe('planBackward: observed SF and milestone rules, and the nonWorkingStart option', () => {
+  const TYPES: DepType[] = ['FS', 'SS', 'FF', 'SF']
+
+  it('SF with a lag: the target ends predecessor start + lag - 1 working day', () => {
+    // T.end = A.start + 2 working days - 1 = Fri 12-04, so A starts Thu 12-03.
+    const plan = byCode(planBackward(makeDraft([activity('A', 3), activity('T', 2)], [link('A', 'T', 'SF', 2)], 'T', '2026-12-04'), cal, TODAY))
+    expect(plan.A.start).toBe('2026-12-03')
+    expect(plan.T).toMatchObject({ start: '2026-12-03', end: '2026-12-04' })
+  })
+
+  it('a milestone target after FS lags: the milestone is predecessor end + lag', () => {
+    const plan = byCode(planBackward(makeDraft([activity('A', 5), activity('T', 0)], [link('A', 'T', 'FS', 2)], 'T', '2026-12-04'), cal, TODAY))
+    expect(plan.A).toMatchObject({ start: '2026-11-26', end: '2026-12-02' }) // A ends 2 working days before the milestone
+    expect(plan.T).toMatchObject({ start: '2026-12-04', end: '2026-12-04' })
+  })
+
+  it("the 'keep' option changes nothing for a plan (every root starts on a working day)", () => {
+    for (let seed = 1; seed <= 60; seed++) {
+      const rand = rng(seed * 7919)
+      const n = 3 + Math.floor(rand() * 8)
+      const activities: DraftActivity[] = []
+      const links: DraftLink[] = []
+      for (let i = 0; i < n; i++) {
+        activities.push(activity(`A${i}`, rand() < 0.25 ? 0 : 1 + Math.floor(rand() * 15)))
+        for (let j = 0; j < i; j++) {
+          if (rand() < 0.35) links.push(link(`A${j}`, `A${i}`, TYPES[Math.floor(rand() * 4)], Math.floor(rand() * 7) - 2))
+        }
+      }
+      const draft = makeDraft(activities, links, `A${Math.floor(rand() * n)}`, '2027-03-19')
+      const shifted = planBackward(draft, cal, TODAY)
+      const kept = planBackward(draft, { ...cal, nonWorkingStart: 'keep' }, TODAY)
+      expect(kept.activities.map((a) => [a.code, a.start, a.end, a.totalFloat, a.critical]), `seed ${seed}`).toEqual(
+        shifted.activities.map((a) => [a.code, a.start, a.end, a.totalFloat, a.critical]),
+      )
+      expect(kept.iterations).toBeLessThanOrEqual(2)
+    }
   })
 })
 

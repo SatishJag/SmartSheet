@@ -98,6 +98,31 @@ describe('ScheduleSettingsDialog', () => {
     expect(persistence.saveSheetSettings).toHaveBeenCalled()
   })
 
+  it("offers 'Start dates on non-working days' and saves 'Keep as entered' into the calendar and the schedule", async () => {
+    const { store, persistence, user } = await setup()
+    store.getState().setCell('r-survey', COL.start, '2026-11-14') // typed on a Saturday
+    expect(store.getState().scheduled.byRow['r-survey']).toMatchObject({ start: '2026-11-16', end: '2026-11-17' })
+    const dialog = await open(user)
+    const select = within(dialog).getByRole('combobox', { name: 'Start dates on non-working days' })
+    expect(select).toHaveValue('shift')
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Move to the next working day', 'Keep as entered'])
+    await user.selectOptions(select, 'keep')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(store.getState().data!.sheet.calendar.nonWorkingStart).toBe('keep')
+    expect(store.getState().scheduled.byRow['r-survey']).toMatchObject({ start: '2026-11-14', end: '2026-11-16' })
+    await vi_waitSaved(store)
+    expect(persistence.saveSheetSettings).toHaveBeenCalled()
+
+    // Reopening shows the saved choice; switching back drops the option again.
+    const again = await open(user)
+    const select2 = within(again).getByRole('combobox', { name: 'Start dates on non-working days' })
+    expect(select2).toHaveValue('keep')
+    await user.selectOptions(select2, 'shift')
+    await user.click(within(again).getByRole('button', { name: 'Save' }))
+    expect(store.getState().data!.sheet.calendar.nonWorkingStart).toBeUndefined()
+    expect(store.getState().scheduled.byRow['r-survey']).toMatchObject({ start: '2026-11-16' })
+  })
+
   it('removes a non-working date', async () => {
     const data = makeSheetData()
     data.sheet.calendar = { ...data.sheet.calendar, nonWorkingDates: ['2026-12-24', '2026-12-25'] }

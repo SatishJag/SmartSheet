@@ -37,3 +37,29 @@ Base task A: start Mon 2026-03-02, 3 days → ends Wed 03-04.
 2. SF link: end = predecessor start − 1 working day (+ lag).
 3. Zero-duration FS successor: lands on the predecessor's finish date.
 Everything else listed above already matches our engine.
+
+## Implementation notes (engine conformance, added)
+`src/engine/referenceConformance.test.ts` runs all 24 scenarios above through `schedule()`; all pass with
+`Calendar.nonWorkingStart = 'keep'`, and every scenario except the two weekend-typed ones passes with the default.
+
+- **SF** (observed lag 0 and +2d): successor end = `addWorkingDays(anchor(pred start), lag - 1)`, successor start counted back from
+  that end. So lag +1d puts the successor's end ON the predecessor's start day; lag -1d is two working days before it.
+- **FS onto a zero-duration successor** (observed lag 0 only). Derived rule for other lags: the milestone date is
+  `addWorkingDays(anchor(pred end), lag)`, i.e. the predecessor's end date shifted by `lag` working days (lag +1d = the next
+  working day, -1d = the previous one). This is the same as "the day before the date a task would start", which is also how
+  the SF rule is stated, so both observations follow one principle: a zero-length or end-anchored element is placed at the end
+  of the working day before the day a task would have started. Not observed, so chosen for consistency: SS, FF and SF onto a
+  milestone keep their task rules unchanged (SS: pred start + lag; FF: pred end + lag; SF: the end formula above, which for a
+  milestone is its date). Zero duration is detected from the typed duration (0 minutes), never from a start/end comparison.
+- **anchor(date)** = the first working day on or after `date`. A predecessor's start/end can be a non-working day (an elapsed
+  duration, or a kept weekend start); lags always count working days from the anchor, so SS/SF/FS-milestone are monotone in the
+  lag. The older elapsed-end FF rule (`addWorkingDays` strictly after the date, so lag 0 and +1 both give the next working day)
+  is unchanged and pinned in `schedule.test.ts`; it is the one place where one more day of lag can move nothing.
+- **`nonWorkingStart: 'keep'`** (calendar JSON, absent = `'shift'`): a typed Start on a non-working day stays, day 1 is that day
+  and working days are counted strictly after it (end = start when duration <= 1). Only typed starts are kept; every date a
+  dependency produces is still a working day. A summary row spanning only non-working days reports a duration of 0 days
+  (working days between its start and end). Not observed: how the reference rolls such a summary up.
+- **Float** (`criticalPath.ts`): the backward pass inverts the new SF and milestone rules exactly; with `'keep'` a project end
+  (or a row end) on a non-working day bounds working-day rows by the working day before it, and a row with zero float reports its
+  early dates as its late dates. The randomized property test (delay by float keeps the finish, one day more moves it) runs for
+  both options, both calendars, with SF links, milestones and weekend-typed starts.

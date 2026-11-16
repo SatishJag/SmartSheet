@@ -46,7 +46,11 @@ export function lagDaysOf(dep: SchedDep, cal: Calendar): number {
   return Math.round(dep.lagMinutes / (cal.hoursPerDay * 60))
 }
 
-/** End date for a row of durationDays starting on start (a working day). */
+/**
+ * End date for a row of durationDays starting on start (a working day, or any day when the calendar
+ * keeps typed non-working starts: addWorkingDays counts working days strictly after start, so day 1
+ * is start itself either way).
+ */
 export function endFromStart(start: string, durationDays: number, elapsed: boolean, cal: Calendar): string {
   if (durationDays <= 1) return start
   return elapsed ? shiftIso(start, durationDays - 1) : addWorkingDays(cal, start, durationDays - 1)
@@ -74,9 +78,14 @@ function offsetWorkingDays(cal: Calendar, iso: string, lag: number): string {
 
 /**
  * Candidate start for the successor implied by one dependency on an already-scheduled predecessor.
- * A predecessor's end can be a non-working day (elapsed durations); its start is always a working
- * day (manual starts and dependency starts are moved to one; rollups take a child's start), so only
- * the FS and FF branches need care.
+ * A predecessor's end can be a non-working day (elapsed durations, or a typed start kept on a
+ * non-working day); so can its start under nonWorkingStart 'keep'. Both are anchored to the first
+ * working day on or after, so a lag always counts working days from a working day.
+ *
+ * Observed rules of the reference product (docs/behavior/scheduling.md):
+ * - SF: the successor END is the predecessor's start plus lag, minus one working day.
+ * - FS onto a zero-duration successor (a milestone): it lands on the predecessor's end date plus
+ *   lag, where a task would start the working day after (so lag 0 is the same day).
  */
 function candidateStart(
   dep: SchedDep,
@@ -88,13 +97,14 @@ function candidateStart(
   const lag = lagDaysOf(dep, cal)
   switch (dep.type) {
     case 'FS':
+      if (durationDays === 0) return addWorkingDays(cal, nextWorkingDay(cal, pred.end), lag)
       return addWorkingDays(cal, firstWorkingDayAfter(cal, pred.end), lag)
     case 'SS':
       return addWorkingDays(cal, nextWorkingDay(cal, pred.start), lag)
     case 'FF':
       return startFromEnd(offsetWorkingDays(cal, pred.end, lag), durationDays, elapsed, cal)
     case 'SF':
-      return startFromEnd(addWorkingDays(cal, nextWorkingDay(cal, pred.start), lag), durationDays, elapsed, cal)
+      return startFromEnd(addWorkingDays(cal, nextWorkingDay(cal, pred.start), lag - 1), durationDays, elapsed, cal)
   }
 }
 
@@ -151,7 +161,8 @@ function scheduleRow(
       if (start === null || candidate > start) start = candidate
     }
   } else if (row.manualStart) {
-    start = nextWorkingDay(cal, row.manualStart)
+    // 'keep': a typed start on a non-working day stays, and the duration counts from it as day 1.
+    start = cal.nonWorkingStart === 'keep' ? row.manualStart : nextWorkingDay(cal, row.manualStart)
   } else {
     return { rowId: row.id, message: 'No start date' }
   }
