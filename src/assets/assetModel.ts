@@ -12,6 +12,9 @@ export interface AssetsData {
   favorites: Favorite[]
 }
 
+/** The parts of the data that say where things live. */
+export type Tree = Pick<AssetsData, 'workspaces' | 'folders' | 'placements'>
+
 export interface AssetRef {
   type: AssetType
   id: string
@@ -36,7 +39,7 @@ export function assetRef(data: AssetsData, type: AssetType, id: string): AssetRe
   return found ? { type, id, name: found.name } : null
 }
 
-export const placementOf = (data: AssetsData, type: AssetType, id: string): Placement | undefined =>
+export const placementOf = (data: Pick<AssetsData, 'placements'>, type: AssetType, id: string): Placement | undefined =>
   data.placements.find((p) => p.assetType === type && p.assetId === id)
 
 /** Assets that live in no workspace, by name. */
@@ -47,7 +50,7 @@ export function unplacedAssets(data: AssetsData): AssetRef[] {
     .sort(byName)
 }
 
-export const childFolders = (data: AssetsData, spaceId: string, parentId: string | null): Folder[] =>
+export const childFolders = (data: Pick<AssetsData, 'folders'>, spaceId: string, parentId: string | null): Folder[] =>
   data.folders.filter((f) => f.spaceId === spaceId && f.parentId === parentId).sort(byName)
 
 /** The assets placed directly in a workspace (folderId null) or folder, by name. */
@@ -59,7 +62,7 @@ export function itemsAt(data: AssetsData, spaceId: string, folderId: string | nu
 }
 
 /** The folders from the top of the workspace down to `folderId`. */
-export function folderPath(data: AssetsData, folderId: string): Folder[] {
+export function folderPath(data: Pick<AssetsData, 'folders'>, folderId: string): Folder[] {
   const path: Folder[] = []
   const seen = new Set<string>()
   for (let id: string | null = folderId; id !== null && !seen.has(id); ) {
@@ -73,13 +76,13 @@ export function folderPath(data: AssetsData, folderId: string): Folder[] {
 }
 
 /** "Workspace / Folder / Subfolder" for a location. */
-export function locationLabel(data: AssetsData, spaceId: string, folderId: string | null): string {
+export function locationLabel(data: Pick<AssetsData, 'workspaces' | 'folders'>, spaceId: string, folderId: string | null): string {
   const space = data.workspaces.find((w) => w.id === spaceId)?.name ?? 'Workspace'
   return [space, ...(folderId ? folderPath(data, folderId).map((f) => f.name) : [])].join(' / ')
 }
 
 /** Where an asset lives, as text; null when it is in no workspace. */
-export function assetLocation(data: AssetsData, type: AssetType, id: string): string | null {
+export function assetLocation(data: Tree, type: AssetType, id: string): string | null {
   const p = placementOf(data, type, id)
   return p ? locationLabel(data, p.spaceId, p.folderId) : null
 }
@@ -87,20 +90,23 @@ export function assetLocation(data: AssetsData, type: AssetType, id: string): st
 export interface Destination {
   spaceId: string
   folderId: string | null
+  /** The workspace or folder's own name. */
+  name: string
+  /** Its full path, "Workspace / Folder". */
   label: string
   depth: number
 }
 
 /** Every place an asset can be moved to, depth first. `exceptFolderId` leaves out a folder and everything under it. */
-export function destinations(data: AssetsData, exceptFolderId: string | null = null): Destination[] {
+export function destinations(data: Pick<AssetsData, 'workspaces' | 'folders'>, exceptFolderId: string | null = null): Destination[] {
   const out: Destination[] = []
   for (const space of [...data.workspaces].sort(byName)) {
-    out.push({ spaceId: space.id, folderId: null, label: space.name, depth: 0 })
+    out.push({ spaceId: space.id, folderId: null, name: space.name, label: space.name, depth: 0 })
     const walk = (parentId: string | null, depth: number, label: string) => {
       for (const f of childFolders(data, space.id, parentId)) {
         if (f.id === exceptFolderId) continue
         const here = `${label} / ${f.name}`
-        out.push({ spaceId: space.id, folderId: f.id, label: here, depth })
+        out.push({ spaceId: space.id, folderId: f.id, name: f.name, label: here, depth })
         walk(f.id, depth + 1, here)
       }
     }
@@ -110,13 +116,13 @@ export function destinations(data: AssetsData, exceptFolderId: string | null = n
 }
 
 /** How many levels of folders sit below `folderId` (0 for a folder with no subfolders). */
-export function folderHeight(data: AssetsData, folderId: string): number {
+export function folderHeight(data: Pick<AssetsData, 'folders'>, folderId: string): number {
   const kids = data.folders.filter((f) => f.parentId === folderId)
   return kids.length === 0 ? 0 : 1 + Math.max(...kids.map((k) => folderHeight(data, k.id)))
 }
 
 /** Folders a given folder could move under without breaking the nesting limit or its own subtree. */
-export function folderMoveTargets(data: AssetsData, folderId: string): Destination[] {
+export function folderMoveTargets(data: Pick<AssetsData, 'workspaces' | 'folders'>, folderId: string): Destination[] {
   const folder = data.folders.find((f) => f.id === folderId)
   if (!folder) return []
   const height = folderHeight(data, folderId)
