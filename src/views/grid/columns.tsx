@@ -73,9 +73,20 @@ export function toEditString(value: unknown): string {
   return String(value)
 }
 
-/** The string a cell's editor opens with: the derived text for the predecessor column. */
+/**
+ * The string a cell's editor opens with: the derived text for the predecessor column, and for an
+ * empty cell that uses its column's formula, that formula (typing over it makes the cell's own value).
+ */
 export function editString(col: Column, row: GridRow): string {
-  return col.role === 'predecessor' ? row.predecessors : toEditString(row.record.cells[col.id])
+  if (col.role === 'predecessor') return row.predecessors
+  const own = toEditString(row.record.cells[col.id])
+  if (own === '') return columnFormulaOf(col, row) ?? ''
+  return own
+}
+
+/** The column formula a cell is currently showing (its own cell is empty), or undefined. */
+export function columnFormulaOf(col: Column, row: GridRow): string | undefined {
+  return row.formulaOf?.(col.id)?.columnFormula
 }
 
 const formatPercent = (n: number) => `${Math.round(n * 10) / 10}%`

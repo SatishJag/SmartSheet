@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 
-export type ColumnMenuAction = 'rename' | 'insertLeft' | 'insertRight' | 'options' | 'type' | 'delete'
+export type ColumnMenuAction = 'rename' | 'insertLeft' | 'insertRight' | 'options' | 'formula' | 'clearFormula' | 'type' | 'delete'
 
 export interface ColumnMenuItem {
   action: ColumnMenuAction

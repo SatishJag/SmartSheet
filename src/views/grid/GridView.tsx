@@ -21,6 +21,7 @@ import {
 } from './clipboard'
 import {
   buildColumnDefs,
+  columnFormulaOf,
   displayText,
   editString,
   formulaError,
@@ -28,9 +29,11 @@ import {
   isEditable,
   readOnlyReason,
   ROW_NUMBER_COLUMN_ID,
+  toEditString,
   type GridRow,
 } from './columns'
 import { FilterBar } from './FilterBar'
+import { FormulaBar } from './FormulaBar'
 import { HierarchyCell } from './HierarchyCell'
 import { PredecessorCell } from './PredecessorCell'
 import { useGridViewState } from './useGridViewState'
@@ -39,6 +42,7 @@ import { useRowDrag } from './useRowDrag'
 import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow } from './viewModel'
 import { fixedViewport, measuredViewport } from './viewport'
 import { useDensity } from '../density'
+import { formulaDisplay } from '../../formula/sheetFormulas'
 import { Icon } from '../../ui/Icon'
 import './grid.css'
 
@@ -170,7 +174,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
   function startEdit(row: GridRow, col: Column) {
     if (!isEditable(col, row)) return
     if (col.type === 'CHECKBOX') {
-      toggleCheckbox(row, col)
+      if (!row.formulaOf?.(col.id)) toggleCheckbox(row, col) // a checkbox the column formula fills in is read-only
       return
     }
     setActive({ rowId: row.id, colId: col.id })
@@ -297,7 +301,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
         const row = rows[r]
         const col = columns[c]
         if (!isEditable(col, row)) continue
-        const empty = col.type === 'CHECKBOX' ? row.record.cells[col.id] !== true : editString(col, row) === ''
+        // A cell that only shows its column formula has nothing of its own to clear.
+        const ownEmpty = columnFormulaOf(col, row) !== undefined && toEditString(row.record.cells[col.id]) === ''
+        const empty = col.type === 'CHECKBOX' ? row.record.cells[col.id] !== true : editString(col, row) === '' || ownEmpty
         if (empty && !errorByCell.has(`${row.id}:${col.id}`)) continue
         const result = api.getState().setCell(row.id, col.id, '')
         if (!result.ok) rejected.push({ where: `row ${row.rowNumber} ${col.title}`, reason: result.error })
@@ -429,6 +435,14 @@ export function GridView({ viewportHeight }: GridViewProps) {
           onCancel={cancel}
         />
       )
+    } else if (col.type === 'CHECKBOX' && row.formulaOf?.(col.id)) {
+      // A checkbox column with a column formula shows the formula's result and is not toggled by hand.
+      const f = row.formulaOf(col.id)!
+      content = f.ok ? (
+        <input type="checkbox" aria-label={`${col.title}, row ${row.rowNumber}`} checked={f.value === true} disabled readOnly tabIndex={-1} />
+      ) : (
+        <span className="cell-text">{formulaDisplay(f)}</span>
+      )
     } else if (col.type === 'CHECKBOX') {
       content = (
         <CheckboxCell
@@ -500,8 +514,26 @@ export function GridView({ viewportHeight }: GridViewProps) {
     )
   }
 
+  const barRow = activeValid ? rows[activeRowIdx] : null
+  const barCol = activeValid ? columns[activeColIdx] : null
+
   return (
     <div className="grid-view">
+      <FormulaBar
+        label={barRow && barCol ? `${barCol.title} · row ${barRow.rowNumber}` : null}
+        text={barRow && barCol ? editString(barCol, barRow) : ''}
+        editable={barRow && barCol ? barCol.type !== 'CHECKBOX' && isEditable(barCol, barRow) : false}
+        readOnlyReason={barRow && barCol ? (readOnlyReason(barCol, barRow) ?? 'This cell is calculated') : undefined}
+        fromColumn={barRow && barCol ? columnFormulaOf(barCol, barRow) !== undefined && toEditString(barRow.record.cells[barCol.id]) === '' : false}
+        error={barRow && barCol ? (errorByCell.get(`${barRow.id}:${barCol.id}`) ?? formulaError(barCol, barRow)) : undefined}
+        onCommit={(raw) => {
+          if (barRow && barCol) api.getState().setCell(barRow.id, barCol.id, raw)
+        }}
+        onReturn={() => {
+          focusRequest.current = true
+          if (active) setActive({ ...active })
+        }}
+      />
       <div
         ref={scrollRef}
         className="grid-scroll"

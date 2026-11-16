@@ -36,6 +36,7 @@ describe('column header menu', () => {
       'Insert column left',
       'Insert column right',
       'Edit dropdown options',
+      'Set column formula',
       'Change column type',
       'Delete column',
     ])

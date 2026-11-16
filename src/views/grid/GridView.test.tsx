@@ -113,7 +113,7 @@ describe('GridView editing', () => {
 
     expect(setCell).toHaveBeenCalledTimes(1)
     expect(setCell).toHaveBeenCalledWith('r-survey', COL.task, 'Survey and stake out')
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('textbox', { name: (n) => n !== 'Formula bar' })).toHaveLength(0) // the formula bar is always there
     expect(cell(2, 'Task')).toHaveTextContent('Survey and stake out')
   })
 
@@ -135,7 +135,7 @@ describe('GridView editing', () => {
     await user.keyboard('{Escape}')
 
     expect(setCell).not.toHaveBeenCalled()
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('textbox', { name: (n) => n !== 'Formula bar' })).toHaveLength(0) // the formula bar is always there
     expect(cell(2, 'Task')).toHaveTextContent(/^Survey$/)
   })
 
@@ -223,13 +223,13 @@ describe('GridView editing', () => {
     const { setCell, persistence, user } = await renderGrid()
     await user.dblClick(cell(2, 'Task'))
     await user.keyboard('{Enter}')
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('textbox', { name: (n) => n !== 'Formula bar' })).toHaveLength(0) // the formula bar is always there
     expect(cell(2, 'Task')).toHaveFocus()
 
     await user.dblClick(cell(3, 'Task'))
     expect(screen.getByRole('textbox', { name: 'Task' })).toHaveValue('Clear site')
     await user.click(cell(4, 'Task'))
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('textbox', { name: (n) => n !== 'Formula bar' })).toHaveLength(0) // the formula bar is always there
 
     expect(setCell).not.toHaveBeenCalled()
     expect(persistence.saveCell).not.toHaveBeenCalled()
