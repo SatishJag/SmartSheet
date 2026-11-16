@@ -113,7 +113,7 @@ describe('GridView editing', () => {
 
     expect(setCell).toHaveBeenCalledTimes(1)
     expect(setCell).toHaveBeenCalledWith('r-survey', COL.task, 'Survey and stake out')
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('textbox', { name: (n) => n !== 'Formula bar' })).toHaveLength(0) // the formula bar is always there
     expect(cell(2, 'Task')).toHaveTextContent('Survey and stake out')
   })
 
@@ -135,7 +135,7 @@ describe('GridView editing', () => {
     await user.keyboard('{Escape}')
 
     expect(setCell).not.toHaveBeenCalled()
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('textbox', { name: (n) => n !== 'Formula bar' })).toHaveLength(0) // the formula bar is always there
     expect(cell(2, 'Task')).toHaveTextContent(/^Survey$/)
   })
 
@@ -223,13 +223,13 @@ describe('GridView editing', () => {
     const { setCell, persistence, user } = await renderGrid()
     await user.dblClick(cell(2, 'Task'))
     await user.keyboard('{Enter}')
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('textbox', { name: (n) => n !== 'Formula bar' })).toHaveLength(0) // the formula bar is always there
     expect(cell(2, 'Task')).toHaveFocus()
 
     await user.dblClick(cell(3, 'Task'))
     expect(screen.getByRole('textbox', { name: 'Task' })).toHaveValue('Clear site')
     await user.click(cell(4, 'Task'))
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('textbox', { name: (n) => n !== 'Formula bar' })).toHaveLength(0) // the formula bar is always there
 
     expect(setCell).not.toHaveBeenCalled()
     expect(persistence.saveCell).not.toHaveBeenCalled()
@@ -381,11 +381,11 @@ describe('GridView formulas', () => {
     })
 
   it('shows evaluated results: arithmetic, SUM over a column, IF on the row', async () => {
-    await renderGrid(formulaSheet(['=1+2', '=SUM([Cost])', '=IF([Qty]>2,"big","small")', '=[Qty]>3']))
+    await renderGrid(formulaSheet(['=1+2', '=SUM([Cost])', '=IF([Qty]>2,"big","small")', '=IF([Qty]>3,"yes","no")']))
     expect(cell(1, 'Calc')).toHaveTextContent(/^3$/)
     expect(cell(2, 'Calc')).toHaveTextContent(/^100$/)
     expect(cell(3, 'Calc')).toHaveTextContent(/^big$/)
-    expect(cell(4, 'Calc')).toHaveTextContent(/^TRUE$/)
+    expect(cell(4, 'Calc')).toHaveTextContent(/^yes$/)
   })
 
   it('the editor opens with the formula text, and a new formula shows its result', async () => {
@@ -413,21 +413,23 @@ describe('GridView formulas', () => {
   })
 
   it.each([
-    ['=1/0', 'Division by zero'],
-    ['=FOO(1)', "Unknown function 'FOO'"],
-    ['=[Nope]+1', "Unknown column 'Nope'"],
-  ])('%s shows #ERROR with the error marker and message', async (formula, message) => {
+    ['=1/0', '#DIVIDE BY ZERO', 'divides by zero'],
+    ['=FOO(1)', '#UNPARSEABLE', "Unknown function 'FOO'"],
+    ['=[Nope]+1', '#UNPARSEABLE', "Unknown column 'Nope'"],
+    ['=[Qty]>1', '#INVALID COLUMN VALUE', 'cannot hold'],
+  ])('%s shows %s with the error marker and an explanation', async (formula, name, explanation) => {
     await renderGrid(formulaSheet([formula]))
     const c = cell(1, 'Calc')
-    expect(c).toHaveTextContent(/^#ERROR/)
+    expect(c).toHaveTextContent(new RegExp(`^${name}`))
     expect(c).toHaveAttribute('aria-invalid', 'true')
-    expect(c).toHaveAttribute('title', message)
-    expect(c).toHaveAccessibleDescription(message)
+    expect(c.getAttribute('title')).toContain(`${name}: `)
+    expect(c.getAttribute('title')).toContain(explanation)
+    expect(c).toHaveAccessibleDescription(c.getAttribute('title')!)
   })
 
-  it('a self reference shows #CIRCULAR', async () => {
+  it('a self reference shows #CIRCULAR REFERENCE', async () => {
     await renderGrid(formulaSheet(['=[Calc]+1']))
-    expect(cell(1, 'Calc')).toHaveTextContent(/^#CIRCULAR/)
+    expect(cell(1, 'Calc')).toHaveTextContent(/^#CIRCULAR REFERENCE/)
     expect(cell(1, 'Calc')).toHaveAttribute('aria-invalid', 'true')
   })
 

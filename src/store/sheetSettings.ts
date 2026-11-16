@@ -63,6 +63,10 @@ const SCHEDULE_ROLES: readonly ColumnRole[] = ['start', 'end', 'duration', 'pred
 export function scheduleFormulaProblem(data: SheetData): string | null {
   const cols = data.columns.filter((c) => c.role && SCHEDULE_ROLES.includes(c.role))
   if (cols.length === 0) return null
+  const withColumnFormula = cols.find((c) => c.formula?.trim())
+  if (withColumnFormula) {
+    return `Remove the column formula of ${withColumnFormula.title} first: formulas are not allowed in schedule columns when dependencies are on`
+  }
   const byId = new Map(data.rows.map((r) => [r.id, r]))
   const order = fullOrder(data.rows)
   for (let i = 0; i < order.length; i++) {

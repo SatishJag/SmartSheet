@@ -20,6 +20,11 @@ export interface Column {
   options?: string[]
   systemType?: string
   role?: ColumnRole
+  /**
+   * A column formula (stored with its leading `=`): it applies to every row whose own cell is empty.
+   * A cell's own value or formula overrides it until the cell is cleared (src/formula/sheetFormulas.ts).
+   */
+  formula?: string
 }
 
 export interface ValidateContext {
@@ -37,7 +42,8 @@ const NUMERIC = /^[+-]?(\d+\.?\d*|\.\d+)$/
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-const FORMULA_BLOCKED_ROLES: readonly ColumnRole[] = ['start', 'end', 'duration', 'predecessor', 'percentComplete']
+/** Schedule roles whose cells may not hold formulas while dependencies are on. */
+export const FORMULA_BLOCKED_ROLES: readonly ColumnRole[] = ['start', 'end', 'duration', 'predecessor', 'percentComplete']
 
 const ok = (value: unknown): ValidateResult => ({ ok: true, value })
 const fail = (error: string): ValidateResult => ({ ok: false, error })

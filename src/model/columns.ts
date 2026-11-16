@@ -1,5 +1,5 @@
 import type { SheetData } from '../store/persistence'
-import type { Column, ColumnRole, ColumnType } from './validate'
+import { FORMULA_BLOCKED_ROLES, type Column, type ColumnRole, type ColumnType } from './validate'
 
 /** Column rules shared by the store (which enforces them) and the grid header (which explains them). */
 
@@ -67,12 +67,17 @@ export function normalizeOptions(raw: readonly string[]): { ok: true; options: s
   return { ok: true, options }
 }
 
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/
+const isIdentChar = (c: string | undefined) => c !== undefined && /[A-Za-z0-9_]/.test(c)
+
 /**
- * Rewrites `[oldTitle]` column references in a formula to `[newTitle]`. Matching is exact on the
- * trimmed text between the brackets (as the evaluator resolves titles); string literals are left
+ * Rewrites column references in a formula from `oldTitle` to `newTitle`: `[Old]` (and so `[Old]@row`,
+ * `[Old]5`, `[Old]:[Old]`) and a bare `Old@row` / `Old:Old`. Matching is exact on the trimmed text
+ * between the brackets (as the evaluator resolves titles); string literals and function names are left
  * alone. Returns the input itself when nothing changed.
  */
 export function renameFormulaReferences(formula: string, oldTitle: string, newTitle: string): string {
+  const bare = IDENT.test(newTitle) ? newTitle : `[${newTitle}]`
   let out = ''
   let changed = false
   let i = 0
@@ -94,6 +99,18 @@ export function renameFormulaReferences(formula: string, oldTitle: string, newTi
         changed = true
       } else out += formula.slice(i, end + 1)
       i = end + 1
+    } else if (/[A-Za-z_]/.test(c)) {
+      let j = i + 1
+      while (isIdentChar(formula[j])) j++
+      const word = formula.slice(i, j)
+      const after = formula.slice(j)
+      const before = out.trimEnd().slice(-1)
+      // A reference, not a function call or TRUE/FALSE: followed by @row or : (or the end of a range).
+      if (word === oldTitle && (/^@row(?![A-Za-z0-9_])/i.test(after) || after.startsWith(':') || before === ':')) {
+        out += bare
+        changed = true
+      } else out += word
+      i = j
     } else {
       out += c
       i++
@@ -118,6 +135,21 @@ export function columnLock(data: SheetData, colId: string, action: 'delete' | 'r
   // dependencies) for good once dependencies are turned on again.
   if (col.role && SCHEDULE_ROLES.includes(col.role)) {
     return `"${col.title}" is used for scheduling and cannot ${verb}`
+  }
+  return null
+}
+
+/**
+ * Why a column cannot have a column formula, or null when it can: the primary column holds the row
+ * hierarchy, and schedule columns take their values from the scheduler while dependencies are on.
+ */
+export function columnFormulaLock(data: SheetData, colId: string): string | null {
+  const index = data.columns.findIndex((c) => c.id === colId)
+  if (index < 0) return null
+  if (index === 0) return 'The primary column cannot have a column formula'
+  const col = data.columns[index]
+  if (col.role && FORMULA_BLOCKED_ROLES.includes(col.role) && data.sheet.dependenciesEnabled) {
+    return `Formulas are not allowed in ${col.role} columns`
   }
   return null
 }
