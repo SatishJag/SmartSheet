@@ -66,12 +66,18 @@ function latestPredecessorStart(
   pred: { durationDays: number; elapsed: boolean },
   succStart: string,
   succEnd: string,
+  succIsMilestone: boolean,
   cal: Calendar,
 ): string {
   const lag = lagDaysOf(dep, cal)
   const endBound = previousWorkingDay(cal, succEnd)
   switch (dep.type) {
     case 'FS': {
+      if (succIsMilestone) {
+        // a milestone lands on pred end (anchored to a working day) plus lag, so pred end <= succStart - lag
+        const end = addWorkingDays(cal, succStart, -lag)
+        return previousWorkingDay(cal, startFromEnd(end, pred.durationDays, pred.elapsed, cal))
+      }
       // successor start >= first working day after pred end, plus lag
       const firstAllowed = addWorkingDays(cal, succStart, -lag)
       const lastEnd = shiftIso(firstAllowed, -1)
@@ -85,7 +91,8 @@ function latestPredecessorStart(
       return previousWorkingDay(cal, startFromEnd(lastEnd, pred.durationDays, pred.elapsed, cal))
     }
     case 'SF':
-      return addWorkingDays(cal, endBound, -lag)
+      // successor end >= (pred start + lag) - 1 working day, so pred start <= succEnd - lag + 1
+      return addWorkingDays(cal, endBound, 1 - lag)
   }
 }
 
@@ -158,6 +165,8 @@ export function analyzeCriticalPath(
     elapsed: rowById.get(id)!.elapsed,
   })
 
+  const isMilestone = (id: string) => scheduled[id].durationDays === 0
+
   // Backward pass, successors first.
   const lateStart = new Map<string, string>()
   const lateFinish = new Map<string, string>()
@@ -165,9 +174,10 @@ export function analyzeCriticalPath(
     const id = order[i]
     const { durationDays, elapsed } = info(id)
     // Every row must also finish by the project finish.
-    let ls = previousWorkingDay(cal, startFromEnd(projectEnd, durationDays, elapsed, cal))
+    // (The project end itself can be a non-working day under nonWorkingStart 'keep': a working-day row ends by the day before.)
+    let ls = previousWorkingDay(cal, startFromEnd(elapsed ? projectEnd : previousWorkingDay(cal, projectEnd), durationDays, elapsed, cal))
     for (const d of outgoing.get(id)!) {
-      const bound = latestPredecessorStart(d, info(id), lateStart.get(d.successorId)!, lateFinish.get(d.successorId)!, cal)
+      const bound = latestPredecessorStart(d, info(id), lateStart.get(d.successorId)!, lateFinish.get(d.successorId)!, isMilestone(d.successorId), cal)
       if (bound < ls) ls = bound
     }
     lateStart.set(id, ls)
@@ -185,7 +195,7 @@ export function analyzeCriticalPath(
       freeFloat = Infinity
       for (const d of successors) {
         const succ = scheduled[d.successorId]
-        const slack = count(s.start, latestPredecessorStart(d, info(r.id), succ.start, succ.end, cal))
+        const slack = count(s.start, latestPredecessorStart(d, info(r.id), succ.start, succ.end, succ.durationDays === 0, cal))
         if (slack === 0) tightDeps.push(d)
         if (slack < freeFloat) freeFloat = slack
       }
@@ -193,9 +203,11 @@ export function analyzeCriticalPath(
       // a successor; it still may not slip further than its total float.
       freeFloat = Math.min(freeFloat, totalFloat)
     }
+    // Zero float means the row is on its early dates (under 'keep' these can be on a non-working day,
+    // where the working-day arithmetic above lands on the working day before).
     byRow[r.id] = {
-      lateStart: lateStart.get(r.id)!,
-      lateFinish: lateFinish.get(r.id)!,
+      lateStart: totalFloat === 0 ? s.start : lateStart.get(r.id)!,
+      lateFinish: totalFloat === 0 ? s.end : lateFinish.get(r.id)!,
       totalFloat,
       freeFloat,
       critical: totalFloat <= 0,

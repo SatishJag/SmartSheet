@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addWorkingDays, defaultCalendar, nextWorkingDay } from './calendar'
+import { addWorkingDays, defaultCalendar, isWorkingDay, nextWorkingDay, shiftIso } from './calendar'
 import { analyzeCriticalPath, depKey } from './criticalPath'
 import { schedule, type SchedDep, type SchedRow } from './schedule'
 import type { Calendar, DepType } from './types'
@@ -102,12 +102,23 @@ describe('analyzeCriticalPath', () => {
       expect(cp.byRow.B.critical).toBe(true)
     })
 
-    it('SF: the predecessor start bounds the successor finish', () => {
+    it('SF: the predecessor start bounds the successor finish (it ends the working day before)', () => {
       const { cp, result } = analyze([row('A', 1, '2026-11-11'), row('B', 2)], [dep('A', 'B', 'SF')])
-      // B must finish when A starts (Wed 11-11): B Tue 11-10 - Wed 11-11, and B drives the finish.
-      expect(result.byRow.B.end).toBe('2026-11-11')
-      expect(cp.byRow.A.totalFloat).toBeGreaterThanOrEqual(0)
-      expect(cp.byRow.B.totalFloat).toBeGreaterThanOrEqual(0)
+      // B ends the working day before A starts (Wed 11-11): B Mon 11-09 - Tue 11-10; A ends the project.
+      expect(result.byRow.B).toMatchObject({ start: '2026-11-09', end: '2026-11-10' })
+      expect(cp.byRow.A).toMatchObject({ totalFloat: 0, critical: true })
+      // B may finish as late as the project end (Wed 11-11), the day A starts: one working day of float.
+      expect(cp.byRow.B).toMatchObject({ lateStart: '2026-11-10', lateFinish: '2026-11-11', totalFloat: 1, freeFloat: 1, critical: false })
+    })
+
+    it('a milestone reached by FS sits on the predecessor end date and is critical with it', () => {
+      const { cp, result } = analyze([row('A', 2, '2026-11-09'), row('M', 0), row('S', 1, '2026-11-09')], [dep('A', 'M')])
+      expect(result.byRow.M).toMatchObject({ start: '2026-11-10', end: '2026-11-10' })
+      expect(cp.projectEnd).toBe('2026-11-10')
+      expect(cp.byRow.A).toMatchObject({ totalFloat: 0, critical: true })
+      expect(cp.byRow.M).toMatchObject({ totalFloat: 0, critical: true })
+      expect(cp.byRow.S.totalFloat).toBe(1)
+      expect(cp.criticalDeps).toEqual([depKey('A', 'M')])
     })
   })
 
@@ -142,10 +153,15 @@ describe('analyzeCriticalPath', () => {
     })
   })
 
+  const sixDayWeek: Calendar = { ...defaultCalendar, workingWeekdays: [1, 2, 3, 4, 5, 6], nonWorkingDates: ['2026-11-11', '2026-11-17', '2026-11-24'] }
   describe.each([
     ['Monday to Friday', defaultCalendar],
-    ['six-day week with holidays', { ...defaultCalendar, workingWeekdays: [1, 2, 3, 4, 5, 6], nonWorkingDates: ['2026-11-11', '2026-11-17', '2026-11-24'] }],
+    ['six-day week with holidays', sixDayWeek],
+    // 'keep': typed starts may sit on weekends and holidays (and stay there), so the float arithmetic starts from a non-working day.
+    ["Monday to Friday, nonWorkingStart 'keep'", { ...defaultCalendar, nonWorkingStart: 'keep' }],
+    ["six-day week with holidays, nonWorkingStart 'keep'", { ...sixDayWeek, nonWorkingStart: 'keep' }],
   ] as [string, Calendar][])('against the forward scheduler (randomized), %s', (_name, cal) => {
+    const keep = cal.nonWorkingStart === 'keep'
     // Small deterministic PRNG so failures reproduce.
     function rng(seed: number) {
       return () => {
@@ -162,7 +178,10 @@ describe('analyzeCriticalPath', () => {
       for (let i = 0; i < n; i++) {
         const id = `T${i}`
         const days = rand() < 0.15 ? 0 : 1 + Math.floor(rand() * 5)
-        rows.push(row(id, days, i === 0 || rand() < 0.2 ? addWorkingDays(cal, nextWorkingDay(cal, '2026-11-09'), Math.floor(rand() * 4)) : null))
+        const typed = i === 0 || rand() < 0.2
+        // Under 'keep' any calendar day may be typed (weekends and holidays included).
+        const start = keep ? shiftIso('2026-11-09', Math.floor(rand() * 9)) : addWorkingDays(cal, nextWorkingDay(cal, '2026-11-09'), Math.floor(rand() * 4))
+        rows.push(row(id, days, typed ? start : null))
         // Earlier rows only, so the network is acyclic.
         for (let j = 0; j < i; j++) {
           if (rand() < 0.3) {
@@ -173,7 +192,9 @@ describe('analyzeCriticalPath', () => {
       }
       // Rows with neither a manual start nor a predecessor cannot be scheduled: give them one.
       const driven = new Set(deps.map((d) => d.successorId))
-      for (const r of rows) if (!driven.has(r.id) && !r.manualStart) r.manualStart = nextWorkingDay(cal, '2026-11-09')
+      for (const r of rows) {
+        if (!driven.has(r.id) && !r.manualStart) r.manualStart = keep ? shiftIso('2026-11-09', Math.floor(rand() * 9)) : nextWorkingDay(cal, '2026-11-09')
+      }
       return { rows, deps }
     }
 
@@ -197,6 +218,10 @@ describe('analyzeCriticalPath', () => {
 
     it('delaying a row by its total float keeps the finish; one day more moves it', () => {
       let checked = 0
+      let sf = 0
+      let milestonesAfterFs = 0
+      let nonWorkingStarts = 0
+      let flatSteps = 0
       for (let seed = 1; seed <= 250; seed++) {
         const { rows, deps } = network(seed)
         const res = schedule(rows, deps, cal)
@@ -204,6 +229,9 @@ describe('analyzeCriticalPath', () => {
         const cp = analyzeCriticalPath(rows, deps, cal, res)
         const end = projectEndOf(rows, deps)
         expect(cp.projectEnd).toBe(end)
+        sf += deps.filter((d) => d.type === 'SF').length
+        milestonesAfterFs += deps.filter((d) => d.type === 'FS' && rows.find((r) => r.id === d.successorId)!.durationMinutes === 0).length
+        nonWorkingStarts += rows.filter((r) => r.manualStart && !isWorkingDay(cal, r.manualStart)).length
         for (const r of rows) {
           const info = cp.byRow[r.id]
           expect(info.totalFloat, `seed ${seed} ${r.id}`).toBeGreaterThanOrEqual(0)
@@ -212,12 +240,26 @@ describe('analyzeCriticalPath', () => {
           const f = info.totalFloat
           const within = delayed(rows, deps, r.id, f)
           expect(projectEndOf(within.rows, within.deps), `seed ${seed} ${r.id} +${f}`).toBe(end)
+          // An FF link from a predecessor that ends on a non-working day (only possible with a kept
+          // non-working start, or an elapsed row) treats lag 0 and lag +1 alike: both finish on the
+          // next working day (pinned in schedule.test.ts). Lengthening that lag by one day therefore
+          // moves nothing, so "one day more" cannot be measured through the lag for such a row.
+          const lagHasFlatStep = deps.some((d) => d.successorId === r.id && d.type === 'FF' && !isWorkingDay(cal, res.byRow[d.predecessorId].end))
+          if (lagHasFlatStep) {
+            flatSteps++
+            continue
+          }
           const beyond = delayed(rows, deps, r.id, f + 1)
           expect(projectEndOf(beyond.rows, beyond.deps) > end, `seed ${seed} ${r.id} +${f + 1}`).toBe(true)
           checked++
         }
       }
       expect(checked).toBeGreaterThan(600)
+      expect(flatSteps).toBeLessThan(checked / 10) // a rare, documented exception
+      // The generator really exercises the observed SF rule and the FS milestone rule, and (under 'keep') non-working starts.
+      expect(sf).toBeGreaterThan(50)
+      expect(milestonesAfterFs).toBeGreaterThan(10)
+      if (keep) expect(nonWorkingStarts).toBeGreaterThan(50)
     })
   })
 })
