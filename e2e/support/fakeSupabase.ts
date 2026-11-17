@@ -16,6 +16,9 @@
  *   it. Members are added only through `rpc('share_sheet')`.
  * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`;
  *   they run as the caller, so they act on any sheet the caller may write (owner or editor).
+ * - the resource-management tables of 0004_resource_management.sql (checks, same-owner
+ *   references, cascades and the projects policy). They are private to their owner: sharing a
+ *   sheet does not share them, and a project may only link a sheet the caller owns.
  *
  * This mimics RLS ownership so the UI flows behave as they would against Supabase. It is NOT a
  * security test: the real row-level security policies are covered by the PGlite tests in
@@ -28,7 +31,16 @@
 
 export const FAKE_STORAGE_KEY = 'fakeSupabase:v1'
 
-export type TableName = 'sheets' | 'columns' | 'rows' | 'dependencies' | 'sheet_members'
+export type TableName =
+  | 'sheets'
+  | 'columns'
+  | 'rows'
+  | 'dependencies'
+  | 'sheet_members'
+  | 'rm_people'
+  | 'rm_projects'
+  | 'rm_assignments'
+  | 'rm_views'
 export type DbRecord = Record<string, unknown>
 
 export interface FakeUser {
@@ -66,7 +78,17 @@ export interface FakeResult<T = unknown> {
   error: FakeError | null
 }
 
-const TABLES: readonly TableName[] = ['sheets', 'columns', 'rows', 'dependencies', 'sheet_members']
+const TABLES: readonly TableName[] = [
+  'sheets',
+  'columns',
+  'rows',
+  'dependencies',
+  'sheet_members',
+  'rm_people',
+  'rm_projects',
+  'rm_assignments',
+  'rm_views',
+]
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
 export const MAX_ROWS = 1000
@@ -132,6 +154,65 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     role: { notNull: true },
     created_at: { default: ({ now }) => now(), notNull: true },
   },
+  // 0004_resource_management.sql
+  rm_people: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    first_name: { notNull: true },
+    last_name: { default: () => '', notNull: true },
+    email: { default: () => null },
+    role: { default: () => null },
+    discipline: { default: () => null },
+    location: { default: () => null },
+    tags: { default: () => [], notNull: true },
+    capacity_hours_per_day: { default: () => 8, notNull: true },
+    bill_rate: { default: () => 0, notNull: true },
+    office_status: { default: () => null },
+    member_type: { default: () => 'employee', notNull: true },
+    is_approver: { default: () => false, notNull: true },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  rm_projects: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    name: { notNull: true },
+    client: { default: () => null },
+    project_type: { default: () => 'confirmed', notNull: true },
+    state: { default: () => 'active', notNull: true },
+    starts_at: { notNull: true },
+    ends_at: { notNull: true },
+    project_owner_id: { default: () => null },
+    budget_type: { default: () => 'none', notNull: true },
+    budget_amount: { default: () => null },
+    budget_days: { default: () => null },
+    tags: { default: () => [], notNull: true },
+    sheet_id: { default: () => null },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  rm_assignments: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    project_id: { notNull: true },
+    person_id: { notNull: true },
+    starts_at: { notNull: true },
+    ends_at: { notNull: true },
+    allocation_percent: { default: () => 100, notNull: true },
+    status: { default: () => 'confirmed', notNull: true },
+    notes: { default: () => null },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  rm_views: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    page: { notNull: true },
+    name: { notNull: true },
+    state: { default: () => ({}), notNull: true },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
 }
 
 const COLUMN_TYPES = ['TEXT_NUMBER', 'DATE', 'CHECKBOX', 'PICKLIST', 'MULTI_PICKLIST', 'CONTACT_LIST', 'DURATION', 'PREDECESSOR']
@@ -139,7 +220,22 @@ const COLUMN_ROLES = ['start', 'end', 'duration', 'predecessor', 'percentComplet
 const DEP_TYPES = ['FS', 'SS', 'FF', 'SF']
 
 export function emptyState(): FakeState {
-  return { users: [], sessionUserId: null, tables: { sheets: [], columns: [], rows: [], dependencies: [], sheet_members: [] }, clock: 0 }
+  return {
+    users: [],
+    sessionUserId: null,
+    tables: {
+      sheets: [],
+      columns: [],
+      rows: [],
+      dependencies: [],
+      sheet_members: [],
+      rm_people: [],
+      rm_projects: [],
+      rm_assignments: [],
+      rm_views: [],
+    },
+    clock: 0,
+  }
 }
 
 /** Adds a user to a state object (for seeding). Returns the new user. */
@@ -538,6 +634,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       const may = (r: DbRecord): boolean => {
         if (this.table === 'sheets') return sheetRole(state, uid, r.id) !== null
         if (this.table === 'sheet_members') return r.user_id === uid || sheetRole(state, uid, r.sheet_id) === 'owner'
+        if (this.table.startsWith('rm_')) return r.owner_id === uid
         return sheetRole(state, uid, r.sheet_id) !== null
       }
       return state.tables[this.table].filter((r) => may(r) && this.filters.every((f) => f(r)))
@@ -547,6 +644,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     private canWrite(state: FakeState, uid: string, r: DbRecord): boolean {
       if (this.table === 'sheets') return r.owner_id === uid
       if (this.table === 'sheet_members') return r.user_id === uid || sheetRole(state, uid, r.sheet_id) === 'owner'
+      if (this.table.startsWith('rm_')) return r.owner_id === uid
       const role = sheetRole(state, uid, r.sheet_id)
       return role === 'owner' || role === 'editor'
     }
@@ -584,14 +682,19 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         }
       }
       if (this.table === 'sheet_members') return rlsError(this.table) // only share_sheet() adds members
+      if (this.table.startsWith('rm_')) {
+        // 0004: owner-only, like the sheets row itself.
+        if (row.owner_id !== uid || row.workspace_id !== uid) return rlsError(this.table)
+        return checkRmRow(state, uid, this.table, row)
+      }
       if (this.table === 'sheets') {
-        if (row.owner_id !== uid) return rlsError(this.table)
+        if (row.owner_id !== uid || row.workspace_id !== uid) return rlsError(this.table)
       } else {
         const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
         if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
         const role = sheetRole(state, uid, row.sheet_id)
         if (role !== 'owner' && role !== 'editor') return rlsError(this.table)
-        if (row.owner_id !== sheet.owner_id) return rlsError(this.table)
+        if (row.owner_id !== sheet.owner_id || row.workspace_id !== sheet.owner_id) return rlsError(this.table)
       }
       // 0002_hardening.sql: parents and dependency endpoints must be rows of the SAME sheet.
       const rowExists = (id: unknown) =>
@@ -809,6 +912,8 @@ function compare(a: unknown, b: unknown): number {
 function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>): void {
   if (ids.size === 0) return
   if (table === 'sheets') {
+    // rm_projects.sheet_id: on delete set null
+    for (const p of state.tables.rm_projects) if (ids.has(p.sheet_id)) p.sheet_id = null
     state.tables.sheets = state.tables.sheets.filter((r) => !ids.has(r.id))
     state.tables.columns = state.tables.columns.filter((r) => !ids.has(r.sheet_id))
     state.tables.dependencies = state.tables.dependencies.filter((r) => !ids.has(r.sheet_id))
@@ -835,5 +940,62 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
     )
     return
   }
+  if (table === 'rm_people') {
+    for (const p of state.tables.rm_projects) if (ids.has(p.project_owner_id)) p.project_owner_id = null
+    state.tables.rm_assignments = state.tables.rm_assignments.filter((a) => !ids.has(a.person_id))
+  }
+  if (table === 'rm_projects') {
+    state.tables.rm_assignments = state.tables.rm_assignments.filter((a) => !ids.has(a.project_id))
+  }
   state.tables[table] = state.tables[table].filter((r) => !ids.has(r.id))
+}
+
+const oneOf = (v: unknown, allowed: readonly unknown[]) => allowed.includes(v)
+
+/** 0004_resource_management.sql: checks, same-owner references and the projects policy. */
+function checkRmRow(state: FakeState, uid: string, table: TableName, row: DbRecord): FakeError | null {
+  const check = (name: string) => pgError(`new row violates check constraint "${table}_${name}_check"`, '23514')
+  const fk = () => pgError(`insert or update on table "${table}" violates foreign key constraint`, '23503')
+  const owned = (t: TableName, id: unknown) => state.tables[t].some((r) => r.id === id && r.owner_id === uid)
+  const exists = (t: TableName, id: unknown) => state.tables[t].some((r) => r.id === id)
+  if (!Array.isArray(row.tags ?? [])) return check('tags')
+  switch (table) {
+    case 'rm_people': {
+      const cap = Number(row.capacity_hours_per_day)
+      if (!(cap > 0 && cap <= 24)) return check('capacity_hours_per_day')
+      if (!(Number(row.bill_rate) >= 0)) return check('bill_rate')
+      if (row.office_status != null && !oneOf(row.office_status, ['in_office', 'remote', 'out_of_office'])) return check('office_status')
+      if (!oneOf(row.member_type, ['employee', 'contractor', 'placeholder'])) return check('member_type')
+      return null
+    }
+    case 'rm_projects': {
+      if (!oneOf(row.project_type, ['confirmed', 'tentative', 'internal'])) return check('project_type')
+      if (!oneOf(row.state, ['active', 'archived'])) return check('state')
+      if (!oneOf(row.budget_type, ['none', 'amount', 'days'])) return check('budget_type')
+      if (String(row.ends_at) < String(row.starts_at)) return check('dates')
+      if (row.project_owner_id != null) {
+        if (!exists('rm_people', row.project_owner_id)) return fk()
+        if (!owned('rm_people', row.project_owner_id)) return rlsError(table)
+      }
+      if (row.sheet_id != null) {
+        if (!exists('sheets', row.sheet_id)) return fk()
+        if (!owned('sheets', row.sheet_id)) return rlsError(table)
+      }
+      return null
+    }
+    case 'rm_assignments': {
+      if (!owned('rm_projects', row.project_id) || !owned('rm_people', row.person_id)) return fk()
+      if (String(row.ends_at) < String(row.starts_at)) return check('dates')
+      const pct = Number(row.allocation_percent)
+      if (!(pct > 0 && pct <= 200)) return check('allocation_percent')
+      if (!oneOf(row.status, ['confirmed', 'tentative'])) return check('status')
+      return null
+    }
+    case 'rm_views':
+      if (!oneOf(row.page, ['people', 'schedule', 'projects'])) return check('page')
+      if (String(row.name ?? '').trim() === '') return check('name')
+      return null
+    default:
+      return null
+  }
 }

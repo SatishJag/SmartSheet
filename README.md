@@ -32,6 +32,25 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
   working days (needs dependencies on)
 - **Kanban**: lanes from any picklist column (Status by default), drag cards between lanes
 - **Templates**: Project schedule, Punch list, Simple list, with trade and status presets
+- **App templates** ("Create app from template" on the sheet list): Construction Management, Data
+  Center Build, Real Estate Development and Tenant Fit-Out. Each creates a phased, scheduled
+  project-plan sheet (durations, dependencies, disciplines, roles), supporting sheets (RFI log,
+  punch list, risk register, long-lead equipment, commissioning tracker, due diligence, leasing
+  tracker) and, optionally, a linked Resource Management project with a placeholder person per
+  role booked phase by phase. Templates live in `src/apps/catalog.ts`
+- **Resource Management** (header switch next to Sheets):
+  - *People*: team directory (role, discipline, location, tags, hours per day, bill rate, office
+    status), filters, first/last-name sort, saved views
+  - *Schedule*: people (or projects) against a day/week/month timeline with availability strips,
+    assignment bars (click the lane to assign; drag to move, drag an edge to resize; undo/redo),
+    allocation heatmap, people and project filters, saved views
+  - *Projects*: portfolio list or cards with type, client, dates, owner, budget status and the
+    linked sheet; *Add work from a sheet* creates a project from a sheet's dates and turns
+    contacts that match people into assignments
+  - *Reports*: who is available this week and next, active projects tracked in currency or days
+    (incurred vs future scheduled vs budget, with the forecast), and live saved reports with CSV
+    export
+  - *My Work*: the signed-in user's assignments (matched by email)
 - **Saving**: optimistic edits, background save with retry, unsaved-changes guard
 
 ## Getting started
@@ -47,7 +66,8 @@ cp .env.example .env.local
 ```
 
 Fill `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env.local`, then apply the
-migrations in `supabase/migrations/` in order (`0005_sharing.sql` adds sharing) (Supabase SQL editor, or `supabase db push`
+migrations in `supabase/migrations/` in order (`0004_resource_management.sql` adds the
+Resource Management tables, `0005_sharing.sql` adds sharing) (Supabase SQL editor, or `supabase db push`
 with the Supabase CLI).
 
 ```bash

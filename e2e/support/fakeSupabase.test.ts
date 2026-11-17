@@ -353,7 +353,8 @@ describe('fakeSupabase sharing', () => {
   it('lets a viewer read only, and an editor edit rows but not rename, delete or share', async () => {
     await share('viewer')
     await as(B)
-    const row = { sheet_id: ids.sheet, position: 'a1', owner_id: ids.a }
+    // Rows of a shared sheet carry the SHEET owner's owner_id and workspace_id (as the app writes them).
+    const row = { sheet_id: ids.sheet, position: 'a1', owner_id: ids.a, workspace_id: ids.a }
     expect((await client.from('rows').insert(row)).error?.message).toMatch(/row-level security/)
     expect((await client.from('rows').update({ cells: { x: 1 } }).eq('sheet_id', ids.sheet).select('id')).data).toEqual([])
     await as(A)
@@ -361,6 +362,7 @@ describe('fakeSupabase sharing', () => {
     await as(B)
     expect((await client.from('rows').insert(row)).error).toBeNull()
     expect((await client.from('rows').insert({ ...row, position: 'a2', owner_id: ids.b })).error?.message).toMatch(/row-level security/)
+    expect((await client.from('rows').insert({ ...row, position: 'a3', workspace_id: ids.b })).error?.message).toMatch(/row-level security/)
     expect((await client.from('sheets').update({ name: 'X' }).eq('id', ids.sheet).select('id')).data).toEqual([])
     expect((await client.from('sheets').delete().eq('id', ids.sheet).select('id')).data).toEqual([])
     expect((await share('viewer', A.email)).error?.message).toMatch(/Only the sheet owner/)
