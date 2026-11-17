@@ -94,6 +94,8 @@ async function call(path: string, token: string, init: RequestInit, opts: CallOp
 function isOptions(v: unknown): v is PlannerOptions {
   return (
     isObject(v) &&
+    (v.projectTypes === undefined ||
+      (Array.isArray(v.projectTypes) && v.projectTypes.every((t) => isObject(t) && typeof t.id === 'string' && typeof t.name === 'string'))) &&
     Array.isArray(v.scheduleTypes) &&
     v.scheduleTypes.every((t) => isObject(t) && typeof t.id === 'string' && typeof t.name === 'string') &&
     isObject(v.equipmentTypes) &&

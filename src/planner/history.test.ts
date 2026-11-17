@@ -41,8 +41,12 @@ describe('createSupabaseHistorySource', () => {
     it('lists schedule types and, per type, the equipment types that have history', async () => {
       const { client, calls } = fakeClient({
         schedule_types: ok([
-          { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'From spec to site' },
-          { id: 'civil', name: 'Civil works', description: null },
+          { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'From spec to site', project_types: ['data-centre', 'properties'] },
+          { id: 'civil', name: 'Civil works', description: null, project_types: [] },
+        ]),
+        project_types: ok([
+          { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+          { id: 'properties', name: 'Properties', description: null },
         ]),
         planner_equipment_types: ok([
           { schedule_type: 'lle-procurement', equipment_type: 'Chiller' },
@@ -52,19 +56,25 @@ describe('createSupabaseHistorySource', () => {
       })
       const options = await createSupabaseHistorySource(client).options()
       expect(options).toEqual({
+        projectTypes: [
+          { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+          { id: 'properties', name: 'Properties', description: '' },
+        ],
         scheduleTypes: [
-          { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'From spec to site' },
+          { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'From spec to site', projectTypes: ['data-centre', 'properties'] },
+          // No project types listed: the schedule type is offered under every project type.
           { id: 'civil', name: 'Civil works', description: '' },
         ],
         // Every schedule type gets an entry, even without history; unknown types are ignored.
         equipmentTypes: { 'lle-procurement': ['Chiller', 'Power transformer'], civil: [] },
       })
-      expect(calls.filter((c) => c.method === 'select').map((c) => c.target).sort()).toEqual(['planner_equipment_types', 'schedule_types'])
+      expect(calls.filter((c) => c.method === 'select').map((c) => c.target).sort()).toEqual(['planner_equipment_types', 'project_types', 'schedule_types'])
     })
 
     it('throws with the Supabase message when a query fails', async () => {
       const { client } = fakeClient({
         schedule_types: ok([]),
+        project_types: ok([]),
         planner_equipment_types: { data: null, error: { message: 'permission denied for view planner_equipment_types' } },
       })
       await expect(createSupabaseHistorySource(client).options()).rejects.toThrow('permission denied for view planner_equipment_types')

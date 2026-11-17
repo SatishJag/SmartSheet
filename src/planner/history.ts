@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { DepType } from '../engine/types'
-import type { ActivityStats, CatalogActivity, HistorySource, HistorySummary, PlannerOptions, ScheduleType } from './types'
+import type { ActivityStats, CatalogActivity, HistorySource, HistorySummary, PlannerOptions, ProjectType, ScheduleType } from './types'
 
 /**
  * The planner's history read from Supabase (supabase/migrations/0004_planner_history.sql).
@@ -11,20 +11,29 @@ import type { ActivityStats, CatalogActivity, HistorySource, HistorySummary, Pla
 export function createSupabaseHistorySource(client: SupabaseClient): HistorySource {
   return {
     async options(): Promise<PlannerOptions> {
-      const [types, equipment] = await Promise.all([
-        client.from('schedule_types').select('id, name, description').order('name', { ascending: true }),
+      const [types, equipment, projects] = await Promise.all([
+        client.from('schedule_types').select('id, name, description, project_types').order('name', { ascending: true }),
         client
           .from('planner_equipment_types')
           .select('schedule_type, equipment_type')
           .order('schedule_type', { ascending: true })
           .order('equipment_type', { ascending: true }),
+        client.from('project_types').select('id, name, description').order('position', { ascending: true }),
       ])
       const scheduleTypes = rows<ScheduleTypeRow>(types).map(
-        (r): ScheduleType => ({ id: r.id, name: r.name, description: r.description ?? '' }),
+        (r): ScheduleType => ({
+          id: r.id,
+          name: r.name,
+          description: r.description ?? '',
+          ...(r.project_types?.length ? { projectTypes: r.project_types } : {}),
+        }),
+      )
+      const projectTypes = rows<ProjectTypeRow>(projects).map(
+        (r): ProjectType => ({ id: r.id, name: r.name, description: r.description ?? '' }),
       )
       const equipmentTypes: Record<string, string[]> = Object.fromEntries(scheduleTypes.map((t) => [t.id, []]))
       for (const r of rows<EquipmentRow>(equipment)) equipmentTypes[r.schedule_type]?.push(r.equipment_type)
-      return { scheduleTypes, equipmentTypes }
+      return { ...(projectTypes.length ? { projectTypes } : {}), scheduleTypes, equipmentTypes }
     },
 
     async catalog(scheduleType: string): Promise<CatalogActivity[]> {
@@ -65,6 +74,13 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
 }
 
 interface ScheduleTypeRow {
+  id: string
+  name: string
+  description: string | null
+  project_types?: string[] | null
+}
+
+interface ProjectTypeRow {
   id: string
   name: string
   description: string | null

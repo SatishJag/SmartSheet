@@ -10,6 +10,15 @@ export interface ScheduleType {
   id: string
   name: string
   description: string
+  /** Ids of the project types this schedule type applies to. Absent or empty: offered under every project type. */
+  projectTypes?: string[]
+}
+
+/** A kind of project the user plans first (Data centre, Properties); it narrows the schedule types on offer. */
+export interface ProjectType {
+  id: string
+  name: string
+  description: string
 }
 
 /** One step every schedule of a type may contain, with its usual place in the sequence. */
@@ -139,6 +148,8 @@ export type BatchDraftResponse = { ok: true; results: BatchItemResult[] } | { ok
 
 /** GET /api/planner/options: what the wizard offers. */
 export interface PlannerOptions {
+  /** Optional: when present the wizard asks for the project type first. */
+  projectTypes?: ProjectType[]
   scheduleTypes: ScheduleType[]
   /** Equipment types with history, per schedule type id. */
   equipmentTypes: Record<string, string[]>

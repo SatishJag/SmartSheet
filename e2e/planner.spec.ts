@@ -6,7 +6,14 @@ import { catalogDraft } from '../src/test/plannerFixtures'
 import { ganttBar, gridCell, openTab, openApp } from './support/app'
 
 const OPTIONS: PlannerOptions = {
-  scheduleTypes: [{ id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'Procurement of long-lead equipment' }],
+  projectTypes: [
+    { id: 'data-centre', name: 'Data centre', description: 'Data halls' },
+    { id: 'properties', name: 'Properties', description: 'Buildings' },
+  ],
+  scheduleTypes: [
+    { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'Procurement of long-lead equipment', projectTypes: ['data-centre', 'properties'] },
+    { id: 'site-fitout', name: 'Fit-out', description: 'Only under properties', projectTypes: ['properties'] },
+  ],
   equipmentTypes: { 'lle-procurement': ['Power transformer', 'Switchgear'] },
 }
 
@@ -31,6 +38,13 @@ test('Plan with AI: request, preview, approve into an editable schedule', async 
   await openApp(page)
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  // The project type comes first and narrows the schedule types on offer.
+  await expect(dialog.getByLabel('Project type')).toHaveValue('data-centre')
+  await expect(dialog.getByLabel('Schedule type')).toHaveValue('lle-procurement')
+  await expect(dialog.getByLabel('Schedule type').locator('option')).toHaveText(['Long-lead equipment procurement'])
+  await dialog.getByLabel('Project type').selectOption('properties')
+  await expect(dialog.getByLabel('Schedule type').locator('option')).toHaveText(['Long-lead equipment procurement', 'Fit-out'])
+  await dialog.getByLabel('Project type').selectOption('data-centre')
   await expect(dialog.getByLabel('Schedule type')).toHaveValue('lle-procurement')
   expect(authorization).toMatch(/^Bearer fake-access-token-/)
 
@@ -45,6 +59,8 @@ test('Plan with AI: request, preview, approve into an editable schedule', async 
   const table = dialog.getByRole('table', { name: /Activities \(14\)/ })
   await expect(table).toBeVisible()
   expect(requests[0]).toMatchObject({ equipmentType: 'Power transformer', equipmentName: '400 MVA transformer', requiredDate: REQUIRED })
+  // The AI is told the project type along with the user's notes.
+  expect(requests[0].notes).toBe('Vendor in Korea; be conservative\nProject type: Data centre.')
   await expect(dialog.getByText('Drafted by AI from 9 historical projects')).toBeVisible()
   await expect(dialog.getByRole('alert')).toContainText(
     `This plan should have started ${expected.feasibility.lateByWorkingDays} working days ago; the on-site date is at risk`,
@@ -141,7 +157,7 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   expect(batches).toEqual([
     {
       scheduleType: 'lle-procurement',
-      notes: 'Vendors in Korea',
+      notes: 'Vendors in Korea\nProject type: Data centre.',
       items: [
         { equipmentType: 'Power transformer', equipmentName: '400 MVA transformer', requiredDate: '2028-03-31' },
         { equipmentType: 'Switchgear', equipmentName: '132 kV GIS', requiredDate: REQUIRED },
@@ -196,4 +212,13 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   await expect(ganttBar(page, 'Switchgear — 132 kV GIS')).toHaveAttribute('data-kind', 'summary')
   await expect(ganttBar(page, 'Technical specification')).toHaveCount(2)
   await expect(ganttBar(page, 'Customs clearance')).toHaveCount(1) // only the imported transformer has it
+})
+
+test('Plan with AI can be started from inside a sheet', async ({ page }) => {
+  await page.route('**/api/planner/options', (route) => route.fulfill({ json: OPTIONS }))
+  await openApp(page)
+  await page.getByRole('button', { name: 'New sheet' }).click()
+  await expect(page.getByRole('button', { name: 'Schedule settings' })).toBeVisible()
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  await expect(page.getByRole('dialog', { name: 'Plan with AI' }).getByLabel('Project type')).toBeVisible()
 })

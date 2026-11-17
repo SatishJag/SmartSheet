@@ -59,6 +59,12 @@ interface Failure {
   retry: (() => void) | null
 }
 
+/** The schedule types offered under a project type: those that list it, or list none. */
+function schedulesFor(options: PlannerOptions, projectType: string) {
+  if (!projectType) return options.scheduleTypes
+  return options.scheduleTypes.filter((t) => !t.projectTypes?.length || t.projectTypes.includes(projectType))
+}
+
 const isAbort = (err: unknown) => err instanceof DOMException && err.name === 'AbortError'
 const describe = (err: unknown, fallback: string) =>
   err instanceof PlannerApiError || err instanceof Error ? err.message : fallback
@@ -83,6 +89,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     type: useId(),
     sharedDate: useId(),
     notes: useId(),
+    project: useId(),
     instruction: useId(),
     error: useId(),
     item: useId(),
@@ -101,6 +108,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const [failure, setFailure] = useState<Failure | null>(null)
   const [submitted, setSubmitted] = useState(false)
 
+  const [projectType, setProjectType] = useState('')
   const [scheduleType, setScheduleType] = useState('')
   const [items, setItems] = useState<ItemForm[]>(() => [newItem('')])
   const [sameDate, setSameDate] = useState(true)
@@ -144,7 +152,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
       const loaded = await getOptions(await getAccessToken(client), { signal })
       if (!mounted.current || signal.aborted) return
       setOptions(loaded)
-      const first = loaded.scheduleTypes[0]?.id ?? ''
+      const firstProject = loaded.projectTypes?.[0]?.id ?? ''
+      setProjectType((cur) => cur || firstProject)
+      const first = schedulesFor(loaded, firstProject)[0]?.id ?? ''
       setScheduleType((cur) => cur || first)
     } catch (err) {
       if (isAbort(err) || !mounted.current) return
@@ -156,6 +166,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     void loadOptions()
   }, [loadOptions])
 
+  const visibleSchedules = options ? schedulesFor(options, projectType) : []
+  const projectTypeName = options?.projectTypes?.find((t) => t.id === projectType)?.name
   const equipmentTypes = options?.equipmentTypes[scheduleType] ?? []
   const projectCounts = options?.projectCounts?.[scheduleType] ?? {}
   const defaultChoice = equipmentTypes[0] ?? OTHER
@@ -337,7 +349,14 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     e.preventDefault()
     setSubmitted(true)
     if (problem) return
-    void generate(jobFromForm(form), 'request')
+    // The AI is told what kind of project this is, so a data centre and a building are not planned alike.
+    const context = projectTypeName ? `Project type: ${projectTypeName}.` : ''
+    void generate(jobFromForm(context ? { ...form, notes: appendNote(notes, context) ?? context } : form), 'request')
+  }
+
+  function chooseProjectType(id: string) {
+    setProjectType(id)
+    if (options && !schedulesFor(options, id).some((t) => t.id === scheduleType)) setScheduleType(schedulesFor(options, id)[0]?.id ?? '')
   }
 
   const updateItem = (key: string, patch: Partial<ItemForm>) => setItems((all) => all.map((i) => (i.key === key ? { ...i, ...patch } : i)))
@@ -464,12 +483,27 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               {options && (
                 <>
                   <section className="planner-card card" aria-label="Schedule and equipment">
+                    {options.projectTypes && options.projectTypes.length > 0 && (
+                      <div className="planner-field planner-project-type">
+                        <label htmlFor={ids.project} className="planner-label">
+                          Project type
+                        </label>
+                        <select id={ids.project} value={projectType} onChange={(e) => chooseProjectType(e.target.value)}>
+                          {options.projectTypes.map((t) => (
+                            <option key={t.id} value={t.id} title={t.description}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                        <small>{options.projectTypes.find((t) => t.id === projectType)?.description}</small>
+                      </div>
+                    )}
                     <div className="planner-field planner-schedule-type">
                       <label htmlFor={ids.type} className="planner-label">
                         Schedule type
                       </label>
                       <select id={ids.type} value={scheduleType} onChange={(e) => setScheduleType(e.target.value)}>
-                        {options.scheduleTypes.map((t) => (
+                        {visibleSchedules.map((t) => (
                           <option key={t.id} value={t.id} title={t.description}>
                             {t.name}
                           </option>

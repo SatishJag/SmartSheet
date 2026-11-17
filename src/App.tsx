@@ -4,6 +4,7 @@ import { AuthGate } from './auth/AuthGate'
 import { SheetList } from './auth/SheetList'
 import { createSupabaseClient, getSupabaseConfig } from './lib/supabase'
 import { SheetView } from './views/SheetView'
+import { PlannerWizard } from './planner/PlannerWizard'
 import { Icon } from './ui/Icon'
 import { ShellProvider } from './shell/ShellContext'
 import { SECTIONS } from './shell/sections'
@@ -46,6 +47,7 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
   // A link from an e-mail or a notification can open a sheet directly: /?sheet=<id>.
   const [openSheetId, setOpenSheetId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('sheet'))
   const [sectionId, setSectionId] = useState('sheets')
+  const [planning, setPlanning] = useState(false)
   // Choosing the section you are already in starts it over (closes an open report or dashboard).
   const [restart, setRestart] = useState(0)
   const section = SECTIONS.find((s) => s.id === sectionId) ?? SECTIONS[0]
@@ -99,9 +101,20 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
         ) : openSheetId === null ? (
           <SheetList client={client} userId={userId} onOpen={setOpenSheetId} />
         ) : (
-          <SheetView client={client} sheetId={openSheetId} onBack={() => setOpenSheetId(null)} />
+          <SheetView client={client} sheetId={openSheetId} onBack={() => setOpenSheetId(null)} onPlanWithAI={() => setPlanning(true)} />
         )}
       </main>
+      {planning && (
+        <PlannerWizard
+          client={client}
+          userId={userId}
+          onClose={() => setPlanning(false)}
+          onCreated={(id) => {
+            setPlanning(false)
+            setOpenSheetId(id)
+          }}
+        />
+      )}
     </div>
     </ShellProvider>
   )

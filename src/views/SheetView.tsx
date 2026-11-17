@@ -22,6 +22,8 @@ export interface SheetViewProps {
   client: SupabaseClient
   sheetId: string
   onBack: () => void
+  /** Opens the "Plan with AI" wizard (it creates a new sheet); the button is hidden when absent. */
+  onPlanWithAI?: () => void
   /** Told whenever the sheet's save status changes (the app guards Sign out with it). */
   onSaveStatusChange?: (status: SaveStatus) => void
   /** A ready-made store (tests); by default one is created over Supabase persistence. */
@@ -38,7 +40,7 @@ export function SheetView(props: SheetViewProps) {
   return <SheetViewForSheet key={props.sheetId} {...props} />
 }
 
-function SheetViewForSheet({ client, sheetId, onBack, onSaveStatusChange, store: given }: SheetViewProps) {
+function SheetViewForSheet({ client, sheetId, onBack, onPlanWithAI, onSaveStatusChange, store: given }: SheetViewProps) {
   // Created once per mounted sheet; useState's initializer is safe under StrictMode.
   const [store] = useState(() => given ?? createSheetStore(supabasePersistence(client)))
   const loadStarted = useRef(false)
@@ -52,7 +54,7 @@ function SheetViewForSheet({ client, sheetId, onBack, onSaveStatusChange, store:
   return (
     <SheetStoreProvider store={store}>
       <AutomationRuntime client={client} />
-      <SheetContent client={client} sheetId={sheetId} onBack={onBack} onSaveStatusChange={onSaveStatusChange} />
+      <SheetContent client={client} sheetId={sheetId} onBack={onBack} onPlanWithAI={onPlanWithAI} onSaveStatusChange={onSaveStatusChange} />
     </SheetStoreProvider>
   )
 }
@@ -209,11 +211,13 @@ function SheetContent({
   client,
   sheetId,
   onBack,
+  onPlanWithAI,
   onSaveStatusChange,
 }: {
   client: SupabaseClient
   sheetId: string
   onBack: () => void
+  onPlanWithAI?: () => void
   onSaveStatusChange?: (status: SaveStatus) => void
 }) {
   const data = useSheetStore((s) => s.data)
@@ -273,6 +277,12 @@ function SheetContent({
               tools={
                 <>
                   <ScheduleSettingsButton />
+                  {onPlanWithAI && (
+                    <button type="button" className="btn" onClick={onPlanWithAI} title="Draft a new schedule from history, worked back from your required dates">
+                      <Icon name="sparkles" size={16} />
+                      Plan with AI
+                    </button>
+                  )}
                   <ResourcesButton client={client} sheetId={sheetId} />
                   <label
                     className="switch"
