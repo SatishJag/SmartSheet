@@ -1,0 +1,169 @@
+.create-app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 8px 16px 40px;
+}
+.create-app-back {
+  border: none;
+  background: none;
+  padding: 4px 0;
+}
+.create-app h1 {
+  font-size: 2em;
+  margin: 16px 0 24px;
+}
+.create-app h2 {
+  margin: 24px 0 4px;
+}
+.create-app-sub {
+  margin: 0 0 12px;
+  color: #6b7280;
+}
+.create-app-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+.create-app-card {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0 0 12px;
+  border: 1px solid #d9e2ec;
+  border-radius: 6px;
+  overflow: hidden;
+  text-align: left;
+  background: #fff;
+}
+.create-app-card:hover {
+  border-color: #2f54c8;
+  box-shadow: 0 4px 14px rgba(47, 84, 200, 0.15);
+}
+.create-app-card strong,
+.create-app-card small {
+  padding: 0 12px;
+}
+.create-app-card small {
+  color: #6b7280;
+}
+.create-app-card.is-blank {
+  min-height: 170px;
+  justify-content: center;
+  align-items: center;
+  background: #b8c7e3;
+  gap: 10px;
+}
+.create-app-plus {
+  font-size: 56px;
+  line-height: 1;
+  color: #fff;
+}
+.app-illustration {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.template-dialog {
+  width: 100%;
+  max-width: 920px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 24px 32px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.template-dialog-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.template-dialog-head h2 {
+  margin: 0;
+  font-size: 1.5em;
+}
+.template-close {
+  border: none;
+  background: none;
+  font-size: 1.6em;
+  line-height: 1;
+}
+.template-dialog-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+  margin-top: 20px;
+}
+@media (max-width: 720px) {
+  .template-dialog-body {
+    grid-template-columns: 1fr;
+  }
+}
+.template-dialog-body h3 {
+  margin: 0 0 8px;
+  font-size: 1em;
+}
+.template-dialog-body p {
+  margin: 0 0 10px;
+  font-size: 0.92em;
+  line-height: 1.45;
+}
+.template-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.template-form input:not([type='checkbox']) {
+  font: inherit;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+}
+.template-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.template-info {
+  padding: 10px 12px;
+  background: #f1f3f6;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+.template-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.template-create {
+  min-width: 96px;
+  background: #2f54c8;
+  border-color: #2f54c8;
+  color: #fff;
+}
+.template-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #374151;
+}
+.template-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #b8c7e3;
+  border-top-color: #2f54c8;
+  border-radius: 50%;
+  animation: template-spin 0.8s linear infinite;
+}
+@keyframes template-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

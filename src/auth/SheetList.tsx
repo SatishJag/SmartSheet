@@ -16,11 +16,13 @@ interface SheetListProps {
   client: SupabaseClient
   userId: string
   onOpen: (sheetId: string) => void
+  /** Opens the app-template gallery. */
+  onCreateApp?: () => void
 }
 
 const message = (err: unknown, fallback: string) => (err instanceof Error ? err.message : fallback)
 
-export function SheetList({ client, userId, onOpen }: SheetListProps) {
+export function SheetList({ client, userId, onOpen, onCreateApp }: SheetListProps) {
   const [sheets, setSheets] = useState<SheetRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
@@ -115,6 +117,11 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
           <button type="button" onClick={createSheet} disabled={creating}>
             New sheet
           </button>
+          {onCreateApp && (
+            <button type="button" className="sheet-list-create-app" onClick={onCreateApp} disabled={creating}>
+              Create app from template
+            </button>
+          )}
         </div>
       </div>
       {error && <p role="alert">{error}</p>}
