@@ -11,6 +11,14 @@ export interface PlanTask {
   role?: string
   /** Start alongside the previous task (same predecessors) instead of after it. */
   parallel?: boolean
+  /** Names this task so others can list it in `after`. Unique within the plan. */
+  key?: string
+  /**
+   * Explicit finish-to-start predecessors, by `key`, anywhere in the plan (also in later phases).
+   * Overrides the "after the previous task" and `parallel` rules for this task; an empty list
+   * means it has no predecessors and starts on the plan's start date.
+   */
+  after?: string[]
 }
 
 export interface PlanPhase {

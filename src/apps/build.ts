@@ -111,6 +111,10 @@ export function buildApp(template: AppTemplate, opts: AppOptions, existingPeople
   // The next sequential task waits for the whole group; a parallel task shares the group's preds.
   let group: string[] = []
   let groupPreds: string[] = []
+  // Tasks with explicit `after` links: resolved once every task has an id, so a link may point
+  // forward in the plan. They take no part in the sequential / parallel grouping above.
+  const idByKey = new Map<string, string>()
+  const explicit: { id: string; name: string; after: string[] }[] = []
   const phasePos = positions(template.plan.length)
   template.plan.forEach((phase, pi) => {
     const phaseId = crypto.randomUUID()
@@ -118,7 +122,11 @@ export function buildApp(template: AppTemplate, opts: AppOptions, existingPeople
     const taskPos = positions(phase.tasks.length)
     phase.tasks.forEach((t, ti) => {
       const id = crypto.randomUUID()
-      const preds: string[] = t.parallel && group.length > 0 ? groupPreds : group
+      if (t.key !== undefined) {
+        if (idByKey.has(t.key)) throw new Error(`Template "${template.name}" has two tasks with key "${t.key}"`)
+        idByKey.set(t.key, id)
+      }
+      const preds: string[] = t.after ? [] : t.parallel && group.length > 0 ? groupPreds : group
       const cells: Record<string, unknown> = {
         [cTask]: t.name,
         [cDur]: formatDuration({ minutes: t.days * defaultCalendar.hoursPerDay * 60, elapsed: false }),
@@ -126,10 +134,14 @@ export function buildApp(template: AppTemplate, opts: AppOptions, existingPeople
       }
       if (t.discipline) cells[cDisc] = t.discipline
       if (t.role) cells[cRole] = t.role
-      if (preds.length === 0) cells[cStart] = start
+      if ((t.after ? t.after.length : preds.length) === 0) cells[cStart] = start
       rows.push({ id, parentId: phaseId, position: taskPos[ti], cells, version: 0 })
-      for (const p of preds) deps.push({ predecessorId: p, successorId: id, type: 'FS', lagMinutes: 0 })
       taskMeta.set(id, { phase: phase.name, role: t.role })
+      if (t.after) {
+        explicit.push({ id, name: t.name, after: t.after })
+        return
+      }
+      for (const p of preds) deps.push({ predecessorId: p, successorId: id, type: 'FS', lagMinutes: 0 })
       if (t.parallel && group.length > 0) group = [...group, id]
       else {
         group = [id]
@@ -137,6 +149,13 @@ export function buildApp(template: AppTemplate, opts: AppOptions, existingPeople
       }
     })
   })
+  for (const e of explicit) {
+    for (const key of new Set(e.after)) {
+      const predecessorId = idByKey.get(key)
+      if (!predecessorId) throw new Error(`Template "${template.name}": task "${e.name}" comes after unknown task "${key}"`)
+      deps.push({ predecessorId, successorId: e.id, type: 'FS', lagMinutes: 0 })
+    }
+  }
   plan.rows = rows
   plan.dependencies = deps
 

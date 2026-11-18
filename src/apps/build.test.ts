@@ -3,6 +3,7 @@ import { validateCell } from '../model/validate'
 import { blankPerson } from '../rm/types'
 import { buildApp } from './build'
 import { APP_TEMPLATES, DATA_CENTER } from './catalog'
+import type { AppTemplate } from './types'
 
 const opts = { projectName: 'DC1 Ashburn', client: 'Hyperscale Co', startDate: '2026-11-21', ownerId: 'u1', withResources: true }
 
@@ -67,6 +68,47 @@ describe('buildApp', () => {
     expect(cx[0].allocation_percent).toBe(100)
     expect(app.resources!.project).toMatchObject({ name: 'DC1 Ashburn', client: 'Hyperscale Co', budget_type: 'days', starts_at: '2026-11-23' })
     expect(app.resources!.project.budget_days).toBeGreaterThan(0)
+  })
+
+  describe('explicit predecessors', () => {
+    const tpl = (tasks: AppTemplate['plan'][number]['tasks'], more: AppTemplate['plan'] = []): AppTemplate => ({
+      id: 't', name: 'T', tagline: '', about: [], roles: [], disciplines: ['General'], illustration: 'crane', supportSheets: [],
+      plan: [{ name: 'P1', tasks }, ...more],
+    })
+    const run = (t: AppTemplate) => {
+      const app = buildApp(t, { ...opts, startDate: '2026-11-23', withResources: false })
+      const plan = app.sheets[0]
+      const c = (title: string) => plan.columns.find((x) => x.title === title)!.id
+      const by = new Map(plan.rows.map((r) => [r.cells[c('Task')], r]))
+      const preds = (name: string) => plan.dependencies.filter((d) => d.successorId === by.get(name)!.id).map((d) => plan.rows.find((r) => r.id === d.predecessorId)!.cells[c('Task')])
+      return { by, preds, start: (n: string) => by.get(n)!.cells[c('Start')], end: (n: string) => by.get(n)!.cells[c('End')] }
+    }
+
+    it('links a task to several predecessors, in any phase, including ones defined later', () => {
+      const r = run(tpl(
+        [
+          { name: 'A', days: 2, key: 'a', after: [] },
+          { name: 'Join', days: 1, key: 'j', after: ['a', 'later'] },
+        ],
+        [{ name: 'P2', tasks: [{ name: 'Later', days: 5, key: 'later', after: [] }] }],
+      ))
+      expect(r.preds('Join').sort()).toEqual(['A', 'Later'])
+      expect(r.start('A')).toBe('2026-11-23')
+      expect(r.start('Later')).toBe('2026-11-23')
+      expect(r.start('Join')).toBe('2026-11-30') // after the 5-day task, not the 2-day one
+    })
+
+    it('leaves tasks without `after` on the sequential rules', () => {
+      const r = run(tpl([{ name: 'A', days: 1 }, { name: 'B', days: 1 }, { name: 'C', days: 1, parallel: true }, { name: 'D', days: 1 }]))
+      expect(r.preds('B')).toEqual(['A'])
+      expect(r.preds('D').sort()).toEqual(['B', 'C'])
+    })
+
+    it('rejects unknown and duplicate keys and loops', () => {
+      expect(() => run(tpl([{ name: 'A', days: 1, after: ['nope'] }]))).toThrow(/unknown task "nope"/)
+      expect(() => run(tpl([{ name: 'A', days: 1, key: 'x' }, { name: 'B', days: 1, key: 'x' }]))).toThrow(/two tasks with key "x"/)
+      expect(() => run(tpl([{ name: 'A', days: 1, key: 'a', after: ['b'] }, { name: 'B', days: 1, key: 'b', after: ['a'] }]))).toThrow()
+    })
   })
 
   it('skips resource management when asked', () => {
