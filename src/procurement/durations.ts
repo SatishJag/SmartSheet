@@ -1,5 +1,5 @@
 import { stageWindow } from './equipment'
-import type { DurationBasis, ProcActivity } from './types'
+import type { DurationBasis, ProcActivity, ProcurementType } from './types'
 
 /**
  * Past durations (working days) to suggest from. All optional: with none, every duration falls
@@ -34,12 +34,17 @@ export function medianDays(values: readonly number[]): number {
 
 const nonEmpty = (xs: readonly number[] | undefined): xs is readonly number[] => !!xs && xs.length > 0
 
-/** A duration for one activity: history, then earlier plans, then similar work, then the template window. */
-export function suggestDuration(activity: ProcActivity, evidence: DurationEvidence = {}): SuggestedDuration {
+/**
+ * A duration for one activity: history, then earlier plans, then similar work, then the template window.
+ * Similar work and template windows are by stage, so they apply to equipment types only: the other
+ * schedule types name their steps, and a step called "Customs" is not the equipment stage of that name.
+ */
+export function suggestDuration(activity: ProcActivity, evidence: DurationEvidence = {}, kind: ProcurementType['kind'] = 'equipment'): SuggestedDuration {
   const exact = evidence.history?.[activity.code]
   if (nonEmpty(exact)) return { days: medianDays(exact), basis: 'history', samples: exact.length }
   const earlier = evidence.plans?.[activity.code]
   if (nonEmpty(earlier)) return { days: medianDays(earlier), basis: 'plans', samples: earlier.length }
+  if (kind !== 'equipment') return { days: null, basis: 'needed', samples: 0 }
   const similar = evidence.similar?.[activity.stage]
   if (nonEmpty(similar)) return { days: medianDays(similar), basis: 'similar', samples: similar.length }
   const window = stageWindow(activity.stage)

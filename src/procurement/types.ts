@@ -21,6 +21,14 @@ export type ProcStage =
   | 'SAT'
   | 'SAT closeout'
 
+/** A condition to be met before a step can start (for example before an order is released for manufacture). */
+export interface ReleaseCondition {
+  code: string
+  label: string
+  /** A mandatory condition has to be satisfied; an optional one can be waived. */
+  mandatory: boolean
+}
+
 /** One activity of a procurement schedule and its logic (all links are finish-to-start). */
 export interface ProcActivity {
   /** Unique within its type, e.g. `CHL.9`. */
@@ -44,6 +52,8 @@ export interface ProcActivity {
   approver?: string
   /** What has to exist for the step to count as done (for example `Purchase order`). */
   evidence?: string[]
+  /** Conditions to meet before the step starts. */
+  releaseConditions?: ReleaseCondition[]
 }
 
 /** A kind of purchase with its activities and logic. */

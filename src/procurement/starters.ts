@@ -1,9 +1,9 @@
 // The other schedule types from the Procurement schedule app (backend/app/workflow_templates.py):
-// materials, subcontract and consultant. They give the stages and their logic only. The source
+// materials, other equipment, subcontract and consultant. They give the stages and their logic only. The source
 // leaves every duration open on purpose, because durations are project inputs, not market
 // lead-time advice, so a plan from one of these needs a duration for each stage it includes.
 // Activity codes are `<type>.<stage code>`.
-import type { ProcurementType } from './types'
+import type { ProcurementType, ReleaseCondition } from './types'
 
 interface Row {
   code: string
@@ -16,6 +16,7 @@ interface Row {
   award?: true
   approver?: string
   evidence?: string[]
+  releaseConditions?: ReleaseCondition[]
   phase: string
 }
 
@@ -34,7 +35,7 @@ const make = (
   discipline: 'General',
   source,
   anchor: `${code}.${anchor}`,
-  activities: rows.map(({ code: c, name: n, owner, after = [], elapsed, optional, award, approver, evidence, phase }) => ({
+  activities: rows.map(({ code: c, name: n, owner, after = [], elapsed, optional, award, approver, evidence, releaseConditions, phase }) => ({
     code: `${code}.${c}`,
     name: n,
     stage: n,
@@ -46,6 +47,7 @@ const make = (
     ...(award ? { award } : {}),
     ...(approver ? { approver } : {}),
     ...(evidence ? { evidence } : {}),
+    ...(releaseConditions ? { releaseConditions } : {}),
   }),
   ),
 })
@@ -58,6 +60,26 @@ const MAT_TYPE = make("MAT", "Materials", "Materials such as concrete, rebar and
   { code: "source", name: "Manufacture or source", owner: "Supplier", after: ["award"], elapsed: true, phase: "Supply" },
   { code: "transport", name: "Transport", owner: "Supplier", after: ["source"], elapsed: true, phase: "Supply" },
   { code: "receive_inspect", name: "Receive and inspect", owner: "Construction Manager", after: ["transport"], evidence: ["Receiving record"], phase: "Supply" },
+])
+
+const OEQ_TYPE = make("OEQ", "Other equipment", "Equipment outside the eight long-lead types: specification, tender, award, vendor drawings, manufacture, testing, shipping and receipt.", "long_lead_equipment", "receive_accept", [
+  { code: "define_specification", name: "Define specification", owner: "Design Reviewer", evidence: ["Specification"], phase: "Specification and tender" },
+  { code: "tender", name: "Tender", owner: "Buyer", after: ["define_specification"], elapsed: true, phase: "Specification and tender" },
+  { code: "evaluate", name: "Evaluate tenders", owner: "Buyer", after: ["tender"], evidence: ["Technical and commercial evaluation"], phase: "Specification and tender" },
+  { code: "award", name: "Award", owner: "Procurement Manager", after: ["evaluate"], award: true, approver: "Procurement Manager", evidence: ["Award letter"], phase: "Specification and tender" },
+  { code: "vendor_drawings", name: "Vendor drawing approval", owner: "Design Reviewer", after: ["award"], evidence: ["Approved drawings"], phase: "Design and manufacture" },
+  { code: "release", name: "Release for manufacture", owner: "Procurement Manager", after: ["vendor_drawings"], releaseConditions: [
+      { code: "effective_award", label: "Award is effective", mandatory: true },
+      { code: "drawings_approved", label: "Drawings approved", mandatory: true },
+      { code: "deposit_confirmed", label: "Deposit confirmed", mandatory: true },
+      { code: "design_freeze", label: "Design freeze", mandatory: false },
+      { code: "vendor_acknowledgement", label: "Vendor acknowledgement", mandatory: true },
+    ], phase: "Design and manufacture" },
+  { code: "manufacture", name: "Manufacture", owner: "Supplier", after: ["release"], elapsed: true, phase: "Design and manufacture" },
+  { code: "fat", name: "Factory acceptance test", owner: "Quality Lead", after: ["manufacture"], optional: true, approver: "Quality Lead", evidence: ["FAT report"], phase: "Design and manufacture" },
+  { code: "ship", name: "Ship", owner: "Supplier", after: ["fat"], elapsed: true, phase: "Delivery" },
+  { code: "customs", name: "Customs", owner: "Buyer", after: ["ship"], elapsed: true, optional: true, phase: "Delivery" },
+  { code: "receive_accept", name: "Receive and accept", owner: "Construction Manager", after: ["customs"], evidence: ["Receiving inspection"], phase: "Delivery" },
 ])
 
 const SUB_TYPE = make("SUB", "Subcontract", "Subcontract packages: scope, tender, award, submissions, mobilisation and readiness.", "subcontract", "confirm_readiness", [
@@ -82,9 +104,10 @@ const CON_TYPE = make("CON", "Consultant", "Consultant appointments: brief, prop
   { code: "commence", name: "Commence service", owner: "Supplier", after: ["onboard"], phase: "Appointment" },
 ])
 
-/** Materials, subcontract and consultant, in the order the Procurement app lists them. */
+/** Materials, other equipment, subcontract and consultant, in the order the Procurement app lists them. */
 export const STARTER_TYPES: readonly ProcurementType[] = [
   MAT_TYPE,
+  OEQ_TYPE,
   SUB_TYPE,
   CON_TYPE,
 ]

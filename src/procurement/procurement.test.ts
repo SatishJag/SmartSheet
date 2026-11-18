@@ -193,16 +193,17 @@ describe('plan to sheet', () => {
 const GIVEN: Record<string, Record<string, number>> = {
   MAT: { define_requirement: 5, rfq: 10, evaluate: 5, award: 3, source: 60, transport: 21, receive_inspect: 2 },
   SUB: { define_scope: 5, prequalify: 10, tender: 28, evaluate: 7, negotiate: 5, award: 3, approve_submissions: 10, mobilise: 14, confirm_readiness: 2 },
+  OEQ: { define_specification: 10, tender: 42, evaluate: 10, award: 3, vendor_drawings: 15, release: 2, manufacture: 180, fat: 5, ship: 35, customs: 7, receive_accept: 2 },
   CON: { define_brief: 3, request_proposals: 21, evaluate: 5, negotiate: 5, appoint: 2, onboard: 5, commence: 1 },
 }
 const given = (code: string) => Object.fromEntries(Object.entries(GIVEN[code]).map(([k, v]) => [`${code}.${k}`, v]))
 
-describe('materials, subcontract and consultant', () => {
+describe('materials, other equipment, subcontract and consultant', () => {
   it('are in the combined catalogue after the equipment types', () => {
     expect(STARTER_TYPES.map((t) => [t.code, t.name, t.kind, t.activities.length])).toEqual([
-      ['MAT', 'Materials', 'general', 7], ['SUB', 'Subcontract', 'general', 9], ['CON', 'Consultant', 'general', 7],
+      ['MAT', 'Materials', 'general', 7], ['OEQ', 'Other equipment', 'general', 11], ['SUB', 'Subcontract', 'general', 9], ['CON', 'Consultant', 'general', 7],
     ])
-    expect(PROCUREMENT_TYPES).toHaveLength(11)
+    expect(PROCUREMENT_TYPES).toHaveLength(12)
     expect(PROCUREMENT_TYPES.slice(0, 8)).toEqual(EQUIPMENT_TYPES)
     expect(procurementType('SUB')!.name).toBe('Subcontract')
     expect(procurementType('NOPE')).toBeUndefined()
@@ -216,7 +217,7 @@ describe('materials, subcontract and consultant', () => {
       for (const p of a.predecessors) expect(codes.has(p), `${a.code} -> ${p}`).toBe(true)
       expect(a.phase, a.code).toBeTruthy()
       expect(a.stage).toBe(a.name)
-      expect(stageWindow(a.stage), `${a.stage} must not pick up an equipment window`).toBeUndefined()
+      expect(suggestDuration(a, { similar: { [a.stage]: [9] } }, 'general'), `${a.stage} must not pick up equipment durations`).toEqual({ days: null, basis: 'needed', samples: 0 })
     }
     expect(codes.has(anchorOf(t))).toBe(true)
     expect(t.activities.filter((a) => a.award)).toHaveLength(1)
@@ -233,6 +234,26 @@ describe('materials, subcontract and consultant', () => {
     expect(type('CON').activities.find((a) => a.award)!.code).toBe('CON.appoint')
   })
 
+  it('keeps the release conditions on "Release for manufacture", with one that can be waived', () => {
+    const release = type('OEQ').activities.find((a) => a.code === 'OEQ.release')!
+    expect(release.releaseConditions!.map((c) => [c.code, c.mandatory])).toEqual([
+      ['effective_award', true], ['drawings_approved', true], ['deposit_confirmed', true], ['design_freeze', false], ['vendor_acknowledgement', true],
+    ])
+    expect(type('OEQ').activities.filter((a) => a.releaseConditions)).toHaveLength(1)
+    const oeq = type('OEQ')
+    expect(oeq.activities.filter((a) => a.optional).map((a) => a.code)).toEqual(['OEQ.fat', 'OEQ.customs'])
+    expect(oeq.activities.filter((a) => a.elapsed).map((a) => a.code)).toEqual(['OEQ.tender', 'OEQ.manufacture', 'OEQ.ship', 'OEQ.customs'])
+    expect(oeq.activities.find((a) => a.code === 'OEQ.fat')).toMatchObject({ approver: 'Quality Lead', evidence: ['FAT report'] })
+    expect(anchorOf(oeq)).toBe('OEQ.receive_accept')
+  })
+
+  it('does not give the Customs step of other equipment the equipment Customs window', () => {
+    const customs = type('OEQ').activities.find((a) => a.code === 'OEQ.customs')!
+    expect(stageWindow('Customs')).toBeDefined() // the equipment stage of that name has one
+    expect(draftPlan(type('OEQ'), '2027-06-30', defaultCalendar).activities.find((a) => a.code === customs.code)).toMatchObject({ duration: null, basis: 'needed' })
+    expect(draftPlan(type('CHL'), '2027-06-30', defaultCalendar).activities.find((a) => a.stage === 'Customs')).toMatchObject({ duration: 5, basis: 'template' })
+  })
+
   it('need a duration for every step: the source gives none', () => {
     for (const t of STARTER_TYPES) {
       const plan = draftPlan(t, '2027-06-30', defaultCalendar)
@@ -246,6 +267,10 @@ describe('materials, subcontract and consultant', () => {
   it.each([
     ['MAT', '2027-06-30', [], '2027-03-03', '2027-04-05'],
     ['MAT', '2027-12-15', [], '2027-08-23', '2027-09-22'],
+    ['OEQ', '2027-06-30', [], '2026-07-31', '2026-10-13'],
+    ['OEQ', '2027-06-30', ['OEQ.fat', 'OEQ.customs'], '2026-08-14', '2026-10-27'],
+    ['OEQ', '2027-12-15', [], '2027-01-15', '2027-03-30'],
+    ['OEQ', '2027-12-15', ['OEQ.fat', 'OEQ.customs'], '2027-01-29', '2027-04-14'],
     ['SUB', '2027-06-30', [], '2027-03-18', '2027-05-31'],
     ['SUB', '2027-06-30', ['SUB.prequalify', 'SUB.negotiate'], '2027-04-09', '2027-05-31'],
     ['SUB', '2027-12-15', [], '2027-09-07', '2027-11-15'],

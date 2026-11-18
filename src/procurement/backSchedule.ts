@@ -119,7 +119,7 @@ export function draftPlan(type: ProcurementType, requiredOnSite: string, cal: Ca
   const meta = new Map<string, Pick<PlanActivity, 'basis' | 'samples'>>()
   const acts: DurationedActivity[] = type.activities.map((a) => {
     const given = opts.durations?.[a.code]
-    const s = given !== undefined ? { days: given, basis: 'edited' as const, samples: 0 } : suggestDuration(a, opts.evidence)
+    const s = given !== undefined ? { days: given, basis: 'edited' as const, samples: 0 } : suggestDuration(a, opts.evidence, type.kind)
     meta.set(a.code, { basis: s.basis, samples: s.samples })
     return { ...a, duration: s.days, included: !exclude.has(a.code) }
   })
