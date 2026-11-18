@@ -5,10 +5,13 @@ import { defaultCalendar } from '../engine/calendar'
 import type { Calendar } from '../engine/types'
 import { anchorOf, backSchedule, draftPlan, workingLength, type DurationedActivity } from './backSchedule'
 import { medianDays, suggestDuration } from './durations'
-import { EQUIPMENT_TYPES, STAGE_WINDOWS } from './equipment'
+import { PROCUREMENT_TYPES, procurementType } from './catalog'
+import { EQUIPMENT_TYPES, stageWindow } from './equipment'
+import { STARTER_TYPES } from './starters'
 import { planPhases, planTemplate } from './toTemplate'
 
-const type = (code: string) => EQUIPMENT_TYPES.find((t) => t.code === code)!
+const type = (code: string) => procurementType(code)!
+const opts = (startDate: string) => ({ projectName: 'Plan', client: null, startDate, ownerId: 'u1', withResources: true })
 const holidays: Calendar = { ...defaultCalendar, nonWorkingDates: ['2027-04-02', '2027-05-03', '2027-05-17'] }
 
 describe('equipment catalogue', () => {
@@ -24,7 +27,7 @@ describe('equipment catalogue', () => {
     for (const a of t.activities) {
       expect(a.code.startsWith(`${t.code}.`)).toBe(true)
       for (const p of a.predecessors) expect(codes.has(p), `${a.code} -> ${p}`).toBe(true)
-      expect(STAGE_WINDOWS[a.stage], a.stage).toBeDefined()
+      expect(stageWindow(a.stage), a.stage).toBeDefined()
     }
     expect(codes.has(anchorOf(t))).toBe(true)
   })
@@ -128,8 +131,6 @@ describe('backSchedule', () => {
 })
 
 describe('plan to sheet', () => {
-  const opts = (startDate: string) => ({ projectName: 'Chillers', client: null, startDate, ownerId: 'u1', withResources: true })
-
   it('builds a sheet whose receipt lands on the need date and whose links match the catalogue', () => {
     const plan = draftPlan(type('CHL'), '2027-06-30', defaultCalendar)
     const app = buildApp(planTemplate(plan), opts(plan.startBy))
@@ -185,5 +186,115 @@ describe('plan to sheet', () => {
     const app = buildApp(planTemplate(plan), opts(plan.startBy))
     expect(app.sheets[0].rows.length).toBe(plan.activities.length + planTemplate(plan).plan.length)
     expect(app.starts_at).toBe(plan.startBy)
+  })
+})
+
+// Durations for the schedule types that ship without any (calendar days for elapsed steps).
+const GIVEN: Record<string, Record<string, number>> = {
+  MAT: { define_requirement: 5, rfq: 10, evaluate: 5, award: 3, source: 60, transport: 21, receive_inspect: 2 },
+  SUB: { define_scope: 5, prequalify: 10, tender: 28, evaluate: 7, negotiate: 5, award: 3, approve_submissions: 10, mobilise: 14, confirm_readiness: 2 },
+  CON: { define_brief: 3, request_proposals: 21, evaluate: 5, negotiate: 5, appoint: 2, onboard: 5, commence: 1 },
+}
+const given = (code: string) => Object.fromEntries(Object.entries(GIVEN[code]).map(([k, v]) => [`${code}.${k}`, v]))
+
+describe('materials, subcontract and consultant', () => {
+  it('are in the combined catalogue after the equipment types', () => {
+    expect(STARTER_TYPES.map((t) => [t.code, t.name, t.kind, t.activities.length])).toEqual([
+      ['MAT', 'Materials', 'general', 7], ['SUB', 'Subcontract', 'general', 9], ['CON', 'Consultant', 'general', 7],
+    ])
+    expect(PROCUREMENT_TYPES).toHaveLength(11)
+    expect(PROCUREMENT_TYPES.slice(0, 8)).toEqual(EQUIPMENT_TYPES)
+    expect(procurementType('SUB')!.name).toBe('Subcontract')
+    expect(procurementType('NOPE')).toBeUndefined()
+  })
+
+  it.each(STARTER_TYPES.map((t) => [t.code, t] as const))('%s is a chain with one award step, an anchor and a phase for every step', (_c, t) => {
+    const codes = new Set(t.activities.map((a) => a.code))
+    expect(codes.size).toBe(t.activities.length)
+    for (const a of t.activities) {
+      expect(a.code.startsWith(`${t.code}.`)).toBe(true)
+      for (const p of a.predecessors) expect(codes.has(p), `${a.code} -> ${p}`).toBe(true)
+      expect(a.phase, a.code).toBeTruthy()
+      expect(a.stage).toBe(a.name)
+      expect(stageWindow(a.stage), `${a.stage} must not pick up an equipment window`).toBeUndefined()
+    }
+    expect(codes.has(anchorOf(t))).toBe(true)
+    expect(t.activities.filter((a) => a.award)).toHaveLength(1)
+    // The anchor is the last step, so the need date is when the work lands
+    expect(anchorOf(t)).toBe(t.activities[t.activities.length - 1].code)
+  })
+
+  it('keeps the source flags: elapsed steps, optional steps, approvals and evidence', () => {
+    const sub = type('SUB')
+    const at = (c: string) => sub.activities.find((a) => a.code === `SUB.${c}`)!
+    expect(sub.activities.filter((a) => a.optional).map((a) => a.code)).toEqual(['SUB.prequalify', 'SUB.negotiate'])
+    expect(sub.activities.filter((a) => a.elapsed).map((a) => a.code)).toEqual(['SUB.tender', 'SUB.mobilise'])
+    expect(at('award')).toMatchObject({ approver: 'Project Manager', evidence: ['Subcontract'], owner: 'Procurement Manager' })
+    expect(type('CON').activities.find((a) => a.award)!.code).toBe('CON.appoint')
+  })
+
+  it('need a duration for every step: the source gives none', () => {
+    for (const t of STARTER_TYPES) {
+      const plan = draftPlan(t, '2027-06-30', defaultCalendar)
+      expect(plan.missing).toHaveLength(t.activities.length)
+      expect(plan.activities.every((a) => a.basis === 'needed' && a.duration === null)).toBe(true)
+      expect(() => planPhases(plan)).toThrow(/need a duration/)
+    }
+  })
+
+  // Parity with backend/app/plans.py `schedule()` using the same durations and holidays.
+  it.each([
+    ['MAT', '2027-06-30', [], '2027-03-03', '2027-04-05'],
+    ['MAT', '2027-12-15', [], '2027-08-23', '2027-09-22'],
+    ['SUB', '2027-06-30', [], '2027-03-18', '2027-05-31'],
+    ['SUB', '2027-06-30', ['SUB.prequalify', 'SUB.negotiate'], '2027-04-09', '2027-05-31'],
+    ['SUB', '2027-12-15', [], '2027-09-07', '2027-11-15'],
+    ['SUB', '2027-12-15', ['SUB.prequalify', 'SUB.negotiate'], '2027-09-28', '2027-11-15'],
+    ['CON', '2027-06-30', [], '2027-05-11', '2027-06-22'],
+    ['CON', '2027-12-15', [], '2027-10-27', '2027-12-07'],
+  ])('%s needed %s without %j: start by %s, award by %s', (code, need, exclude, startBy, awardBy) => {
+    const plan = draftPlan(type(code), need, holidays, { durations: given(code), exclude })
+    expect(plan.missing).toEqual([])
+    expect([plan.startBy, plan.awardBy, plan.finishOn]).toEqual([startBy, awardBy, need])
+    expect(plan.activities.every((a) => !a.afterNeed)).toBe(true)
+    expect(plan.activities.find((a) => a.anchor)!.finish).toBe(need)
+  })
+
+  it('builds a sheet: phases from the data, elapsed steps in working days, suppliers not booked', () => {
+    const plan = draftPlan(type('MAT'), '2027-06-30', defaultCalendar, { durations: given('MAT') })
+    const tpl = planTemplate(plan)
+    expect(tpl.plan.map((p) => p.name)).toEqual(['Requirement and sourcing', 'Supply'])
+    const task = (key: string) => tpl.plan.flatMap((p) => p.tasks).find((t) => t.key === key)!
+    expect(task('MAT.source').days).toBe(43) // 60 calendar days -> ceil(60 * 5 / 7)
+    expect(task('MAT.transport').days).toBe(15)
+    expect(task('MAT.rfq').days).toBe(10)
+    expect(tpl.roles).toEqual(['Planner', 'Buyer', 'Procurement Manager', 'Construction Manager'])
+
+    const app = buildApp(tpl, opts(plan.startBy))
+    const sheet = app.sheets[0]
+    const col = (t: string) => sheet.columns.find((c) => c.title === t)!.id
+    const end = sheet.rows.find((r) => r.cells[col('Task')] === 'Receive and inspect')!.cells[col('End')]
+    expect(end).toBe('2027-06-30')
+    expect(sheet.dependencies).toHaveLength(6)
+  })
+
+  it('leaves out optional steps and bridges the logic across them', () => {
+    const plan = draftPlan(type('SUB'), '2027-06-30', defaultCalendar, { durations: given('SUB'), exclude: ['SUB.prequalify', 'SUB.negotiate'] })
+    const tasks = planPhases(plan).flatMap((p) => p.tasks)
+    expect(tasks).toHaveLength(7)
+    expect(tasks.find((t) => t.key === 'SUB.tender')!.after).toEqual(['SUB.define_scope'])
+    expect(tasks.find((t) => t.key === 'SUB.award')!.after).toEqual(['SUB.evaluate'])
+    const app = buildApp(planTemplate(plan), opts(plan.startBy))
+    expect(app.starts_at).toBe(plan.startBy)
+  })
+
+  it.each(STARTER_TYPES.map((t) => [t.code, t] as const))('%s builds a schedulable sheet that lands on the need date', (code, t) => {
+    const plan = draftPlan(t, '2027-09-15', defaultCalendar, { durations: given(code) })
+    const app = buildApp(planTemplate(plan), opts(plan.startBy))
+    const sheet = app.sheets[0]
+    const col = (title: string) => sheet.columns.find((c) => c.title === title)!.id
+    const anchor = plan.activities.find((a) => a.anchor)!
+    expect(sheet.rows.find((r) => r.cells[col('Task')] === anchor.name)!.cells[col('End')]).toBe('2027-09-15')
+    expect(app.ends_at).toBe(plan.finishOn)
   })
 })

@@ -1,7 +1,7 @@
 import { addWorkingDays, previousWorkingDay } from '../engine/calendar'
 import type { Calendar } from '../engine/types'
 import { suggestDuration, type DurationEvidence } from './durations'
-import type { EquipmentType, PlanActivity, ProcActivity, ProcurementPlan } from './types'
+import type { ProcurementType, PlanActivity, ProcActivity, ProcurementPlan } from './types'
 
 /** An activity with the length to schedule it by; `included: false` takes it out of the plan. */
 export type DurationedActivity = ProcActivity & { duration: number | null; included: boolean }
@@ -13,7 +13,7 @@ export function workingLength(a: Pick<DurationedActivity, 'duration' | 'included
 }
 
 /** The activity that brings the goods to site: the type's own anchor, else the last receipt, else the last activity. */
-export function anchorOf(type: EquipmentType): string {
+export function anchorOf(type: ProcurementType): string {
   if (type.anchor) return type.anchor
   const receipts = type.activities.filter((a) => a.stage === 'Receipt')
   return (receipts.length > 0 ? receipts[receipts.length - 1] : type.activities[type.activities.length - 1]).code
@@ -110,7 +110,7 @@ export interface DraftOptions {
  * A pre-award plan for one equipment type: each activity gets a duration from the best evidence
  * available (or the one given), then the plan is worked back from the date site needs it.
  */
-export function draftPlan(type: EquipmentType, requiredOnSite: string, cal: Calendar, opts: DraftOptions = {}): ProcurementPlan {
+export function draftPlan(type: ProcurementType, requiredOnSite: string, cal: Calendar, opts: DraftOptions = {}): ProcurementPlan {
   const exclude = new Set(opts.exclude ?? [])
   const known = new Set(type.activities.map((a) => a.code))
   for (const c of [...exclude, ...Object.keys(opts.durations ?? {})]) {

@@ -1,4 +1,4 @@
-/** The stages an equipment activity can belong to (they key the default duration windows). */
+/** The stages of the long-lead equipment schedules (they key the default duration windows). */
 export type ProcStage =
   | 'Kickoff'
   | 'Submittals'
@@ -26,7 +26,8 @@ export interface ProcActivity {
   /** Unique within its type, e.g. `CHL.9`. */
   code: string
   name: string
-  stage: ProcStage
+  /** What kind of work it is: a `ProcStage` for equipment, the step name for the other schedule types. */
+  stage: string
   /** Who does it, as a role or party name (e.g. `Supplier`, `Logistics Coordinator`). */
   owner: string
   /** Codes of activities in the same type that must finish first. */
@@ -37,17 +38,28 @@ export interface ProcActivity {
   optional?: boolean
   /** The award (or appointment) step: its finish is when the order has to be placed. */
   award?: boolean
+  /** The phase it is grouped under in a sheet. Equipment activities are grouped by stage instead. */
+  phase?: string
+  /** Role that has to approve this step before work moves on. */
+  approver?: string
+  /** What has to exist for the step to count as done (for example `Purchase order`). */
+  evidence?: string[]
 }
 
-export interface EquipmentType {
+/** A kind of purchase with its activities and logic. */
+export interface ProcurementType {
   code: string
   name: string
+  /** Long-lead equipment has its own durations and stage windows; the others only give the stage list. */
+  kind: 'equipment' | 'general'
+  /** One line for a picker. */
+  description?: string
   discipline: string
   /** The code this type has in the Procurement schedule app. */
   source: string
   /**
-   * Code of the activity that brings the goods to site (it finishes on the need date). Defaults
-   * to the last Receipt activity; set it for a type that has none.
+   * Code of the activity that brings the goods or service to site (it finishes on the need date).
+   * Defaults to the last Receipt activity, else the last activity; set it for a type with no Receipt.
    */
   anchor?: string
   activities: ProcActivity[]
@@ -82,7 +94,7 @@ export interface PlanActivity extends ProcActivity {
 }
 
 export interface ProcurementPlan {
-  type: EquipmentType
+  type: ProcurementType
   requiredOnSite: string
   /** The date procurement has to start to meet the need date. */
   startBy: string

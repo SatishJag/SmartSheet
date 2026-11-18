@@ -1,5 +1,5 @@
-import { STAGE_WINDOWS } from './equipment'
-import type { DurationBasis, ProcActivity, ProcStage } from './types'
+import { stageWindow } from './equipment'
+import type { DurationBasis, ProcActivity } from './types'
 
 /**
  * Past durations (working days) to suggest from. All optional: with none, every duration falls
@@ -11,7 +11,7 @@ export interface DurationEvidence {
   /** Durations given to the same activity in earlier approved plans, by activity code. */
   plans?: Record<string, number[]>
   /** Actual durations of the same stage on other equipment, by stage. */
-  similar?: Partial<Record<ProcStage, number[]>>
+  similar?: Record<string, number[]>
 }
 
 export interface SuggestedDuration {
@@ -42,7 +42,7 @@ export function suggestDuration(activity: ProcActivity, evidence: DurationEviden
   if (nonEmpty(earlier)) return { days: medianDays(earlier), basis: 'plans', samples: earlier.length }
   const similar = evidence.similar?.[activity.stage]
   if (nonEmpty(similar)) return { days: medianDays(similar), basis: 'similar', samples: similar.length }
-  const window = STAGE_WINDOWS[activity.stage]
+  const window = stageWindow(activity.stage)
   if (window) return { days: window[1], basis: 'template', samples: 0 }
   return { days: null, basis: 'needed', samples: 0 }
 }

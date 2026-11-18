@@ -2,7 +2,7 @@
 // (backend/app/data/catalog.json, stages and windows from backend/app/domain.py).
 // Activity codes are `<short>.<suffix>`; predecessors that point outside a type's own
 // activities (programme-level links) are dropped, so every predecessor listed here exists.
-import type { EquipmentType, ProcStage } from './types'
+import type { ProcurementType, ProcStage } from './types'
 
 type Row = [suffix: string, name: string, stage: ProcStage, owner: string, after: string[]]
 
@@ -13,9 +13,10 @@ const make = (
   discipline: string,
   source: string,
   rows: Row[],
-): EquipmentType => ({
+): ProcurementType => ({
   code,
   name,
+  kind: 'equipment',
   discipline,
   source,
   activities: rows.map(([suffix, n, stage, owner, after]) => ({
@@ -197,7 +198,7 @@ const FAHU_TYPE = make("FAHU", "FAHU", "Fresh air handling units", "Mechanical",
 ])
 
 /** Every long-lead equipment type, in the order the Procurement app lists them. */
-export const EQUIPMENT_TYPES: readonly EquipmentType[] = [
+export const EQUIPMENT_TYPES: readonly ProcurementType[] = [
   GEN_TYPE,
   UPS_TYPE,
   CHL_TYPE,
@@ -234,3 +235,7 @@ export const STAGE_WINDOWS: Record<ProcStage, readonly [offset: number, days: nu
   "SAT": [122, 10],
   "SAT closeout": [132, 5],
 }
+
+/** The default [offset, days] window for a stage, or undefined for a stage with none (everything outside equipment). */
+export const stageWindow = (stage: string): readonly [offset: number, days: number] | undefined =>
+  Object.hasOwn(STAGE_WINDOWS, stage) ? STAGE_WINDOWS[stage as ProcStage] : undefined

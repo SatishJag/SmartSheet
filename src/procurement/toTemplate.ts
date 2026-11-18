@@ -1,8 +1,9 @@
 import type { AppTemplate, PlanPhase, PlanTask } from '../apps/types'
-import type { PlanActivity, ProcStage, ProcurementPlan } from './types'
+import { workingLength } from './backSchedule'
+import type { PlanActivity, ProcurementPlan } from './types'
 
-/** The plan's phases, in order, with the stages that fall in each. */
-const PHASES: { name: string; stages: readonly ProcStage[] }[] = [
+/** The equipment plan's phases, in order, with the stages that fall in each. */
+const PHASES: { name: string; stages: readonly string[] }[] = [
   { name: 'Kickoff and vendor documents', stages: ['Kickoff', 'Submittals', 'Approval'] },
   { name: 'Manufacturing and factory testing', stages: ['Manufacturing', 'FAT preparation', 'FAT', 'FAT closeout'] },
   {
@@ -39,23 +40,29 @@ export function planPhases(plan: ProcurementPlan): PlanPhase[] {
   if (plan.missing.length > 0) {
     throw new Error(`${plan.missing.length} activities still need a duration: ${plan.missing.join(', ')}`)
   }
-  const phases: PlanPhase[] = []
-  for (const phase of PHASES) {
-    const tasks: PlanTask[] = plan.activities
-      .filter((a) => a.included && phase.stages.includes(a.stage))
-      .map((a) => ({
+  // An activity's phase is the one it names (materials, subcontract, consultant) or the one its stage belongs to.
+  const phaseOf = (a: PlanActivity): string => {
+    const name = a.phase ?? PHASES.find((p) => p.stages.includes(a.stage))?.name
+    if (!name) throw new Error(`Activity ${a.code} (${a.stage}) belongs to no phase`)
+    return name
+  }
+  const included = plan.activities.filter((a) => a.included)
+  const order = [...PHASES.map((p) => p.name), ...included.map(phaseOf)]
+  const names = [...new Set(order)].filter((n) => included.some((a) => phaseOf(a) === n))
+  return names.map((name) => ({
+    name,
+    tasks: included
+      .filter((a) => phaseOf(a) === name)
+      .map((a): PlanTask => ({
         name: a.name,
-        days: a.duration ?? 0,
+        // Working days: an elapsed step is converted at five per seven, as the back-scheduler does.
+        days: workingLength(a),
         discipline: plan.type.discipline,
         ...(EXTERNAL_OWNERS.has(a.owner) ? {} : { role: a.owner }),
         key: a.code,
         after: includedPredecessors(plan, a),
-      }))
-    if (tasks.length > 0) phases.push({ name: phase.name, tasks })
-  }
-  const placed = phases.reduce((n, p) => n + p.tasks.length, 0)
-  if (placed !== plan.activities.filter((a) => a.included).length) throw new Error('Some activities belong to no phase')
-  return phases
+      })),
+  }))
 }
 
 /**
