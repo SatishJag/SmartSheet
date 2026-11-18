@@ -35,6 +35,8 @@ type Dialog =
 export interface ResourceManagementProps {
   client: SupabaseClient
   email: string
+  /** The signed-in user: projects may only link sheets they own (not sheets shared with them). */
+  userId: string
   onOpenSheet: (sheetId: string) => void
   initialTab?: RmTab
   /** Overrides (tests). */
@@ -42,7 +44,7 @@ export interface ResourceManagementProps {
   today?: string
 }
 
-export function ResourceManagement({ client, email, onOpenSheet, initialTab = 'people', api: givenApi, today: givenToday }: ResourceManagementProps) {
+export function ResourceManagement({ client, email, userId, onOpenSheet, initialTab = 'people', api: givenApi, today: givenToday }: ResourceManagementProps) {
   const api = useMemo(() => givenApi ?? rmApi(client), [givenApi, client])
   const today = givenToday ?? localToday()
   const { data, loadError, actions } = useRmData(api)
@@ -55,12 +57,18 @@ export function ResourceManagement({ client, email, onOpenSheet, initialTab = 'p
   const loadSheets = useCallback(async () => {
     try {
       setSheets(
-        await fetchAllPages<{ id: string; name: string }>((from, to) => client.from('sheets').select('id,name').order('name').order('id').range(from, to)),
+        (
+          await fetchAllPages<{ id: string; name: string; owner_id: string }>((from, to) =>
+            client.from('sheets').select('id,name,owner_id').order('name').order('id').range(from, to),
+          )
+        )
+          .filter((s) => s.owner_id === userId)
+          .map(({ id, name }) => ({ id, name })),
       )
     } catch {
       setSheets([]) // linking to sheets is optional; the rest of the page still works
     }
-  }, [client])
+  }, [client, userId])
   useEffect(() => {
     void loadSheets()
   }, [loadSheets])

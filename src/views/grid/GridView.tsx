@@ -3,6 +3,7 @@ import { useTable } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Column } from '../../model/validate'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
+import { READ_ONLY_MESSAGE } from '../../store/sheetStore'
 import { useCriticalPath } from '../../store/useCriticalPath'
 import { floatDescription, useShowCriticalPath } from '../criticalPathContext'
 import { ConfirmDialog } from '../ConfirmDialog'
@@ -67,6 +68,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const data = useSheetStore((s) => s.data)
   const scheduled = useSheetStore((s) => s.scheduled)
   const errors = useSheetStore((s) => s.errors)
+  /** A viewer of a shared sheet: nothing in the grid can be changed. */
+  const viewOnly = useSheetStore((s) => s.readOnly)
+  const canEdit = (col: Column, row: GridRow) => !viewOnly && isEditable(col, row)
 
   const columns = data?.columns ?? EMPTY_COLUMNS
   const columnDefs = useMemo(() => buildColumnDefs(columns), [columns])
@@ -83,7 +87,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const parentOf = (id: string) => parentById.get(id)
   const filterActive = effectiveFilter(columns, view.filter) !== null
   const rowDrag = useRowDrag({
-    enabled: !filterActive && effectiveSort(columns, view.sort) === null,
+    enabled: !viewOnly && !filterActive && effectiveSort(columns, view.sort) === null,
     parentOf,
     onMove: (id, targetId) => api.getState().moveRow(id, targetId, parentOf(targetId) ?? null),
   })
@@ -159,7 +163,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
   }
 
   function startEdit(row: GridRow, col: Column) {
-    if (!isEditable(col, row)) return
+    if (!canEdit(col, row)) return
     if (col.type === 'CHECKBOX') {
       toggleCheckbox(row, col)
       return
@@ -221,7 +225,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
       else if (selection) clearCells(selection)
     } else if ((e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) && (e.target as HTMLElement).getAttribute('role') === 'gridcell') {
       e.preventDefault()
-      columnUi.openMenu(columns[activeColIdx].id) // the active column's header menu
+      if (!viewOnly) columnUi.openMenu(columns[activeColIdx].id) // the active column's header menu
     }
   }
 
@@ -263,9 +267,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
         const row = rows[r]
         const col = columns[c]
         const where = `row ${row.rowNumber} ${col.title}`
-        if (!isEditable(col, row)) {
+        if (!canEdit(col, row)) {
           // Pasting a block back over itself is not an error for its calculated cells.
-          if (value !== copyText(col, row)) rejected.push({ where, reason: readOnlyReason(col, row) ?? 'read-only' })
+          if (value !== copyText(col, row)) rejected.push({ where, reason: viewOnly ? READ_ONLY_MESSAGE : (readOnlyReason(col, row) ?? 'read-only') })
           continue
         }
         if (value === editString(col, row) && !errorByCell.has(`${row.id}:${col.id}`)) continue
@@ -287,7 +291,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
       for (const { row: r, col: c } of rangeCells(range)) {
         const row = rows[r]
         const col = columns[c]
-        if (!isEditable(col, row)) continue
+        if (!canEdit(col, row)) continue
         const empty = col.type === 'CHECKBOX' ? row.record.cells[col.id] !== true : editString(col, row) === ''
         if (empty && !errorByCell.has(`${row.id}:${col.id}`)) continue
         const result = api.getState().setCell(row.id, col.id, '')
@@ -354,7 +358,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
 
   /** Delete row (toolbar or Delete key): a leaf goes at once, a parent asks first. */
   function requestDelete() {
-    if (!activeValid) return
+    if (viewOnly || !activeValid) return
     const id = rows[activeRowIdx].id
     const subRows = descendantsOf(id).length
     if (subRows > 0) setPendingDelete({ rowId: id, subRows })
@@ -400,7 +404,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
     const error = errorByCell.get(key) ?? formulaError(col, row)
     const isActive = active?.rowId === row.id && active.colId === col.id
     const inSelection = multiSelected && rangeContains(selection!, rowIndex.get(row.id) ?? -1, idx)
-    const editable = isEditable(col, row)
+    const editable = canEdit(col, row)
     const errorId = error ? `cell-error-${row.id}-${col.id}` : undefined
     const initial = editString(col, row)
     let content
@@ -519,7 +523,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
                     <table.FlexRender header={h} />
                   </button>
                 ))}
-                {h.id !== ROW_NUMBER_COLUMN_ID && columnUi.menuButton(h.id)}
+                {h.id !== ROW_NUMBER_COLUMN_ID && !viewOnly && columnUi.menuButton(h.id)}
                 {h.column.getCanResize() && (
                   <div
                     role="separator"
@@ -568,20 +572,20 @@ export function GridView({ viewportHeight }: GridViewProps) {
             })}
           </div>
         </div>
-        {columnUi.addColumnButton}
+        {!viewOnly && columnUi.addColumnButton}
         {rows.length === 0 && <p className="grid-empty">No rows yet</p>}
       </div>
       <div className="grid-toolbar">
-        <button type="button" onClick={addRow}>
+        <button type="button" disabled={viewOnly} onClick={addRow}>
           Add row
         </button>
-        <button type="button" disabled={!activeValid} onClick={() => shiftActiveRow('indent')}>
+        <button type="button" disabled={viewOnly || !activeValid} onClick={() => shiftActiveRow('indent')}>
           Indent
         </button>
-        <button type="button" disabled={!activeValid} onClick={() => shiftActiveRow('outdent')}>
+        <button type="button" disabled={viewOnly || !activeValid} onClick={() => shiftActiveRow('outdent')}>
           Outdent
         </button>
-        <button type="button" disabled={!activeValid} onClick={requestDelete}>
+        <button type="button" disabled={viewOnly || !activeValid} onClick={requestDelete}>
           Delete row
         </button>
         <FilterBar columns={columns} filter={view.filter} onChange={setFilter} />

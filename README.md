@@ -11,6 +11,11 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
 ## Features
 
 - **Sign-in and per-user sheets** (Supabase Auth, row-level security on every table)
+- **Sharing**: the owner shares a sheet by email as viewer (read-only grid, Gantt and Kanban) or
+  editor (can edit rows, columns and dependencies); only the owner renames, deletes, changes
+  schedule settings or shares
+- **CSV import**: "Import CSV" on the sheet list creates a sheet (date and checkbox columns are
+  inferred when every value fits; up to 5,000 rows, 50 columns, 10 MB)
 - **Grid**: typed columns (text/number, date, checkbox, picklist, multi-picklist, contact,
   duration, predecessor), inline editing with validation, row hierarchy (Tab / Shift+Tab),
   drag to reorder, collapse, sort and filter, basic formulas (`SUM`, `IF`, arithmetic,
@@ -62,7 +67,7 @@ cp .env.example .env.local
 
 Fill `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env.local`, then apply the
 migrations in `supabase/migrations/` in order (`0004_resource_management.sql` adds the
-Resource Management tables) (Supabase SQL editor, or `supabase db push`
+Resource Management tables, `0005_sharing.sql` adds sharing) (Supabase SQL editor, or `supabase db push`
 with the Supabase CLI).
 
 ```bash

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { DEFAULT_TEMPLATE_ID, TEMPLATES, type TemplateId } from '../templates'
-import { insertSheetFromTemplate } from '../templates/insertTemplate'
+import { MAX_IMPORT_BYTES, sheetFromCsv, sheetNameFromFile } from '../import/sheetFromCsv'
+import { insertSheetData, insertSheetFromTemplate } from '../templates/insertTemplate'
 import { fetchAllPages } from '../store/paging'
 import { ConfirmDialog } from '../views/ConfirmDialog'
 import { InlineRename } from '../views/InlineRename'
@@ -10,6 +11,7 @@ interface SheetRow {
   id: string
   name: string
   created_at: string
+  owner_id: string
 }
 
 interface SheetListProps {
@@ -32,12 +34,13 @@ export function SheetList({ client, userId, onOpen, onCreateApp }: SheetListProp
   const inFlight = useRef(false)
   const active = useRef(true)
   const templateSelectId = useId()
+  const importInputId = useId()
 
   /** Loads the whole list (paged: Supabase returns at most 1000 rows per request). */
   const load = useCallback(async () => {
     try {
       const rows = await fetchAllPages<SheetRow>((from, to) =>
-        client.from('sheets').select('id,name,created_at').order('created_at', { ascending: false }).order('id').range(from, to),
+        client.from('sheets').select('id,name,created_at,owner_id').order('created_at', { ascending: false }).order('id').range(from, to),
       )
       if (active.current) setSheets(rows)
     } catch (err) {
@@ -63,6 +66,24 @@ export function SheetList({ client, userId, onOpen, onCreateApp }: SheetListProp
       onOpen(await insertSheetFromTemplate(client, templateId, userId))
     } catch (err) {
       setError(message(err, 'Could not create the sheet'))
+    } finally {
+      inFlight.current = false
+      setCreating(false)
+    }
+  }
+
+  /** Creates a new sheet from the chosen CSV file and opens it. */
+  async function importCsv(file: File | undefined) {
+    if (!file || inFlight.current) return
+    inFlight.current = true
+    setError(null)
+    setCreating(true)
+    try {
+      if (file.size > MAX_IMPORT_BYTES) throw new Error(`"${file.name}" is larger than ${MAX_IMPORT_BYTES / 1024 / 1024} MB`)
+      const data = sheetFromCsv(await file.text(), sheetNameFromFile(file.name), userId)
+      onOpen(await insertSheetData(client, data))
+    } catch (err) {
+      setError(`Could not import "${file.name}": ${message(err, 'unknown error')}`)
     } finally {
       inFlight.current = false
       setCreating(false)
@@ -117,6 +138,17 @@ export function SheetList({ client, userId, onOpen, onCreateApp }: SheetListProp
           <button type="button" onClick={createSheet} disabled={creating}>
             New sheet
           </button>
+          <label htmlFor={importInputId}>Import CSV</label>
+          <input
+            id={importInputId}
+            type="file"
+            accept=".csv,text/csv"
+            disabled={creating}
+            onChange={(e) => {
+              void importCsv(e.target.files?.[0])
+              e.target.value = '' // lets the same file be chosen again after a failure
+            }}
+          />
           {onCreateApp && (
             <button type="button" className="sheet-list-create-app" onClick={onCreateApp} disabled={creating}>
               Create app from template
@@ -140,15 +172,23 @@ export function SheetList({ client, userId, onOpen, onCreateApp }: SheetListProp
               ) : (
                 <button type="button" className="sheet-item" onClick={() => onOpen(sheet.id)}>
                   <span>{sheet.name}</span>
-                  <small>{new Date(sheet.created_at).toLocaleDateString()}</small>
+                  <small>
+                    {sheet.owner_id !== userId && 'Shared with you · '}
+                    {new Date(sheet.created_at).toLocaleDateString()}
+                  </small>
                 </button>
               )}
-              <button type="button" aria-label={`Rename ${sheet.name}`} onClick={() => setRenamingId(sheet.id)}>
-                Rename
-              </button>
-              <button type="button" aria-label={`Delete ${sheet.name}`} onClick={() => setDeleting(sheet)}>
-                Delete
-              </button>
+              {/* Only the owner can rename or delete a sheet. */}
+              {sheet.owner_id === userId && (
+                <>
+                  <button type="button" aria-label={`Rename ${sheet.name}`} onClick={() => setRenamingId(sheet.id)}>
+                    Rename
+                  </button>
+                  <button type="button" aria-label={`Delete ${sheet.name}`} onClick={() => setDeleting(sheet)}>
+                    Delete
+                  </button>
+                </>
+              )}
             </li>
           ))}
         </ul>

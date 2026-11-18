@@ -39,3 +39,33 @@
   color: #fff;
   border-color: #b42318;
 }
+
+.share-dialog {
+  max-width: 520px;
+}
+
+.share-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.share-members {
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.share-members li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.share-members li span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}

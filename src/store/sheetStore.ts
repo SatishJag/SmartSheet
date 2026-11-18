@@ -38,8 +38,11 @@ export interface SheetState extends ColumnActions {
   errors: CellError[]
   notices: string[]
   loadError: string | null
+  /** True for a viewer: every edit is refused (the database refuses their writes too). */
+  readOnly: boolean
 
   load(id: string): Promise<void>
+  setReadOnly(readOnly: boolean): void
   setCell(rowId: string, colId: string, raw: string): ActionResult
   addRow(afterId?: string | null, parentId?: string | null): string
   indentRow(id: string): void
@@ -93,6 +96,21 @@ export const START_SET_BY_PREDECESSORS = 'Start date is set by predecessors — 
 /** Whether a row's start comes from its incoming dependencies (so a typed Start would be ignored). */
 export function isStartDriven(data: SheetData, rowId: string): boolean {
   return data.sheet.dependenciesEnabled && data.dependencies.some((d) => d.successorId === rowId)
+}
+
+export const READ_ONLY_MESSAGE = 'You have view-only access to this sheet'
+
+/** Column management is editing too: a viewer's column actions are refused (the queue runner is not). */
+function refuseWhenReadOnly(actions: ColumnActions, readOnly: () => boolean): ColumnActions {
+  const refused = { ok: false as const, error: READ_ONLY_MESSAGE }
+  return {
+    ...actions,
+    addColumn: (...a) => (readOnly() ? refused : actions.addColumn(...a)),
+    renameColumn: (...a) => (readOnly() ? refused : actions.renameColumn(...a)),
+    deleteColumn: (...a) => (readOnly() ? refused : actions.deleteColumn(...a)),
+    setColumnOptions: (...a) => (readOnly() ? refused : actions.setColumnOptions(...a)),
+    changeColumnType: (...a) => (readOnly() ? refused : actions.changeColumnType(...a)),
+  }
 }
 
 /** Columns whose values on a parent row come from its children. */
@@ -473,6 +491,11 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       errors: [],
       notices: [],
       loadError: null,
+      readOnly: false,
+
+      setReadOnly(readOnly) {
+        set({ readOnly })
+      },
 
       async load(id) {
         set({ loadError: null })
@@ -485,6 +508,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       setCell(rowId, colId, raw) {
+        if (get().readOnly) return { ok: false, error: READ_ONLY_MESSAGE }
         const data = get().data
         if (!data) return { ok: false, error: 'Sheet is not loaded' }
         const row = data.rows.find((r) => r.id === rowId)
@@ -521,6 +545,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       addRow(afterId, parentId) {
+        if (get().readOnly) throw new Error(READ_ONLY_MESSAGE)
         const data = get().data
         if (!data) throw new Error('Sheet is not loaded')
         const after = afterId ? data.rows.find((r) => r.id === afterId) : undefined
@@ -545,18 +570,22 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       indentRow(id) {
+        if (get().readOnly) return
         applyTree('indent', (rows) => indent(rows, id))
       },
 
       outdentRow(id) {
+        if (get().readOnly) return
         applyTree('outdent', (rows) => outdent(rows, id))
       },
 
       moveRow(id, afterId, newParentId) {
+        if (get().readOnly) return
         applyTree('move', (rows) => moveRowInTree(rows, id, afterId, newParentId))
       },
 
       deleteRow(id) {
+        if (get().readOnly) return
         const data = get().data
         if (!data) return
         const { rows, removedIds } = deleteWithChildren(data.rows, id)
@@ -586,6 +615,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       addDependency(dep) {
+        if (get().readOnly) return { ok: false, error: READ_ONLY_MESSAGE }
         const data = get().data
         if (!data) return { ok: false, error: 'Sheet is not loaded' }
         const ids = new Set(data.rows.map((r) => r.id))
@@ -605,6 +635,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       setPredecessors(rowId, raw) {
+        if (get().readOnly) return { ok: false, error: READ_ONLY_MESSAGE }
         const data = get().data
         if (!data) return { ok: false, error: 'Sheet is not loaded' }
         if (!data.rows.some((r) => r.id === rowId)) return { ok: false, error: `Unknown row ${rowId}` }
@@ -643,6 +674,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       removeDependency(predecessorId, successorId) {
+        if (get().readOnly) return
         const data = get().data
         if (!data) return
         const deps = data.dependencies.filter((d) => !(d.predecessorId === predecessorId && d.successorId === successorId))
@@ -686,6 +718,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       setCalendar(cal) {
+        if (get().readOnly) return { ok: false, error: READ_ONLY_MESSAGE }
         const data = get().data
         if (!data) return { ok: false, error: 'Sheet is not loaded' }
         const norm = normalizeCalendar(cal)
@@ -697,6 +730,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       },
 
       setDependenciesEnabled(on) {
+        if (get().readOnly) return { ok: false, error: READ_ONLY_MESSAGE }
         const data = get().data
         if (!data) return { ok: false, error: 'Sheet is not loaded' }
         if (data.sheet.dependenciesEnabled === on) return { ok: true }
@@ -721,7 +755,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         enqueueSettings(data.sheet.id)
         return { ok: true }
       },
-      ...createColumnActions({ p, get, commit, enqueue, failedKeys, unpersisted, retryers }),
+      ...refuseWhenReadOnly(createColumnActions({ p, get, commit, enqueue, failedKeys, unpersisted, retryers }), () => get().readOnly),
 
       batch(fn) {
         batchDepth++

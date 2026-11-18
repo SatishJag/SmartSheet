@@ -664,3 +664,30 @@ describe('batch', () => {
     expect(store.getState().scheduled).toBe(before)
   })
 })
+
+describe('read-only store (a viewer)', () => {
+  it('refuses every edit and leaves the data alone', async () => {
+    const { makeTestStore } = await import('../test/fixtures')
+    const { READ_ONLY_MESSAGE } = await import('./sheetStore')
+    const { store } = await makeTestStore()
+    const before = store.getState().data
+    store.getState().setReadOnly(true)
+    const s = store.getState()
+    const row = before!.rows[0].id
+    const col = before!.columns[0].id
+    expect(s.setCell(row, col, 'x')).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
+    expect(s.setPredecessors(row, '2')).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
+    expect(() => s.addRow()).toThrow(READ_ONLY_MESSAGE)
+    s.deleteRow(row)
+    s.indentRow(row)
+    s.removeDependency('a', 'b')
+    expect(store.getState().data).toBe(before)
+    expect(s.addColumn('New', 'TEXT_NUMBER')).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
+    expect(s.renameColumn(col, 'Renamed')).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
+    expect(s.deleteColumn(col)).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
+    expect(s.setDependenciesEnabled(!before!.sheet.dependenciesEnabled)).toEqual({ ok: false, error: READ_ONLY_MESSAGE })
+    expect(store.getState().data).toBe(before)
+    store.getState().setReadOnly(false)
+    expect(store.getState().setCell(row, col, 'x').ok).toBe(true)
+  })
+})

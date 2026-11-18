@@ -98,6 +98,7 @@ function Shell({ client, userId, email }: { client: SupabaseClient; userId: stri
           <ResourceManagement
             client={client}
             email={email}
+            userId={userId}
             onOpenSheet={(sheetId) => {
               setCreatingApp(false)
               setArea('sheets')
@@ -119,6 +120,7 @@ function Shell({ client, userId, email }: { client: SupabaseClient; userId: stri
         ) : (
           <SheetView
             client={client}
+            userId={userId}
             sheetId={openSheetId}
             onSaveStatusChange={setSheetStatus}
             onBack={() => {

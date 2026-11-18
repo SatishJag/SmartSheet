@@ -10,11 +10,15 @@
  *   columns, foreign keys and cascade deletes (supabase/migrations/0001_schema.sql), plus
  *   0002_hardening.sql's same-sheet parents/endpoints and one dependency per pair.
  * - PostgREST's 1000-row response cap (`.range()` pages), and `upsert` (ON CONFLICT DO UPDATE).
- * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`.
+ * - access (0001, 0002, 0005_sharing): a sheet is visible to its owner and to the users it is shared with
+ *   (`sheet_members`); owners and editors may write its rows, columns and dependencies (stamped
+ *   with the SHEET owner's id), viewers may not, and only the owner may rename, delete or share
+ *   it. Members are added only through `rpc('share_sheet')`.
+ * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`;
+ *   they run as the caller, so they act on any sheet the caller may write (owner or editor).
  * - the resource-management tables of 0004_resource_management.sql (checks, same-owner
- *   references, cascades and the projects policy).
- * - ownership: every read and write is limited to rows owned by the signed-in user, and
- *   inserts/updates must keep `owner_id` = that user and point at the user's own sheet.
+ *   references, cascades and the projects policy). They are private to their owner: sharing a
+ *   sheet does not share them, and a project may only link a sheet the caller owns.
  *
  * This mimics RLS ownership so the UI flows behave as they would against Supabase. It is NOT a
  * security test: the real row-level security policies are covered by the PGlite tests in
@@ -32,6 +36,7 @@ export type TableName =
   | 'columns'
   | 'rows'
   | 'dependencies'
+  | 'sheet_members'
   | 'rm_people'
   | 'rm_projects'
   | 'rm_assignments'
@@ -78,14 +83,12 @@ const TABLES: readonly TableName[] = [
   'columns',
   'rows',
   'dependencies',
+  'sheet_members',
   'rm_people',
   'rm_projects',
   'rm_assignments',
   'rm_views',
 ]
-
-/** Tables that belong to a sheet (sheet_id must be one of the caller's sheets). */
-const SHEET_CHILDREN: readonly TableName[] = ['columns', 'rows', 'dependencies']
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
 export const MAX_ROWS = 1000
@@ -141,6 +144,15 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     successor_row_id: { notNull: true },
     type: { notNull: true },
     lag_minutes: { default: () => 0, notNull: true },
+  },
+  sheet_members: {
+    // The real table has a composite key and no id; the fake keeps one so generic updates and deletes work.
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    sheet_id: { notNull: true },
+    user_id: { notNull: true },
+    email: { notNull: true },
+    role: { notNull: true },
+    created_at: { default: ({ now }) => now(), notNull: true },
   },
   // 0004_resource_management.sql
   rm_people: {
@@ -216,6 +228,7 @@ export function emptyState(): FakeState {
       columns: [],
       rows: [],
       dependencies: [],
+      sheet_members: [],
       rm_people: [],
       rm_projects: [],
       rm_assignments: [],
@@ -616,9 +629,24 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       return { data: rows, error: null }
     }
 
-    /** Rows of this table the user may see (RLS `using owner_id = auth.uid()`), after filters. */
+    /** Rows of this table the user may see (RLS select policies), after filters. */
     private visible(state: FakeState, uid: string): DbRecord[] {
-      return state.tables[this.table].filter((r) => r.owner_id === uid && this.filters.every((f) => f(r)))
+      const may = (r: DbRecord): boolean => {
+        if (this.table === 'sheets') return sheetRole(state, uid, r.id) !== null
+        if (this.table === 'sheet_members') return r.user_id === uid || sheetRole(state, uid, r.sheet_id) === 'owner'
+        if (this.table.startsWith('rm_')) return r.owner_id === uid
+        return sheetRole(state, uid, r.sheet_id) !== null
+      }
+      return state.tables[this.table].filter((r) => may(r) && this.filters.every((f) => f(r)))
+    }
+
+    /** Whether the user may update or delete this existing row (RLS `using`). */
+    private canWrite(state: FakeState, uid: string, r: DbRecord): boolean {
+      if (this.table === 'sheets') return r.owner_id === uid
+      if (this.table === 'sheet_members') return r.user_id === uid || sheetRole(state, uid, r.sheet_id) === 'owner'
+      if (this.table.startsWith('rm_')) return r.owner_id === uid
+      const role = sheetRole(state, uid, r.sheet_id)
+      return role === 'owner' || role === 'editor'
     }
 
     private runSelect(state: FakeState, uid: string, columns: string): FakeResult {
@@ -653,13 +681,20 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
           return pgError(`null value in column "${col}" of relation "${this.table}" violates not-null constraint`, '23502')
         }
       }
-      if (row.owner_id !== uid) return rlsError(this.table)
-      if (row.workspace_id !== uid) return rlsError(this.table)
-      if (this.table.startsWith('rm_')) return checkRmRow(state, uid, this.table, row)
-      if (SHEET_CHILDREN.includes(this.table)) {
+      if (this.table === 'sheet_members') return rlsError(this.table) // only share_sheet() adds members
+      if (this.table.startsWith('rm_')) {
+        // 0004: owner-only, like the sheets row itself.
+        if (row.owner_id !== uid || row.workspace_id !== uid) return rlsError(this.table)
+        return checkRmRow(state, uid, this.table, row)
+      }
+      if (this.table === 'sheets') {
+        if (row.owner_id !== uid || row.workspace_id !== uid) return rlsError(this.table)
+      } else {
         const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
         if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
-        if (sheet.owner_id !== uid) return rlsError(this.table)
+        const role = sheetRole(state, uid, row.sheet_id)
+        if (role !== 'owner' && role !== 'editor') return rlsError(this.table)
+        if (row.owner_id !== sheet.owner_id || row.workspace_id !== sheet.owner_id) return rlsError(this.table)
       }
       // 0002_hardening.sql: parents and dependency endpoints must be rows of the SAME sheet.
       const rowExists = (id: unknown) =>
@@ -739,7 +774,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         let row: DbRecord
         if (i >= 0) {
           // The conflicting row must be visible to the caller for the UPDATE (RLS `using`).
-          if (working[i].owner_id !== uid) return { data: null, error: rlsError(this.table) }
+          if (!this.canWrite(state, uid, working[i])) return { data: null, error: rlsError(this.table) }
           row = { ...working[i], ...structuredClone(v) }
           working[i] = row
         } else {
@@ -758,7 +793,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     }
 
     private runUpdate(state: FakeState, uid: string, patch: DbRecord): FakeResult {
-      const targets = this.visible(state, uid)
+      const targets = this.visible(state, uid).filter((r) => this.canWrite(state, uid, r))
       const updated = targets.map((r) => ({ ...r, ...structuredClone(patch) }))
       for (const row of updated) {
         const err = this.checkRow(state, uid, row)
@@ -770,15 +805,16 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     }
 
     private runDelete(state: FakeState, uid: string): FakeResult {
-      const targets = this.visible(state, uid)
+      const targets = this.visible(state, uid).filter((r) => this.canWrite(state, uid, r))
       removeWithCascade(state, this.table, new Set(targets.map((r) => r.id)))
       return { data: this.returned(targets), error: null }
     }
   }
 
   /**
-   * The database functions of 0003_columns.sql (SECURITY INVOKER, so limited to the caller's own
-   * rows like everything else): `delete_column` and `set_column_cells`.
+   * The database functions: share_sheet(p_sheet, p_email, p_role) (sharing migration, SECURITY
+   * DEFINER, owner only), and delete_column / set_column_cells (0003_columns.sql, SECURITY INVOKER:
+   * they act on the sheets the caller may write, i.e. as owner or editor).
    */
   async function rpc(fn: string, args: Record<string, unknown> = {}): Promise<FakeResult<null>> {
     await tick()
@@ -787,13 +823,39 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     if (!uid || !state.users.some((u) => u.id === uid)) {
       return { data: null, error: pgError(`permission denied for function ${fn}`, '42501') }
     }
-    const ownRows = (sheetId: unknown) => state.tables.rows.filter((r) => r.owner_id === uid && r.sheet_id === sheetId)
-    if (fn === 'delete_column') {
+    const fail = (message: string, code = 'P0001') => ({ data: null, error: pgError(message, code) })
+    const canWrite = (sheetId: unknown) => {
+      const role = sheetRole(state, uid, sheetId)
+      return role === 'owner' || role === 'editor'
+    }
+    const writableRows = (sheetId: unknown) => (canWrite(sheetId) ? state.tables.rows.filter((r) => r.sheet_id === sheetId) : [])
+    if (fn === 'share_sheet') {
+      const sheetId = String(args.p_sheet)
+      const roleArg = String(args.p_role)
+      if (sheetRole(state, uid, sheetId) !== 'owner') return fail('Only the sheet owner can share it', '42501')
+      if (roleArg !== 'viewer' && roleArg !== 'editor') return fail('Role must be viewer or editor')
+      const email = String(args.p_email ?? '').trim().toLowerCase()
+      const target = state.users.find((u) => u.email === email)
+      if (!target) return fail(`No account found for ${email}`)
+      if (target.id === uid) return fail('You already own this sheet')
+      const existing = state.tables.sheet_members.find((m) => m.sheet_id === sheetId && m.user_id === target.id)
+      if (existing) existing.role = roleArg
+      else {
+        state.tables.sheet_members.push({
+          id: crypto.randomUUID(),
+          sheet_id: sheetId,
+          user_id: target.id,
+          email,
+          role: roleArg,
+          created_at: new Date().toISOString(),
+        })
+      }
+    } else if (fn === 'delete_column') {
       const colId = args.p_column_id
-      const col = state.tables.columns.find((c) => c.id === colId && c.owner_id === uid)
-      if (!col) return { data: null, error: null } // already gone, or not the caller's: a no-op
+      const col = state.tables.columns.find((c) => c.id === colId && canWrite(c.sheet_id))
+      if (!col) return { data: null, error: null } // already gone, or not writable by the caller: a no-op
       const key = String(colId)
-      for (const r of ownRows(col.sheet_id)) {
+      for (const r of writableRows(col.sheet_id)) {
         const cells = r.cells as Record<string, unknown>
         if (key in cells) delete cells[key]
       }
@@ -801,7 +863,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     } else if (fn === 'set_column_cells') {
       const key = String(args.p_column_id)
       const values = (args.p_values ?? {}) as Record<string, unknown>
-      const byId = new Map(ownRows(args.p_sheet_id).map((r) => [r.id, r]))
+      const byId = new Map(writableRows(args.p_sheet_id).map((r) => [r.id, r]))
       for (const [rowId, value] of Object.entries(values)) {
         const cells = byId.get(rowId)?.cells as Record<string, unknown> | undefined
         if (!cells) continue
@@ -826,6 +888,15 @@ const PAIR_KEY = ['sheet_id', 'predecessor_row_id', 'successor_row_id'] as const
 
 const samePair = (a: DbRecord, b: DbRecord) => PAIR_KEY.every((c) => a[c] === b[c])
 
+/** 0005_sharing.sql sheet_role(): 'owner', 'editor', 'viewer' or null. */
+function sheetRole(state: FakeState, uid: string, sheetId: unknown): 'owner' | 'editor' | 'viewer' | null {
+  const sheet = state.tables.sheets.find((s) => s.id === sheetId)
+  if (!sheet) return null
+  if (sheet.owner_id === uid) return 'owner'
+  const m = state.tables.sheet_members.find((r) => r.sheet_id === sheetId && r.user_id === uid)
+  return m ? (m.role as 'editor' | 'viewer') : null
+}
+
 function compare(a: unknown, b: unknown): number {
   if (a === b) return 0
   // Postgres sorts NULLs last in ascending order.
@@ -847,6 +918,7 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
     state.tables.columns = state.tables.columns.filter((r) => !ids.has(r.sheet_id))
     state.tables.dependencies = state.tables.dependencies.filter((r) => !ids.has(r.sheet_id))
     state.tables.rows = state.tables.rows.filter((r) => !ids.has(r.sheet_id))
+    state.tables.sheet_members = state.tables.sheet_members.filter((r) => !ids.has(r.sheet_id))
     return
   }
   if (table === 'rows') {

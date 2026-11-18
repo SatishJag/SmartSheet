@@ -17,7 +17,7 @@ const PERSON_B = 'bbbbbbbb-0000-0000-0000-0000000000a1'
 const PROJECT_B = 'bbbbbbbb-0000-0000-0000-0000000000b1'
 const SHEET_B = 'bbbbbbbb-0000-0000-0000-0000000000c1'
 
-const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql', '0003_columns.sql', '0004_resource_management.sql']
+const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql', '0003_columns.sql', '0004_resource_management.sql', '0005_sharing.sql']
 const TABLES = ['rm_people', 'rm_projects', 'rm_assignments', 'rm_views'] as const
 
 let db: PGlite
@@ -131,6 +131,20 @@ describe('resource management isolation', () => {
     }
     await asUser(A)
     for (const t of TABLES) expect(await count(t)).toBe(1)
+  })
+})
+
+describe('resource management with sharing (0005)', () => {
+  it("a sheet shared with B (even as editor) cannot be linked to B's project, and A's people stay private", async () => {
+    await db.exec('RESET ROLE')
+    await db.query(`insert into sheet_members (sheet_id, user_id, email, role) values ($1, $2, 'b@example.com', 'editor')`, [SHEET_A, B])
+    await asUser(B)
+    expect(await count('sheets')).toBe(2) // B now sees A's sheet...
+    await expect(db.query(`update rm_projects set sheet_id = $1 where id = $2`, [SHEET_A, PROJECT_B])).rejects.toThrow(
+      /row-level security/i,
+    )
+    expect(await count('rm_people')).toBe(1) // ...but none of A's resource data
+    expect(await count('rm_projects')).toBe(1)
   })
 })
 
