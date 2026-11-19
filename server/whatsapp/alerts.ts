@@ -14,6 +14,7 @@
  *
  * Every message has a dedup key, so running this from several instances or more often is harmless.
  */
+import { WHATSAPP_OWNER_RECIPIENT } from '../../src/automation/types'
 import { delayAlertMessage, noResponseMessage, nudgeMessage, summaryMessage } from '../../src/whatsapp/format'
 import { delayed, menuCounts } from '../../src/whatsapp/select'
 import { daysBetween, localTime } from '../../src/whatsapp/time'
@@ -185,7 +186,7 @@ export function createAlerts(deps: AlertDeps) {
       try {
         if (!ownerEmails.has(m.ownerId)) ownerEmails.set(m.ownerId, (await store.account(m.ownerId))?.email ?? null)
         const phones: string[] = []
-        if (ownerEmails.get(m.ownerId) === m.email.toLowerCase()) {
+        if (m.email === WHATSAPP_OWNER_RECIPIENT || ownerEmails.get(m.ownerId) === m.email.toLowerCase()) {
           const p = await ownerPhone(m.ownerId)
           if (p) phones.push(p)
         } else phones.push(...(await resolveRecipients(store, m.ownerId, [m.email])).map((r) => r.phone))

@@ -125,6 +125,7 @@ export interface WhatsAppStore {
   /** Links `phone` to the user, replacing the user's previous phone and anyone else's link to this phone. */
   linkPhone(userId: string, email: string | null, phone: string): Promise<void>
   linksByEmails(emails: string[]): Promise<Link[]>
+  unlink(userId: string): Promise<void>
   contact(id: string): Promise<Contact | null>
   activeContactsByPhone(phone: string): Promise<Contact[]>
   /** Active contacts of `ownerId` with one of `emails`. */
@@ -149,6 +150,8 @@ export interface WhatsAppStore {
   due(nowMs: number, limit: number): Promise<OutRow[]>
   markMessage(id: string, patch: { status: MessageStatus; attempts?: number; nextAttemptAt?: number; providerId?: string | null; error?: string | null; sentAt?: number | null }): Promise<void>
   sentSince(ownerId: string, sinceMs: number): Promise<number>
+  /** Outbound messages to `phone` created since `sinceMs`, oldest first (the simulator's test chat). */
+  outboundSince(phone: string, sinceMs: number): Promise<{ id: string; body: string; status: string; createdAt: number }[]>
 
   ownedSheets(userId: string, limit: number): Promise<{ id: string; name: string }[]>
   sheetMeta(sheetId: string): Promise<{ id: string; name: string; ownerId: string } | null>
@@ -253,6 +256,9 @@ export function createSupabaseWhatsAppStore(db: SupabaseClient): WhatsAppStore {
     async linkPhone(userId, email, phone) {
       must(await db.from('whatsapp_links').delete().or(`user_id.eq.${userId},phone.eq.${phone}`), 'unlink previous')
       must(await db.from('whatsapp_links').insert({ user_id: userId, email: email?.toLowerCase() ?? null, phone }), 'link phone')
+    },
+    async unlink(userId) {
+      must(await db.from('whatsapp_links').delete().eq('user_id', userId), 'unlink')
     },
     async linksByEmails(emails) {
       if (emails.length === 0) return []
@@ -383,6 +389,14 @@ export function createSupabaseWhatsAppStore(db: SupabaseClient): WhatsAppStore {
       const res = await db.from('whatsapp_messages').select('id', { count: 'exact', head: true }).eq('owner_id', ownerId).eq('direction', 'out').in('status', ['sent']).gte('sent_at', iso(sinceMs))
       if (res.error) throw new Error(`sent count: ${res.error.message}`)
       return res.count ?? 0
+    },
+
+    async outboundSince(phone, sinceMs) {
+      const rows = must(
+        await db.from('whatsapp_messages').select('id, body, status, created_at').eq('phone', phone).eq('direction', 'out').gte('created_at', iso(sinceMs)).order('created_at').range(0, 199),
+        'outbound since',
+      ) as { id: string; body: string; status: string; created_at: string }[]
+      return rows.map((r) => ({ id: r.id, body: r.body, status: r.status, createdAt: Date.parse(r.created_at) }))
     },
 
     async ownedSheets(userId, limit) {

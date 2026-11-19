@@ -5,6 +5,7 @@
  *   POST /api/whatsapp/webhook                 Meta     inbound messages; X-Hub-Signature-256 checked first
  *   GET  /api/whatsapp/status                  signed in  mode, the caller's linked phone, business number
  *   POST /api/whatsapp/link                    signed in  a LINK code (30 minutes) and its wa.me link
+ *   POST /api/whatsapp/unlink                  signed in  removes the caller's linked phone
  *   POST /api/whatsapp/contacts/:id/invite     signed in  a JOIN code (14 days) for one of the caller's contacts
  *   POST /api/whatsapp/sheets/:id/summary      signed in  the sheet's summary to the owner's phone now
  *   POST /api/whatsapp/sheets/:id/check        signed in  run the sheet's alerts now
@@ -162,12 +163,21 @@ export function createWhatsAppRoutes(deps: WhatsAppRouteDeps) {
   async function link(req: IncomingMessage, res: ServerResponse) {
     const userId = await user(req)
     const { store } = ready()
-    const account = await store.account(userId)
-    if (!account || account.anonymous) throw new HttpError(403, 'Sign in with an e-mail account to link WhatsApp.')
+    // Anonymous accounts may link too (this app signs visitors in anonymously). Unlike e-mail, this cannot
+    // be used to message strangers: a phone only ever gets messages after it sent us a code itself.
+    if (!(await store.account(userId))) throw new HttpError(403, 'Your account could not be found. Sign in again.')
     const code = newCode()
     await store.createCode({ hash: hashCode(code), kind: 'link', userId, expiresAt: now() + LINK_TTL_MS })
     const text = `LINK ${code}`
     sendJson(res, 200, { ok: true, code, text, waLink: waLink(text), expiresAt: new Date(now() + LINK_TTL_MS).toISOString() })
+  }
+
+  async function unlink(req: IncomingMessage, res: ServerResponse) {
+    const userId = await user(req)
+    const { store } = ready()
+    await store.unlink(userId)
+    log('whatsapp.unlinked', { userId })
+    sendJson(res, 200, { ok: true })
   }
 
   async function invite(req: IncomingMessage, res: ServerResponse, contactId: string) {
@@ -223,9 +233,13 @@ export function createWhatsAppRoutes(deps: WhatsAppRouteDeps) {
     const owners = await store.contactOwnersOfPhone(phone)
     const mine = linked ? linked.userId === userId : owners.every((o) => o === userId)
     if (!mine) throw new HttpError(403, 'That number belongs to someone else.')
+    // The replies are the messages that did not exist before (ids, not timestamps: the database clock may differ).
+    const since = now() - 10 * 60_000
+    const before = new Set((await store.outboundSince(phone, since)).map((m) => m.id))
     await conversation.handle(phone, text, null)
     await deliverer.deliver()
-    sendJson(res, 200, { ok: true, phone })
+    const replies = (await store.outboundSince(phone, since)).filter((m) => !before.has(m.id))
+    sendJson(res, 200, { ok: true, phone, replies: replies.map((r) => ({ body: r.body, status: r.status })) })
   }
 
   return async function handle(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
@@ -239,6 +253,7 @@ export function createWhatsAppRoutes(deps: WhatsAppRouteDeps) {
       else if (pathname === '/api/whatsapp/status' && m === 'GET') await status(req, res)
       else if (pathname === '/api/whatsapp/link' && m === 'POST') await link(req, res)
       else if (pathname === '/api/whatsapp/simulate' && m === 'POST') await simulate(req, res)
+      else if (pathname === '/api/whatsapp/unlink' && m === 'POST') await unlink(req, res)
       else if ((match = /^\/api\/whatsapp\/contacts\/([^/]+)\/invite$/.exec(pathname)) && m === 'POST') await invite(req, res, match[1])
       else if ((match = /^\/api\/whatsapp\/sheets\/([^/]+)\/summary$/.exec(pathname)) && m === 'POST') await summary(req, res, match[1])
       else if ((match = /^\/api\/whatsapp\/sheets\/([^/]+)\/check$/.exec(pathname)) && m === 'POST') await check(req, res, match[1])

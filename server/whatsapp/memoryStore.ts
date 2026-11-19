@@ -64,6 +64,9 @@ export function createMemoryStore(now: () => number = Date.now): WhatsAppStore &
       s.links = s.links.filter((l) => l.userId !== userId && l.phone !== phone)
       s.links.push({ userId, email: email?.toLowerCase() ?? null, phone })
     },
+    async unlink(userId) {
+      s.links = s.links.filter((l) => l.userId !== userId)
+    },
     async linksByEmails(emails) {
       const set = new Set(emails.map((e) => e.toLowerCase()))
       return s.links.filter((l) => l.email && set.has(l.email))
@@ -177,6 +180,10 @@ export function createMemoryStore(now: () => number = Date.now): WhatsAppStore &
     },
     async sentSince(ownerId, since) {
       return s.messages.filter((m) => m.direction === 'out' && m.ownerId === ownerId && m.status === 'sent' && (m.sentAt ?? 0) >= since).length
+    },
+
+    async outboundSince(phone, since) {
+      return s.messages.filter((m) => m.direction === 'out' && m.phone === phone && m.createdAt >= since).map((m) => ({ id: m.id, body: m.body, status: m.status, createdAt: m.createdAt }))
     },
 
     async ownedSheets(userId, limit) {

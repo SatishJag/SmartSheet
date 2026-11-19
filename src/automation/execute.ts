@@ -5,11 +5,11 @@
  * action reports `done` / `error` and the run is logged.
  */
 import { formatValue } from './values'
-import type { AutomationRule, NotifyItem, PlannedAction, PlannedRun } from './types'
+import { WHATSAPP_OWNER_RECIPIENT, type AutomationRule, type NotifyItem, type PlannedAction, type PlannedRun } from './types'
 
 /** A notification row to create (both the in-app centre and the e-mail outbox). */
 export interface NewNotification {
-  channel: 'app' | 'email'
+  channel: 'app' | 'email' | 'whatsapp'
   kind: 'rule' | 'update_request' | 'approval' | 'system'
   sheetId: string | null
   rowId: string | null
@@ -161,6 +161,12 @@ async function executeAction(a: PlannedAction, rule: AutomationRule, b: ExecBack
       const common = { kind: 'rule' as const, sheetId: b.sheetId, rowId, ruleId: rule.id, title: a.subject, body, payload }
       if (a.inApp) rows.push({ ...common, channel: 'app', recipientEmail: null, frequency: 'immediately', deliverAfter: b.now() })
       for (const email of a.emails) rows.push({ ...common, channel: 'email', recipientEmail: email, frequency: a.frequency, deliverAfter: a.deliverAfter })
+      if (a.whatsapp) {
+        // WhatsApp is never held for a digest: the people on site need it when it happens.
+        const wa = { ...common, channel: 'whatsapp' as const, frequency: 'immediately' as const, deliverAfter: b.now() }
+        if (a.inApp) rows.push({ ...wa, recipientEmail: WHATSAPP_OWNER_RECIPIENT })
+        for (const email of a.emails) rows.push({ ...wa, recipientEmail: email })
+      }
       if (rows.length === 0) return { ok: true }
       await b.createNotifications(rows)
       return { ok: true }

@@ -1,6 +1,6 @@
 # WhatsApp assistant — design
 
-Status: approved to build (2026-11-19). Replaces the WBS9 WhatsApp bot (separate repository
+Status: built (2026-11-19). Replaces the WBS9 WhatsApp bot (separate repository
 `wbs9-whatsapp-bot`, Python, Smartsheet / Monday.com) with the same capabilities built into this
 planner, for every company that uses it.
 
@@ -44,8 +44,8 @@ any account can turn on, with the planner's own data, access rules and server.
 
 ## Who is on WhatsApp
 
-1. **Planner users.** In the app (WhatsApp section) a signed-in, non-anonymous user asks for a link
-   code. The app shows a `wa.me` link with `LINK <code>` prefilled; sending it from the phone binds the
+1. **Planner users.** In the app (WhatsApp section) a signed-in user asks for a link code (anonymous
+   accounts too: this branch signs visitors in anonymously, and linking cannot reach strangers). The app shows a `wa.me` link with `LINK <code>` prefilled; sending it from the phone binds the
    phone to the account. Proof of ownership, opt-in and the opening of WhatsApp's 24-hour service
    window happen in one step, and no message template is needed. Linked users get the full menu over
    the sheets they own, alerts, summaries, and may update tasks.

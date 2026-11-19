@@ -138,6 +138,7 @@ function planAction(rule: AutomationRule, rows: readonly RowSnapshot[], ctx: Eng
         type: 'notify',
         inApp,
         emails,
+        ...(a.whatsapp ? { whatsapp: true } : {}),
         // In-app messages are never held back for a digest.
         frequency: a.frequency,
         subject:

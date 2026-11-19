@@ -82,7 +82,16 @@ export interface NotifyAction {
   include: 'all' | 'columns' | 'none'
   columnIds?: string[]
   linkToRow: boolean
+  /**
+   * Also send it on WhatsApp: to each recipient e-mail that belongs to a linked planner user or an
+   * active site contact of the owner, and to the owner's own linked phone for "me". Resolved by the
+   * server (server/whatsapp/alerts.ts); recipients without WhatsApp are skipped.
+   */
+  whatsapp?: boolean
 }
+
+/** recipient_email of a WhatsApp notification meant for the rule's owner (the server finds the phone). */
+export const WHATSAPP_OWNER_RECIPIENT = '(owner)'
 
 export interface UpdateRequestAction {
   type: 'update_request'
@@ -178,6 +187,8 @@ export type PlannedAction =
       /** Show it in the notification centre of the rule's owner. */
       inApp: boolean
       emails: string[]
+      /** Also on WhatsApp (see NotifyAction.whatsapp). */
+      whatsapp?: boolean
       frequency: Frequency
       subject: string
       message: string

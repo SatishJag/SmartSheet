@@ -436,6 +436,14 @@ describe('webhook', () => {
     expect(ctx.store.state.codes[0]).toMatchObject({ kind: 'link', userId: OWNER })
     const status = (await (await fetch(`${base}/api/whatsapp/status`, { headers: { authorization: 'Bearer good' } })).json()) as { linked: { masked: string }; mode: string }
     expect(status).toMatchObject({ mode: 'meta', linked: { masked: '+971 ••• 0001' } })
+    expect((await fetch(`${base}/api/whatsapp/unlink`, { method: 'POST', headers: { authorization: 'Bearer good' } })).status).toBe(200)
+    expect(ctx.store.state.links.find((l) => l.userId === OWNER)).toBeUndefined()
+  })
+
+  it('lets an anonymous (no e-mail) account link too: only phones that write first are ever messaged', async () => {
+    ctx.store.state.accounts.set(OWNER, { email: null, anonymous: true })
+    const res = await fetch(`${base}/api/whatsapp/link`, { method: 'POST', headers: { authorization: 'Bearer good' } })
+    expect(res.status).toBe(200)
   })
 
   it('invites only the caller’s own contacts', async () => {

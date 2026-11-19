@@ -407,6 +407,10 @@ export function ActionEditor({ value, columns, otherSheets, onChange }: { value:
             <input type="checkbox" checked={value.linkToRow} onChange={(e) => onChange({ ...value, linkToRow: e.currentTarget.checked })} />
             Link to the row
           </label>
+          <label className="au-check au-self-end">
+            <input type="checkbox" checked={value.whatsapp === true} onChange={(e) => onChange({ ...value, whatsapp: e.currentTarget.checked || undefined })} />
+            Also send on WhatsApp
+          </label>
           {value.include === 'columns' && <ColumnChecks legend="Columns to include" columns={columns} value={value.columnIds ?? []} onChange={(columnIds) => onChange({ ...value, columnIds })} />}
         </>
       )}

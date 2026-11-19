@@ -5,6 +5,7 @@ import { DashboardsPage } from '../assets/DashboardsPage'
 import { ReportsPage } from '../assets/ReportsPage'
 import { ResourcesPage } from '../resources/ResourcesPage'
 import { WorkspacesPage } from '../assets/WorkspacesPage'
+import { WhatsAppPage } from '../whatsapp/ui/WhatsAppPage'
 
 /**
  * The top-level sections of the app, in navigation order. Each area is owned by its own folder
@@ -26,4 +27,5 @@ export const SECTIONS: Section[] = [
   { id: 'dashboards', label: 'Dashboards', icon: 'chart', Page: DashboardsPage },
   { id: 'resources', label: 'Resources', icon: 'users', Page: ResourcesPage },
   { id: 'automation', label: 'Automation', icon: 'bolt', Page: AutomationPage },
+  { id: 'whatsapp', label: 'WhatsApp', icon: 'chat', Page: WhatsAppPage },
 ]

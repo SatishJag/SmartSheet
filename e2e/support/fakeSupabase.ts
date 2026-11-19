@@ -54,6 +54,7 @@ import {
   isAssetTable,
   type AssetTable,
 } from './fakeAssets'
+import { sheetless, WHATSAPP_SCHEMA, WHATSAPP_TABLES, whatsappAccessError, whatsappUniqueError, type WhatsAppTable } from './fakeWhatsApp'
 
 export const FAKE_STORAGE_KEY = 'fakeSupabase:v1'
 
@@ -69,6 +70,7 @@ export type TableName =
   | 'assignments'
   | AutomationTable
   | AssetTable
+  | WhatsAppTable
 export type DbRecord = Record<string, unknown>
 
 export interface FakeUser {
@@ -118,6 +120,7 @@ const TABLES: readonly TableName[] = [
   'assignments',
   ...AUTOMATION_TABLES,
   ...ASSET_TABLES,
+  ...WHATSAPP_TABLES,
 ]
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
@@ -134,6 +137,7 @@ interface ColumnSpec {
 
 const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
   ...AUTOMATION_SCHEMA,
+  ...WHATSAPP_SCHEMA,
   sheets: {
     id: { default: () => crypto.randomUUID(), notNull: true },
     owner_id: { default: ({ uid }) => uid, notNull: true },
@@ -654,6 +658,10 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
         this.op.kind === 'update' ? this.op.patch : undefined,
       )
       if (accessError) return { data: null, error: accessError }
+      const waError = serviceRole
+        ? null
+        : whatsappAccessError(this.table, this.op.kind, this.op.kind === 'update' ? this.op.patch : undefined, this.op.kind === 'insert' || this.op.kind === 'upsert' ? this.op.rows : undefined)
+      if (waError) return { data: null, error: waError }
       let result: FakeResult
       switch (this.op.kind) {
         case 'select':
@@ -741,7 +749,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
         const bad = resourceError(state, this.table, row)
         if (bad) return bad
       }
-      if (this.table !== 'sheets' && this.table !== 'resources' && this.table !== 'resource_time_off' && !(row.sheet_id == null && this.table === 'notifications')) {
+      if (this.table !== 'sheets' && this.table !== 'resources' && this.table !== 'resource_time_off' && !(row.sheet_id == null && this.table === 'notifications') && !sheetless(this.table, row)) {
         const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
         if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
         if (!serviceRole && sheet.owner_id !== uid) return rlsError(this.table)
@@ -805,7 +813,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
 
     /** Primary key and (dependencies) the one-per-pair unique key. Null when `row` is unique among `others`. */
     private uniqueError(row: DbRecord, others: DbRecord[]): FakeError | null {
-      const autoDup = automationUniqueError(this.table, row, others)
+      const autoDup = automationUniqueError(this.table, row, others) ?? whatsappUniqueError(this.table, row, others)
       if (autoDup) return autoDup
       if (isAssetTable(this.table)) {
         const dup = assetUniqueError(this.table, row, others)

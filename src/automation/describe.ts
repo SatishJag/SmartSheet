@@ -56,7 +56,7 @@ export function describeAction(a: Action, cols: readonly Column[]): string {
   switch (a.type) {
     case 'notify': {
       const when = a.frequency === 'immediately' ? '' : a.frequency === 'daily' ? ' in a daily digest' : ' in a weekly digest'
-      return `notify ${describeRecipients(a.recipients, cols)}${when}`
+      return `notify ${describeRecipients(a.recipients, cols)}${when}${a.whatsapp ? ', also on WhatsApp' : ''}`
     }
     case 'update_request':
       return `ask ${describeRecipients(a.recipients, cols)} to update ${a.columnIds.map((id) => title(cols, id)).join(', ') || 'the row'}`

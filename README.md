@@ -37,6 +37,16 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
 - **Import CSV**: create a sheet from a CSV file (first row = headers; date, checkbox and text columns are
   detected; up to 5,000 rows and 50 columns)
 - **Saving**: optimistic edits, background save with retry, unsaved-changes guard
+- **WhatsApp assistant** (WhatsApp page): link your phone with a one-time code, then on WhatsApp pick
+  a project and use the menu (delayed, due in 30 days, at risk / on track, critical path, milestones,
+  delay reminders to task owners, summary), see a task with `#N`, update it with `N Complete`,
+  `N 60%` or `N In progress - note`, get the full list by e-mail, or ask a question in your own words
+  (Claude answers from the sheet's data only). Per sheet: delay alerts to task owners, progress
+  checks at 50 / 70 / 90 % of a task's time with reminders and a no-response report, a daily
+  summary, quiet hours. Site contacts (subcontractors without an account) join from an invitation
+  and can see and update only their own tasks. Automation "Notify" rules can also send on
+  WhatsApp. Runs as a simulator with a test chat until WhatsApp credentials are set (see below).
+  Design: [`docs/superpowers/specs/2026-11-19-whatsapp-assistant-design.md`](docs/superpowers/specs/2026-11-19-whatsapp-assistant-design.md)
 
 ## Getting started
 
@@ -117,6 +127,27 @@ Each AI draft can cost several large model calls, so the server limits drafts pe
 total, and stops the AI call when the browser disconnects. Without sign-in anyone can get a new
 anonymous account, so the total hourly cap is what bounds cost: also set a monthly spend limit
 on the Anthropic key.
+
+### WhatsApp
+
+The assistant (`server/whatsapp/`) needs `SUPABASE_SERVICE_ROLE_KEY` and migration
+`0015_whatsapp.sql`. Without WhatsApp credentials it runs as a **simulator**: nothing is sent,
+messages are stored and shown on the WhatsApp page, whose test chat plays the phone.
+
+| Variable | Purpose |
+| --- | --- |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Meta WhatsApp Cloud API: a permanent (system user) token and the sender's phone number id. Both set = real messages |
+| `WHATSAPP_APP_SECRET` | The Meta app secret. Every webhook POST must carry a valid `X-Hub-Signature-256`; without it the webhook refuses everything |
+| `WHATSAPP_VERIFY_TOKEN` | Any string; enter the same in Meta's webhook settings |
+| `WHATSAPP_BUSINESS_NUMBER` | The sender's number with country code (for the `wa.me` links in link codes and invitations) |
+| `WHATSAPP_TEMPLATE_NAME`, `WHATSAPP_TEMPLATE_LANG` | Optional. An approved template with one body parameter (`{{1}}`), used for alerts and summaries outside WhatsApp's 24-hour window; without it those are skipped (and logged) when the person has not written in the last 24 hours |
+| `WHATSAPP_MESSAGES_PER_DAY` | Outbound messages per account per day (default 300) |
+| `WHATSAPP_ALERT_MINUTES` | How often each enabled sheet is checked for alerts (default 15) |
+
+Meta setup: create a Meta app with the WhatsApp product, add a phone number, and set the webhook
+callback URL to `https://<your app>/api/whatsapp/webhook` with the verify token above, subscribed to
+`messages`. For the template, create a *Utility* template such as “Project update: {{1}}” and put
+its name in `WHATSAPP_TEMPLATE_NAME`.
 
 Railway: `railway.json` builds with `npm run build` (Railpack) and starts
 `node dist-server/server/main.js` with a health check on `/api/health`. Set the variables above
