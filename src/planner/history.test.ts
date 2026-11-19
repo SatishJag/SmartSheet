@@ -71,6 +71,25 @@ describe('createSupabaseHistorySource', () => {
       expect(calls.filter((c) => c.method === 'select').map((c) => c.target).sort()).toEqual(['planner_equipment_types', 'project_types', 'schedule_types'])
     })
 
+    it('passes the schedule type’s own words for what it plans, and ignores malformed ones', async () => {
+      const labels = { noun: 'material', typeExample: 'Reinforcing steel', nameExample: '16 mm rebar' }
+      const { client } = fakeClient({
+        schedule_types: ok([
+          { id: 'materials-procurement', name: 'Materials procurement', description: '', project_types: [], item_labels: labels },
+          { id: 'bad', name: 'Bad labels', description: '', project_types: [], item_labels: { noun: '' } },
+          { id: 'plain', name: 'No labels', description: '', project_types: [] },
+        ]),
+        project_types: ok([]),
+        planner_equipment_types: ok([]),
+      })
+      const { scheduleTypes } = await createSupabaseHistorySource(client).options()
+      expect(scheduleTypes.map((t) => [t.id, t.itemLabels])).toEqual([
+        ['materials-procurement', labels],
+        ['bad', undefined],
+        ['plain', undefined],
+      ])
+    })
+
     it('throws with the Supabase message when a query fails', async () => {
       const { client } = fakeClient({
         schedule_types: ok([]),

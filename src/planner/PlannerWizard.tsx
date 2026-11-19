@@ -32,7 +32,7 @@ import {
   type ItemForm,
 } from './plannerItems'
 import { insertSheetFromDrafts } from './sheetFromDraft'
-import type { PlannerOptions } from './types'
+import { DEFAULT_ITEM_LABELS, type ItemLabels, type PlannerOptions } from './types'
 import './plannerWizard.css'
 
 export { BASIS_LABELS, sourceLabel } from './PlanPreview'
@@ -64,6 +64,8 @@ function schedulesFor(options: PlannerOptions, projectType: string) {
   if (!projectType) return options.scheduleTypes
   return options.scheduleTypes.filter((t) => !t.projectTypes?.length || t.projectTypes.includes(projectType))
 }
+
+const Cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 const isAbort = (err: unknown) => err instanceof DOMException && err.name === 'AbortError'
 const describe = (err: unknown, fallback: string) =>
@@ -168,6 +170,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
 
   const visibleSchedules = options ? schedulesFor(options, projectType) : []
   const projectTypeName = options?.projectTypes?.find((t) => t.id === projectType)?.name
+  const labels = { ...DEFAULT_ITEM_LABELS, ...options?.scheduleTypes.find((t) => t.id === scheduleType)?.itemLabels }
+  const noun = labels.noun
+  const Noun = Cap(noun)
   const equipmentTypes = options?.equipmentTypes[scheduleType] ?? []
   const projectCounts = options?.projectCounts?.[scheduleType] ?? {}
   const defaultChoice = equipmentTypes[0] ?? OTHER
@@ -339,7 +344,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   // ---- the request form ----
 
   const form: FormValues = { scheduleType, items, sameDate, sharedDate, notes }
-  const errors = validateItems(form)
+  const errors = validateItems(form, noun)
   const problem = firstProblem(form, errors)
   const many = items.length > 1
   const canAdd = items.length < MAX_ITEMS
@@ -455,7 +460,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                 <h3 ref={headingRef} tabIndex={-1}>
                   What do you need on site?
                 </h3>
-                <p>Choose the equipment and the date it must arrive. The plan is built backward from that date.</p>
+                <p>Choose the {noun} and the date it must be on site. The plan is built backward from that date.</p>
               </div>
               {!options && !optionsError && (
                 <div className="planner-card card" aria-hidden="true">
@@ -483,7 +488,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               )}
               {options && (
                 <>
-                  <section className="planner-card card" aria-label="Schedule and equipment">
+                  <section className="planner-card card" aria-label={`Schedule and ${noun}`}>
                     {options.projectTypes && options.projectTypes.length > 0 && (
                       <div className="planner-field planner-project-type">
                         <label htmlFor={ids.project} className="planner-label">
@@ -515,7 +520,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
 
                     {equipmentTypes.length > 0 && (
                       <fieldset className="planner-types">
-                        <legend>Equipment with history</legend>
+                        <legend>{Noun} with history</legend>
                         <p className="planner-hint">Tick what you need on site; each tick adds an item to the plan (up to {MAX_ITEMS}).</p>
                         <div className="planner-type-cards">
                           {equipmentTypes.map((type) => {
@@ -582,7 +587,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                     </div>
                     {many && sameDate && <p className="planner-hint">An item can have its own date instead: fill in its Required on site below.</p>}
 
-                    <ol className="planner-items" aria-label="Equipment items">
+                    <ol className="planner-items" aria-label={`${Noun} items`}>
                       {items.map((item, index) => (
                         <ItemFields
                           key={item.key}
@@ -591,6 +596,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                           idBase={`${ids.item}-${item.key}`}
                           many={many}
                           equipmentTypes={equipmentTypes}
+                          labels={labels}
                           form={form}
                           errors={submitted ? errors[item.key] : undefined}
                           onChange={(patch) => updateItem(item.key, patch)}
@@ -699,6 +705,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
             onInstruction={setInstruction}
             failure={failureBlock}
             creating={step === 'creating'}
+            noun={noun}
             onBack={() => {
               setFailure(null)
               setStep('request')
@@ -720,6 +727,7 @@ interface ItemFieldsProps {
   idBase: string
   many: boolean
   equipmentTypes: string[]
+  labels: ItemLabels
   form: FormValues
   errors: { type?: string; name?: string; date?: string } | undefined
   onChange: (patch: Partial<ItemForm>) => void
@@ -733,8 +741,8 @@ const FieldError = ({ id, children }: { id: string; children: string }) => (
   </small>
 )
 
-/** One equipment item of the request form, as a compact row: type, name, its own required date (and Remove). */
-function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, onChange, onRemove }: ItemFieldsProps) {
+/** One item of the request form (equipment, material, ...), as a compact row: type, name, its own required date (and Remove). */
+function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, errors, onChange, onRemove }: ItemFieldsProps) {
   const typeId = `${idBase}-type`
   const otherId = `${idBase}-other`
   const nameId = `${idBase}-name`
@@ -757,7 +765,7 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, o
       {hasSelect && (
         <div className="planner-field planner-f-type">
           <label htmlFor={typeId} className="planner-label">
-            Equipment type
+            {Cap(labels.noun)} type
           </label>
           <select id={typeId} value={item.choice} onChange={(e) => onChange({ choice: e.target.value, fromCard: null })}>
             {equipmentTypes.map((t) => (
@@ -772,13 +780,13 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, o
       {showOther && (
         <div className="planner-field planner-f-other">
           <label htmlFor={otherId} className="planner-label">
-            {equipmentTypes.length === 0 ? 'Equipment type' : 'Other equipment type'}
+            {equipmentTypes.length === 0 ? `${Cap(labels.noun)} type` : `Other ${labels.noun} type`}
           </label>
           <input
             id={otherId}
             value={item.other}
             onChange={(e) => onChange({ other: e.target.value })}
-            placeholder="e.g. Gas turbine"
+            placeholder={`e.g. ${labels.typeExample}`}
             maxLength={100}
             aria-invalid={typeError ? true : undefined}
             aria-describedby={typeError ? `${otherId}-error` : undefined}
@@ -789,13 +797,13 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, form, errors, o
       )}
       <div className="planner-field planner-f-name">
         <label htmlFor={nameId} className="planner-label">
-          Equipment name
+          {Cap(labels.noun)} name
         </label>
         <input
           id={nameId}
           value={item.name}
           onChange={(e) => onChange({ name: e.target.value })}
-          placeholder="e.g. 400 MVA transformer for substation B"
+          placeholder={`e.g. ${labels.nameExample}`}
           maxLength={200}
           aria-invalid={nameError ? true : undefined}
           aria-describedby={nameError ? `${nameId}-error` : undefined}

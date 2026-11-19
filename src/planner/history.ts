@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { DepType } from '../engine/types'
-import type { ActivityStats, CatalogActivity, HistorySource, HistorySummary, PlannerOptions, ProjectType, ScheduleType } from './types'
+import type { ActivityStats, CatalogActivity, HistorySource, HistorySummary, ItemLabels, PlannerOptions, ProjectType, ScheduleType } from './types'
 
 /**
  * The planner's history read from Supabase (supabase/migrations/0004_planner_history.sql).
@@ -13,7 +13,7 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
     async options(): Promise<PlannerOptions> {
       const [types, equipment, projects] = await Promise.all([
         // By position, so a project type opens on its main schedule type; name breaks ties.
-        client.from('schedule_types').select('id, name, description, project_types').order('position', { ascending: true }).order('name', { ascending: true }),
+        client.from('schedule_types').select('id, name, description, project_types, item_labels').order('position', { ascending: true }).order('name', { ascending: true }),
         client
           .from('planner_equipment_types')
           .select('schedule_type, equipment_type')
@@ -27,6 +27,7 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
           name: r.name,
           description: r.description ?? '',
           ...(r.project_types?.length ? { projectTypes: r.project_types } : {}),
+          ...(isItemLabels(r.item_labels) ? { itemLabels: r.item_labels } : {}),
         }),
       )
       const projectTypes = rows<ProjectTypeRow>(projects).map(
@@ -79,7 +80,13 @@ interface ScheduleTypeRow {
   name: string
   description: string | null
   project_types?: string[] | null
+  item_labels?: unknown
 }
+
+const isItemLabels = (v: unknown): v is ItemLabels =>
+  typeof v === 'object' &&
+  v !== null &&
+  ['noun', 'typeExample', 'nameExample'].every((k) => typeof (v as Record<string, unknown>)[k] === 'string' && (v as Record<string, string>)[k].trim() !== '')
 
 interface ProjectTypeRow {
   id: string

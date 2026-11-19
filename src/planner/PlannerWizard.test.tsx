@@ -131,6 +131,35 @@ describe('PlannerWizard: project type and schedule type', () => {
     expect(schedule).toHaveDisplayValue('Long-lead equipment procurement')
   })
 
+  it('speaks of what the schedule type plans: material, subcontract package, consultant, equipment', async () => {
+    const labelled: PlannerOptions = {
+      ...OPTIONS_BY_PROJECT,
+      scheduleTypes: OPTIONS_BY_PROJECT.scheduleTypes.map((t) =>
+        t.id === 'materials-procurement'
+          ? { ...t, itemLabels: { noun: 'material', typeExample: 'Reinforcing steel', nameExample: '16 mm rebar for the level 3 slab' } }
+          : t,
+      ),
+    }
+    mockServer({ options: () => json(200, labelled) })
+    const { user } = setup()
+    const project = await screen.findByLabelText('Project type')
+    // Equipment, as before
+    expect(screen.getByLabelText('Equipment type')).toBeInTheDocument()
+    expect(screen.getByLabelText('Equipment name')).toHaveAttribute('placeholder', 'e.g. 400 MVA transformer for substation B')
+    expect(screen.getByText(/Choose the equipment and the date it must be on site/)).toBeInTheDocument()
+
+    await user.selectOptions(project, 'properties') // opens on Materials
+    expect(screen.getByLabelText('Material type')).toHaveAttribute('placeholder', 'e.g. Reinforcing steel')
+    expect(screen.getByLabelText('Material name')).toHaveAttribute('placeholder', 'e.g. 16 mm rebar for the level 3 slab')
+    expect(screen.queryByLabelText('Equipment name')).not.toBeInTheDocument()
+    expect(screen.getByText(/Choose the material and the date it must be on site/)).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'Material items' })).toBeInTheDocument()
+
+    // The messages use the same words
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter the material type')
+  })
+
   it('plans with the schedule type shown after switching', async () => {
     const { drafts } = mockServer({ options: () => json(200, OPTIONS_BY_PROJECT) })
     const { user } = setup()

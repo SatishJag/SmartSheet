@@ -63,19 +63,19 @@ export function effectiveDate(item: ItemForm, form: Pick<FormValues, 'sameDate' 
 const dateRange = `Enter a date between ${MIN_DATE} and ${MAX_DATE}`
 
 /** Per-item problems, by item key; an item with no entry is fine. */
-export function validateItems(form: FormValues): Record<string, ItemErrors> {
+export function validateItems(form: FormValues, noun = 'equipment'): Record<string, ItemErrors> {
   const shared = form.sameDate && form.items.length > 1
   const errors: Record<string, ItemErrors> = {}
   for (const item of form.items) {
     const e: ItemErrors = {}
     const type = itemType(item)
-    if (!type) e.type = 'Enter the equipment type'
-    else if (type.length > MAX_TYPE_CHARS) e.type = `The equipment type can be at most ${MAX_TYPE_CHARS} characters`
+    if (!type) e.type = `Enter the ${noun} type`
+    else if (type.length > MAX_TYPE_CHARS) e.type = `The ${noun} type can be at most ${MAX_TYPE_CHARS} characters`
     const name = item.name.trim()
-    if (!name) e.name = 'Enter the equipment name'
-    else if (name.length > MAX_NAME_CHARS) e.name = `The equipment name can be at most ${MAX_NAME_CHARS} characters`
+    if (!name) e.name = `Enter the ${noun} name`
+    else if (name.length > MAX_NAME_CHARS) e.name = `The ${noun} name can be at most ${MAX_NAME_CHARS} characters`
     const date = effectiveDate(item, form)
-    if (!date) e.date = shared ? 'Enter a date, or fill in the shared date' : 'Enter the date the equipment must be on site'
+    if (!date) e.date = shared ? 'Enter a date, or fill in the shared date' : `Enter the date the ${noun} must be on site`
     else if (!isAcceptedDate(date)) e.date = dateRange
     if (e.type || e.name || e.date) errors[item.key] = e
   }

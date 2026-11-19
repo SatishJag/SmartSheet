@@ -57,6 +57,16 @@ describe('migration 0013 and the procurement module', () => {
     }
   })
 
+  it('says in the wizard’s words what each type plans, as the spec does (0014); other types plan equipment', async () => {
+    for (const spec of GENERATED_SCHEDULE_TYPES) {
+      const r = await db.query<{ item_labels: unknown }>(`select item_labels from schedule_types where id = $1`, [spec.id])
+      expect(r.rows[0].item_labels, spec.id).toEqual(spec.itemLabels)
+    }
+    const lle = await db.query<{ item_labels: { noun: string } }>(`select item_labels from schedule_types where id = 'lle-procurement'`)
+    expect(lle.rows[0].item_labels.noun).toBe('equipment')
+    await expect(db.query(`update schedule_types set item_labels = '{"noun":""}' where id = 'lle-procurement'`)).rejects.toThrow()
+  })
+
   it('has a spec for every general procurement type, and nothing else', () => {
     const general = ['MAT', 'OEQ', 'SUB', 'CON']
     expect(GENERATED_SCHEDULE_TYPES.map((s) => s.moduleCode)).toEqual(general)

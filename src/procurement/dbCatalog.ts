@@ -29,6 +29,8 @@ export interface ScheduleTypeSpec {
   position: number
   /** The project types that offer it. */
   projectTypes: string[]
+  /** The wizard's words for what it plans (schedule_types.item_labels, set by migration 0014). */
+  itemLabels: { noun: string; typeExample: string; nameExample: string }
   /**
    * PLACEHOLDER default durations in working days, by step code (the part of the activity code after
    * the type): the Procurement app leaves durations open, and the planner needs a default per step.
@@ -46,6 +48,7 @@ export const GENERATED_SCHEDULE_TYPES: ScheduleTypeSpec[] = [
     description: 'Concrete, rebar, cable and other bulk materials: requirement, quotations, award, supply and receipt.',
     position: 1,
     projectTypes: ['properties'],
+    itemLabels: { noun: 'material', typeExample: 'Reinforcing steel', nameExample: '16 mm rebar for the level 3 slab' },
     defaultDays: { define_requirement: 5, rfq: 10, evaluate: 5, award: 3, source: 30, transport: 10, receive_inspect: 2 },
   },
   {
@@ -55,6 +58,7 @@ export const GENERATED_SCHEDULE_TYPES: ScheduleTypeSpec[] = [
     description: 'Equipment outside the standard long-lead list: specification, tender, award, vendor drawings, manufacture, testing, shipping and receipt.',
     position: 3,
     projectTypes: ['data-centre'],
+    itemLabels: { noun: 'equipment', typeExample: 'Cooling skid', nameExample: 'Modular cooling skid for data hall 2' },
     defaultDays: { define_specification: 15, tender: 30, evaluate: 10, award: 5, vendor_drawings: 20, release: 5, manufacture: 90, fat: 5, ship: 25, customs: 5, receive_accept: 2 },
   },
   {
@@ -64,6 +68,7 @@ export const GENERATED_SCHEDULE_TYPES: ScheduleTypeSpec[] = [
     description: 'Subcontract packages: scope, tender, award, submissions, mobilisation and readiness.',
     position: 4,
     projectTypes: ['data-centre', 'properties'],
+    itemLabels: { noun: 'subcontract package', typeExample: 'Raised floor', nameExample: 'Raised access floor for data hall 2' },
     defaultDays: { define_scope: 10, prequalify: 10, tender: 20, evaluate: 5, negotiate: 5, award: 3, approve_submissions: 10, mobilise: 10, confirm_readiness: 2 },
   },
   {
@@ -73,6 +78,7 @@ export const GENERATED_SCHEDULE_TYPES: ScheduleTypeSpec[] = [
     description: 'Consultants: brief, proposals, appointment, onboarding and start of service.',
     position: 5,
     projectTypes: ['data-centre', 'properties'],
+    itemLabels: { noun: 'consultant', typeExample: 'Commissioning agent', nameExample: 'Commissioning agent for data hall 1' },
     defaultDays: { define_brief: 5, request_proposals: 15, evaluate: 5, negotiate: 5, appoint: 3, onboard: 5, commence: 1 },
   },
 ]

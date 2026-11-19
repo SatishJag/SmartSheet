@@ -5,6 +5,23 @@
  */
 import type { DepType } from '../engine/types'
 
+/** The words the wizard uses for what is being planned (equipment, material, ...). */
+export interface ItemLabels {
+  /** Lower case, singular: 'equipment', 'material', 'subcontract package'. */
+  noun: string
+  /** An example type, shown as the placeholder of the type field. */
+  typeExample: string
+  /** An example name, shown as the placeholder of the name field. */
+  nameExample: string
+}
+
+/** Used when a schedule type gives none. */
+export const DEFAULT_ITEM_LABELS: ItemLabels = {
+  noun: 'equipment',
+  typeExample: 'Gas turbine',
+  nameExample: '400 MVA transformer for substation B',
+}
+
 /** A kind of schedule the planner can draft, e.g. 'lle-procurement'. */
 export interface ScheduleType {
   id: string
@@ -12,6 +29,8 @@ export interface ScheduleType {
   description: string
   /** Ids of the project types this schedule type applies to. Absent or empty: offered under every project type. */
   projectTypes?: string[]
+  /** What the schedule plans, in the wizard's words. Absent: equipment. */
+  itemLabels?: ItemLabels
 }
 
 /** A kind of project the user plans first (Data centre, Properties); it narrows the schedule types on offer. */

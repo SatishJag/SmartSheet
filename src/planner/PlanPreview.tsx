@@ -28,7 +28,7 @@ export function entryTitle(entry: Entry): string {
 export const SAMPLE_WARNING = "Based on SAMPLE data, not your company's history."
 
 /** One item's preview: feasibility banner, source, warnings, activities table, assumptions and risks. */
-export function ItemPreview({ entry, showSampleWarning }: { entry: Entry; showSampleWarning: boolean }) {
+export function ItemPreview({ entry, showSampleWarning, noun = 'equipment' }: { entry: Entry; showSampleWarning: boolean; noun?: string }) {
   const tableTitleId = useId()
   const { draft, plan } = entry
   if (!draft || !plan) return null
@@ -70,7 +70,7 @@ export function ItemPreview({ entry, showSampleWarning }: { entry: Entry; showSa
         <p className="planner-sample" role="note">
           <PIcon name="alertCircle" size={18} />
           <span>
-            <strong>No history for this equipment; durations are defaults.</strong> Check them against vendor quotes.
+            <strong>No history for this {noun}; durations are defaults.</strong> Check them against vendor quotes.
           </span>
         </p>
       )}
@@ -185,6 +185,8 @@ export interface PlanPreviewProps {
   /** The form-level failure (with its Retry), if any. */
   failure: ReactNode
   creating: boolean
+  /** What is being planned, lower case ('equipment'); used in the no-history note. */
+  noun?: string
   onBack: () => void
   onRegenerateAll: () => void
   onRegenerateOne: (key: string, instruction: string) => void
@@ -199,7 +201,7 @@ export interface PlanPreviewProps {
  * a sticky footer so "Create schedule" is always in reach.
  */
 export function PlanPreview(props: PlanPreviewProps) {
-  const { entries, headingRef, instruction, instructionId, onInstruction, failure, creating, onBack, onRegenerateAll, onRegenerateOne, onRemove, onCreate } = props
+  const { entries, headingRef, instruction, instructionId, onInstruction, failure, creating, noun = 'equipment', onBack, onRegenerateAll, onRegenerateOne, onRemove, onCreate } = props
   const many = entries.length > 1
   const info = overview(entries)
   const busy = creating || entries.some((e) => e.status === 'busy')
@@ -271,12 +273,12 @@ export function PlanPreview(props: PlanPreviewProps) {
 
         {!many && entries[0].status === 'failed' && (
           <div className="planner-card card">
-            <ItemBody entry={entries[0]} disabled={busy} removable={false} onRegenerate={onRegenerateOne} onRemove={onRemove} />
+            <ItemBody entry={entries[0]} noun={noun} disabled={busy} removable={false} onRegenerate={onRegenerateOne} onRemove={onRemove} />
           </div>
         )}
         {!many && entries[0].status !== 'failed' && (
           <div className="planner-card card">
-            <ItemPreview entry={entries[0]} showSampleWarning />
+            <ItemPreview entry={entries[0]} showSampleWarning noun={noun} />
           </div>
         )}
 
@@ -303,7 +305,7 @@ export function PlanPreview(props: PlanPreviewProps) {
                     </button>
                   </h4>
                   <div id={panelId} role="region" aria-labelledby={headerId} hidden={!open} className="planner-accordion-panel">
-                    <ItemBody entry={entry} disabled={busy} removable={entries.length > 1} onRegenerate={onRegenerateOne} onRemove={onRemove} />
+                    <ItemBody entry={entry} noun={noun} disabled={busy} removable={entries.length > 1} onRegenerate={onRegenerateOne} onRemove={onRemove} />
                   </div>
                 </section>
               )
@@ -402,6 +404,7 @@ function ItemChips({ entry }: { entry: Entry }) {
 }
 
 interface ItemBodyProps {
+  noun: string
   entry: Entry
   disabled: boolean
   removable: boolean
@@ -410,7 +413,7 @@ interface ItemBodyProps {
 }
 
 /** The inside of one accordion card: the preview, or the failure with Retry, plus this item's own regeneration. */
-function ItemBody({ entry, disabled, removable, onRegenerate, onRemove }: ItemBodyProps) {
+function ItemBody({ entry, noun, disabled, removable, onRegenerate, onRemove }: ItemBodyProps) {
   const [instruction, setInstruction] = useState('')
   const id = useId()
   return (
@@ -433,7 +436,7 @@ function ItemBody({ entry, disabled, removable, onRegenerate, onRemove }: ItemBo
           {entry.notice}
         </p>
       )}
-      <ItemPreview entry={entry} showSampleWarning={false} />
+      <ItemPreview entry={entry} showSampleWarning={false} noun={noun} />
       <div className="planner-refine">
         <div className="planner-field planner-regenerate-one">
           <label htmlFor={id} className="planner-label">

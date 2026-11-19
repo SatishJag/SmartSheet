@@ -36,6 +36,27 @@ describe('effectiveDate', () => {
   })
 })
 
+describe('validateItems with the schedule type’s words', () => {
+  it('names what is being planned in each message, and says equipment by default', () => {
+    const empty = item({ choice: OTHER, other: '', name: '', date: '' })
+    const f = form([empty], { sameDate: false })
+    expect(validateItems(f)[empty.key]).toEqual({
+      type: 'Enter the equipment type',
+      name: 'Enter the equipment name',
+      date: 'Enter the date the equipment must be on site',
+    })
+    expect(validateItems(f, 'subcontract package')[empty.key]).toEqual({
+      type: 'Enter the subcontract package type',
+      name: 'Enter the subcontract package name',
+      date: 'Enter the date the subcontract package must be on site',
+    })
+    const long = item({ choice: OTHER, other: 'x'.repeat(101), name: 'y'.repeat(201) })
+    const e = validateItems(form([long]), 'material')[long.key]
+    expect(e.type).toMatch(/^The material type can be at most/)
+    expect(e.name).toMatch(/^The material name can be at most/)
+  })
+})
+
 describe('validateItems / firstProblem', () => {
   it('a valid single item has no errors', () => {
     const f = form([item()])
