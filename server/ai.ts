@@ -24,8 +24,8 @@ export interface AnthropicLike {
 export const DEFAULT_MODEL = 'claude-opus-5-5'
 export const TOOL_NAME = 'propose_plan'
 /** Models that accept the server-side refusal fallback (`fallbacks: "default"`). */
-const REFUSAL_FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-fable-5-2'])
-const REFUSAL_FALLBACK_BETA = 'server-side-fallback-2026-07-01'
+export const REFUSAL_FALLBACK_MODELS = new Set(['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-fable-5-2'])
+export const REFUSAL_FALLBACK_BETA = 'server-side-fallback-2026-07-01'
 
 export type AiOutcome =
   | { ok: true; plan: ProposedPlan }

@@ -60,10 +60,10 @@ export function menuMessage(sheetName: string, c: MenuCounts, opts: { canNotifyO
   return lines.join('\n')
 }
 
-export function sheetPickerMessage(greetingName: string | null, sheets: { name: string }[], more: number): string {
+export function sheetPickerMessage(greetingName: string | null, sheets: { name: string }[], more: boolean): string {
   if (sheets.length === 0) return `👋 Hi${greetingName ? ` ${greetingName}` : ''}! You have no sheets yet. Create one in the planner, then reply *MENU*.`
   const lines = [`👋 Hi${greetingName ? ` *${greetingName}*` : ''}! Pick a project:`, '', ...sheets.map((s, i) => `*${i + 1}* ${s.name}`)]
-  if (more > 0) lines.push(`…and ${more} more (the ${sheets.length} most recent are shown).`)
+  if (more) lines.push(`(Your ${sheets.length} most recent projects are shown.)`)
   lines.push('', `Reply 1–${sheets.length}.`)
   return lines.join('\n')
 }

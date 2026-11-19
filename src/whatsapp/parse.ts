@@ -66,6 +66,9 @@ export function parseCommand(raw: string): Command {
   }
   const upd = /^(\d{1,3})\s*[.):]?\s+(.+)$/s.exec(text)
   if (upd) {
+    // "2 - crane down": a number and a note only (answers a progress check with choice 2).
+    const noteOnly = /^[-–—:]\s*(.*)$/s.exec(upd[2])
+    if (noteOnly) return { kind: 'update', n: Number(upd[1]), status: null, percent: null, comment: noteOnly[1].trim() }
     const { head, comment } = splitComment(upd[2])
     if (head) return { kind: 'update', n: Number(upd[1]), ...statusOrPercent(head), comment }
   }

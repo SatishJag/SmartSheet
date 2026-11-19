@@ -13,6 +13,7 @@
  *   SUPABASE_SERVICE_ROLE_KEY     enables time based rules, digests, update requests and approvals (server only)
  *   RESEND_API_KEY, MAIL_FROM     real e-mail; without them e-mail is simulated. PUBLIC_APP_URL builds the links.
  *   See server/automation/config.ts for the other AUTOMATION_* settings.
+ *   WHATSAPP_*                    the WhatsApp assistant (server/whatsapp/config.ts); without them it runs as a simulator
  */
 import path from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
@@ -21,6 +22,7 @@ import { createApp, DEFAULT_DRAFT_LIMITS } from './app'
 import { createAutomation } from './automation'
 import { consoleLogger as log } from './log'
 import { createSupabaseAuthenticator } from './supabase'
+import { createWhatsApp } from './whatsapp'
 
 const env = process.env
 const port = Number(env.PORT) || 8787
@@ -34,12 +36,14 @@ if (!supabaseUrl || !supabaseAnonKey) log('config.warning', { message: 'SUPABASE
 if (!apiKey) log('config.warning', { message: 'ANTHROPIC_API_KEY not set: drafts are built from history only.' })
 
 const automation = createAutomation(env, log)
+const anthropic = apiKey ? new Anthropic({ apiKey }) : null
+const whatsapp = createWhatsApp(env, log, anthropic ? { client: anthropic, model } : null)
 
 const server = createApp({
   staticDir,
-  automation: automation.handle,
+  automation: async (req, res, pathname) => (await automation.handle(req, res, pathname)) || whatsapp.handle(req, res, pathname),
   authenticate: supabaseUrl && supabaseAnonKey ? createSupabaseAuthenticator(supabaseUrl, supabaseAnonKey) : null,
-  anthropic: apiKey ? new Anthropic({ apiKey }) : null,
+  anthropic,
   model,
   log,
   draftLimits: {
@@ -53,11 +57,13 @@ const server = createApp({
 server.listen(port, () => {
   log('server.listening', { port, staticDir, model, ai: Boolean(apiKey) })
   automation.scheduler?.start()
+  whatsapp.start()
 })
 
 function shutdown(signal: string) {
   log('server.stopping', { signal })
   automation.scheduler?.stop()
+  whatsapp.stop()
   server.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 10_000).unref()
 }

@@ -32,8 +32,11 @@ create index notifications_whatsapp_pending_idx on notifications (deliver_after)
 create table whatsapp_links (
   user_id uuid primary key,
   phone text not null unique check (phone ~ '^[1-9][0-9]{7,14}$'),
+  -- The account's e-mail when it linked (lower case): how a Contact cell finds a linked user's phone.
+  email text check (email is null or (length(email) <= 320 and email = lower(email))),
   linked_at timestamptz not null default now()
 );
+create index whatsapp_links_email_idx on whatsapp_links (email);
 
 create table whatsapp_contacts (
   id uuid primary key default gen_random_uuid(),
