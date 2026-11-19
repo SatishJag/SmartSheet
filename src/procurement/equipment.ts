@@ -1,0 +1,241 @@
+// Long-lead equipment schedule catalogue, ported from the Procurement schedule app
+// (backend/app/data/catalog.json, stages and windows from backend/app/domain.py).
+// Activity codes are `<short>.<suffix>`; predecessors that point outside a type's own
+// activities (programme-level links) are dropped, so every predecessor listed here exists.
+import type { ProcurementType, ProcStage } from './types'
+
+type Row = [suffix: string, name: string, stage: ProcStage, owner: string, after: string[]]
+
+const make = (
+  code: string,
+  short: string,
+  name: string,
+  discipline: string,
+  source: string,
+  rows: Row[],
+): ProcurementType => ({
+  code,
+  name,
+  kind: 'equipment',
+  discipline,
+  source,
+  activities: rows.map(([suffix, n, stage, owner, after]) => ({
+    code: `${short}.${suffix}`,
+    name: n,
+    stage,
+    owner,
+    predecessors: after.map((s) => `${short}.${s}`),
+  })),
+})
+
+const GEN_TYPE = make("GEN", "GEN", "Generators", "Electrical", "JOH-BL-1590", [
+  ["1", "Batch supplier kickoff and ITP preparation", "Kickoff", "Procurement Manager-LLE", []],
+  ["14", "Submit vendor technical documents / shop drawings", "Submittals", "Supplier", ["1"]],
+  ["15", "Approve vendor technical documents", "Approval", "Design Manager", ["14"]],
+  ["2", "Biweekly manufacturing progress monitoring", "Manufacturing", "Procurement Manager-LLE", ["15"]],
+  ["3", "Prepare FAT test scripts", "FAT preparation", "Procurement Manager-LLE", ["15"]],
+  ["4", "Execute FAT at vendor factory", "FAT", "Procurement Manager-LLE", ["2", "3"]],
+  ["8", "Close FAT findings, complete retesting and accept results", "FAT closeout", "Commissioning Manager", ["4"]],
+  ["5", "Engage freight forwarder and arrange export clearance", "Freight planning", "Procurement Manager-LLE", []],
+  ["6", "Prepare shipping documents", "Shipping documents", "Procurement Manager-LLE", ["5"]],
+  ["9", "Pack, identify and dispatch equipment", "Dispatch", "Logistics Coordinator", ["8", "6"]],
+  ["10", "Track shipment / transit and confirm arrival", "Transit", "Logistics Coordinator", ["9"]],
+  ["11", "Complete import customs clearance, where applicable", "Customs", "Logistics Coordinator", ["10", "6"]],
+  ["12", "Arrange local handling, unloading and site transport", "Local handling", "Logistics Coordinator", ["11"]],
+  ["7", "Receipt of equipment at site and quality clearance", "Receipt", "Procurement Manager-LLE", ["12"]],
+  ["13", "Hand over manuals, spares and warranty information", "Handover", "Procurement Manager-LLE", ["7"]],
+  ["SAT1", "Prepare SAT procedures and site witness plan", "SAT preparation", "Commissioning Manager", ["8"]],
+  ["SAT2", "Execute Site Acceptance Test (SAT) at our site", "SAT", "Commissioning Manager", ["13", "SAT1"]],
+  ["SAT3", "Close SAT findings, complete retesting and accept for commissioning", "SAT closeout", "Commissioning Manager", ["SAT2"]],
+])
+
+const UPS_TYPE = make("UPS", "UPS", "UPS & battery systems", "Electrical", "JOH-BL-1600", [
+  ["1", "Batch supplier kickoff and ITP preparation", "Kickoff", "Procurement Manager-LLE", []],
+  ["14", "Submit vendor technical documents / shop drawings", "Submittals", "Supplier", ["1"]],
+  ["15", "Approve vendor technical documents", "Approval", "Design Manager", ["14"]],
+  ["2", "Biweekly manufacturing progress monitoring", "Manufacturing", "Procurement Manager-LLE", ["15"]],
+  ["3", "Prepare FAT test scripts", "FAT preparation", "Procurement Manager-LLE", ["15"]],
+  ["4", "Execute FAT at vendor factory", "FAT", "Procurement Manager-LLE", ["2", "3"]],
+  ["8", "Close FAT findings, complete retesting and accept results", "FAT closeout", "Commissioning Manager", ["4"]],
+  ["5", "Engage freight forwarder and arrange export clearance", "Freight planning", "Procurement Manager-LLE", []],
+  ["6", "Prepare shipping documents", "Shipping documents", "Procurement Manager-LLE", ["5"]],
+  ["9", "Pack, identify and dispatch equipment", "Dispatch", "Logistics Coordinator", ["8", "6"]],
+  ["10", "Track shipment / transit and confirm arrival", "Transit", "Logistics Coordinator", ["9"]],
+  ["11", "Complete import customs clearance, where applicable", "Customs", "Logistics Coordinator", ["10", "6"]],
+  ["12", "Arrange local handling, unloading and site transport", "Local handling", "Logistics Coordinator", ["11"]],
+  ["7", "Receipt of equipment at site and quality clearance", "Receipt", "Procurement Manager-LLE", ["12"]],
+  ["13", "Hand over manuals, spares and warranty information", "Handover", "Procurement Manager-LLE", ["7"]],
+  ["SAT1", "Prepare SAT procedures and site witness plan", "SAT preparation", "Commissioning Manager", ["8"]],
+  ["SAT2", "Execute Site Acceptance Test (SAT) at our site", "SAT", "Commissioning Manager", ["13", "SAT1"]],
+  ["SAT3", "Close SAT findings, complete retesting and accept for commissioning", "SAT closeout", "Commissioning Manager", ["SAT2"]],
+])
+
+const CHL_TYPE = make("CHL", "CHL", "Chillers", "Mechanical", "JOH-BL-1610", [
+  ["1", "Batch supplier kickoff and ITP preparation", "Kickoff", "Procurement Manager-LLE", []],
+  ["14", "Submit vendor technical documents / shop drawings", "Submittals", "Supplier", ["1"]],
+  ["15", "Approve vendor technical documents", "Approval", "Design Manager", ["14"]],
+  ["2", "Biweekly manufacturing progress monitoring", "Manufacturing", "Procurement Manager-LLE", ["15"]],
+  ["3", "Prepare FAT test scripts", "FAT preparation", "Procurement Manager-LLE", ["15"]],
+  ["4", "Execute FAT at vendor factory", "FAT", "Procurement Manager-LLE", ["2", "3"]],
+  ["8", "Close FAT findings, complete retesting and accept results", "FAT closeout", "Commissioning Manager", ["4"]],
+  ["5", "Engage freight forwarder and arrange export clearance", "Freight planning", "Procurement Manager-LLE", []],
+  ["6", "Prepare shipping documents", "Shipping documents", "Procurement Manager-LLE", ["5"]],
+  ["9", "Pack, identify and dispatch equipment", "Dispatch", "Logistics Coordinator", ["8", "6"]],
+  ["10", "Track shipment / transit and confirm arrival", "Transit", "Logistics Coordinator", ["9"]],
+  ["11", "Complete import customs clearance, where applicable", "Customs", "Logistics Coordinator", ["10", "6"]],
+  ["12", "Arrange local handling, unloading and site transport", "Local handling", "Logistics Coordinator", ["11"]],
+  ["7", "Receipt of equipment at site and quality clearance", "Receipt", "Procurement Manager-LLE", ["12"]],
+  ["13", "Hand over manuals, spares and warranty information", "Handover", "Procurement Manager-LLE", ["7"]],
+  ["SAT1", "Prepare SAT procedures and site witness plan", "SAT preparation", "Commissioning Manager", ["8"]],
+  ["SAT2", "Execute Site Acceptance Test (SAT) at our site", "SAT", "Commissioning Manager", ["13", "SAT1"]],
+  ["SAT3", "Close SAT findings, complete retesting and accept for commissioning", "SAT closeout", "Commissioning Manager", ["SAT2"]],
+])
+
+const MV_TYPE = make("MV", "MV", "MV switchgear", "Electrical", "JOH-BL-1620", [
+  ["1", "Batch supplier kickoff and ITP preparation", "Kickoff", "Procurement Manager-LLE", []],
+  ["14", "Submit vendor technical documents / shop drawings", "Submittals", "Supplier", ["1"]],
+  ["15", "Approve vendor technical documents", "Approval", "Design Manager", ["14"]],
+  ["2", "Biweekly manufacturing progress monitoring", "Manufacturing", "Procurement Manager-LLE", ["15"]],
+  ["3", "Prepare FAT test scripts", "FAT preparation", "Procurement Manager-LLE", ["15"]],
+  ["4", "Execute FAT at vendor factory", "FAT", "Procurement Manager-LLE", ["2", "3"]],
+  ["8", "Close FAT findings, complete retesting and accept results", "FAT closeout", "Commissioning Manager", ["4"]],
+  ["5", "Engage freight forwarder and arrange export clearance", "Freight planning", "Procurement Manager-LLE", []],
+  ["6", "Prepare shipping documents", "Shipping documents", "Procurement Manager-LLE", ["5"]],
+  ["9", "Pack, identify and dispatch equipment", "Dispatch", "Logistics Coordinator", ["8", "6"]],
+  ["10", "Track shipment / transit and confirm arrival", "Transit", "Logistics Coordinator", ["9"]],
+  ["11", "Complete import customs clearance, where applicable", "Customs", "Logistics Coordinator", ["10", "6"]],
+  ["12", "Arrange local handling, unloading and site transport", "Local handling", "Logistics Coordinator", ["11"]],
+  ["7", "Receipt of equipment at site and quality clearance", "Receipt", "Procurement Manager-LLE", ["12"]],
+  ["13", "Hand over manuals, spares and warranty information", "Handover", "Procurement Manager-LLE", ["7"]],
+  ["SAT1", "Prepare SAT procedures and site witness plan", "SAT preparation", "Commissioning Manager", ["8"]],
+  ["SAT2", "Execute Site Acceptance Test (SAT) at our site", "SAT", "Commissioning Manager", ["13", "SAT1"]],
+  ["SAT3", "Close SAT findings, complete retesting and accept for commissioning", "SAT closeout", "Commissioning Manager", ["SAT2"]],
+])
+
+const TRF_TYPE = make("TRF", "TRF", "Transformers", "Electrical", "JOH-BL-1630", [
+  ["16", "Batch supplier kickoff and inspection-plan preparation", "Kickoff", "Procurement Manager-LLE", []],
+  ["14", "Submit vendor technical documents / shop drawings", "Submittals", "Supplier", ["16"]],
+  ["15", "Approve vendor technical documents", "Approval", "Design Manager", ["14"]],
+  ["1", "Manufacturing and progress monitoring", "Manufacturing", "Procurement Manager-LLE", ["15"]],
+  ["17", "Prepare and approve FAT procedures / witness plan", "FAT preparation", "Commissioning Manager", ["15"]],
+  ["2", "Factory Acceptance Test", "FAT", "Procurement Manager-LLE", ["1", "17"]],
+  ["8", "Close FAT findings, complete retesting and accept results", "FAT closeout", "Commissioning Manager", ["2"]],
+  ["5", "Agree freight and export-clearance arrangements", "Freight planning", "Logistics Coordinator", []],
+  ["6", "Prepare shipping documents", "Shipping documents", "Logistics Coordinator", ["5"]],
+  ["3", "Confirm allocated-site logistics and delivery plan", "Delivery planning", "Procurement Manager-LLE", ["6"]],
+  ["9", "Pack, identify and dispatch equipment", "Dispatch", "Logistics Coordinator", ["8", "6"]],
+  ["10", "Track shipment / transit and confirm arrival", "Transit", "Logistics Coordinator", ["9"]],
+  ["11", "Complete import customs clearance, where applicable", "Customs", "Logistics Coordinator", ["10", "6"]],
+  ["12", "Arrange local handling, unloading and site transport", "Local handling", "Logistics Coordinator", ["11"]],
+  ["13", "Hand over manuals, spares and warranty information", "Handover", "Procurement Manager-LLE", ["12"]],
+  ["4", "Allocated-project transformer installation / testing interface", "Site interface", "Construction Manager", ["13"]],
+  ["SAT1", "Prepare SAT procedures and site witness plan", "SAT preparation", "Commissioning Manager", ["8"]],
+  ["SAT2", "Execute Site Acceptance Test (SAT) at our site", "SAT", "Commissioning Manager", ["13", "4", "SAT1"]],
+  ["SAT3", "Close SAT findings, complete retesting and accept for commissioning", "SAT closeout", "Commissioning Manager", ["SAT2"]],
+])
+
+const FWU_TYPE = make("FWU", "FWU", "Fan wall units", "Mechanical", "JOH-BL-1650", [
+  ["1", "Batch supplier kickoff and ITP preparation", "Kickoff", "Procurement Manager-LLE", []],
+  ["14", "Submit vendor technical documents / shop drawings", "Submittals", "Supplier", ["1"]],
+  ["15", "Approve vendor technical documents", "Approval", "Design Manager", ["14"]],
+  ["2", "Biweekly manufacturing progress monitoring", "Manufacturing", "Procurement Manager-LLE", ["15"]],
+  ["3", "Prepare FAT test scripts", "FAT preparation", "Procurement Manager-LLE", ["15"]],
+  ["4", "Execute FAT at vendor factory", "FAT", "Procurement Manager-LLE", ["2", "3"]],
+  ["8", "Close FAT findings, complete retesting and accept results", "FAT closeout", "Commissioning Manager", ["4"]],
+  ["5", "Engage freight forwarder and arrange export clearance", "Freight planning", "Procurement Manager-LLE", []],
+  ["6", "Prepare shipping documents", "Shipping documents", "Procurement Manager-LLE", ["5"]],
+  ["9", "Pack, identify and dispatch equipment", "Dispatch", "Logistics Coordinator", ["8", "6"]],
+  ["10", "Track shipment / transit and confirm arrival", "Transit", "Logistics Coordinator", ["9"]],
+  ["11", "Complete import customs clearance, where applicable", "Customs", "Logistics Coordinator", ["10", "6"]],
+  ["12", "Arrange local handling, unloading and site transport", "Local handling", "Logistics Coordinator", ["11"]],
+  ["7", "Receipt of equipment at site and quality clearance", "Receipt", "Procurement Manager-LLE", ["12"]],
+  ["13", "Hand over manuals, spares and warranty information", "Handover", "Procurement Manager-LLE", ["7"]],
+  ["SAT1", "Prepare SAT procedures and site witness plan", "SAT preparation", "Commissioning Manager", ["8"]],
+  ["SAT2", "Execute Site Acceptance Test (SAT) at our site", "SAT", "Commissioning Manager", ["13", "SAT1"]],
+  ["SAT3", "Close SAT findings, complete retesting and accept for commissioning", "SAT closeout", "Commissioning Manager", ["SAT2"]],
+])
+
+const CRAC_TYPE = make("CRAC", "CRAC", "CRAC units", "Mechanical", "JOH-BL-1660", [
+  ["1", "Batch supplier kickoff and ITP preparation", "Kickoff", "Procurement Manager-LLE", []],
+  ["14", "Submit vendor technical documents / shop drawings", "Submittals", "Supplier", ["1"]],
+  ["15", "Approve vendor technical documents", "Approval", "Design Manager", ["14"]],
+  ["2", "Biweekly manufacturing progress monitoring", "Manufacturing", "Procurement Manager-LLE", ["15"]],
+  ["3", "Prepare FAT test scripts", "FAT preparation", "Procurement Manager-LLE", ["15"]],
+  ["4", "Execute FAT at vendor factory", "FAT", "Procurement Manager-LLE", ["2", "3"]],
+  ["8", "Close FAT findings, complete retesting and accept results", "FAT closeout", "Commissioning Manager", ["4"]],
+  ["5", "Engage freight forwarder and arrange export clearance", "Freight planning", "Procurement Manager-LLE", []],
+  ["6", "Prepare shipping documents", "Shipping documents", "Procurement Manager-LLE", ["5"]],
+  ["9", "Pack, identify and dispatch equipment", "Dispatch", "Logistics Coordinator", ["8", "6"]],
+  ["10", "Track shipment / transit and confirm arrival", "Transit", "Logistics Coordinator", ["9"]],
+  ["11", "Complete import customs clearance, where applicable", "Customs", "Logistics Coordinator", ["10", "6"]],
+  ["12", "Arrange local handling, unloading and site transport", "Local handling", "Logistics Coordinator", ["11"]],
+  ["7", "Receipt of equipment at site and quality clearance", "Receipt", "Procurement Manager-LLE", ["12"]],
+  ["13", "Hand over manuals, spares and warranty information", "Handover", "Procurement Manager-LLE", ["7"]],
+  ["SAT1", "Prepare SAT procedures and site witness plan", "SAT preparation", "Commissioning Manager", ["8"]],
+  ["SAT2", "Execute Site Acceptance Test (SAT) at our site", "SAT", "Commissioning Manager", ["13", "SAT1"]],
+  ["SAT3", "Close SAT findings, complete retesting and accept for commissioning", "SAT closeout", "Commissioning Manager", ["SAT2"]],
+])
+
+const FAHU_TYPE = make("FAHU", "FAHU", "Fresh air handling units", "Mechanical", "JOH-BL-1670", [
+  ["1", "Batch supplier kickoff and ITP preparation", "Kickoff", "Procurement Manager-LLE", []],
+  ["14", "Submit vendor technical documents / shop drawings", "Submittals", "Supplier", ["1"]],
+  ["15", "Approve vendor technical documents", "Approval", "Design Manager", ["14"]],
+  ["2", "Biweekly manufacturing progress monitoring", "Manufacturing", "Procurement Manager-LLE", ["15"]],
+  ["3", "Prepare FAT test scripts", "FAT preparation", "Procurement Manager-LLE", ["15"]],
+  ["4", "Execute FAT at vendor factory", "FAT", "Procurement Manager-LLE", ["2", "3"]],
+  ["8", "Close FAT findings, complete retesting and accept results", "FAT closeout", "Commissioning Manager", ["4"]],
+  ["5", "Engage freight forwarder and arrange export clearance", "Freight planning", "Procurement Manager-LLE", []],
+  ["6", "Prepare shipping documents", "Shipping documents", "Procurement Manager-LLE", ["5"]],
+  ["9", "Pack, identify and dispatch equipment", "Dispatch", "Logistics Coordinator", ["8", "6"]],
+  ["10", "Track shipment / transit and confirm arrival", "Transit", "Logistics Coordinator", ["9"]],
+  ["11", "Complete import customs clearance, where applicable", "Customs", "Logistics Coordinator", ["10", "6"]],
+  ["12", "Arrange local handling, unloading and site transport", "Local handling", "Logistics Coordinator", ["11"]],
+  ["7", "Receipt of equipment at site and quality clearance", "Receipt", "Procurement Manager-LLE", ["12"]],
+  ["13", "Hand over manuals, spares and warranty information", "Handover", "Procurement Manager-LLE", ["7"]],
+  ["SAT1", "Prepare SAT procedures and site witness plan", "SAT preparation", "Commissioning Manager", ["8"]],
+  ["SAT2", "Execute Site Acceptance Test (SAT) at our site", "SAT", "Commissioning Manager", ["13", "SAT1"]],
+  ["SAT3", "Close SAT findings, complete retesting and accept for commissioning", "SAT closeout", "Commissioning Manager", ["SAT2"]],
+])
+
+/** Every long-lead equipment type, in the order the Procurement app lists them. */
+export const EQUIPMENT_TYPES: readonly ProcurementType[] = [
+  GEN_TYPE,
+  UPS_TYPE,
+  CHL_TYPE,
+  MV_TYPE,
+  // The Procurement app has no Receipt step for transformers, so it anchors them on the last step
+  // (SAT closeout), which makes "required on site" mean "accepted". Anchor on local handling instead,
+  // so the need date means the goods are at site for every type.
+  { ...TRF_TYPE, anchor: 'TRF.12' },
+  FWU_TYPE,
+  CRAC_TYPE,
+  FAHU_TYPE,
+]
+
+/** Illustrative stage windows in working days: [offset from award, duration]. The fallback when there is no history. */
+export const STAGE_WINDOWS: Record<ProcStage, readonly [offset: number, days: number]> = {
+  "Kickoff": [0, 3],
+  "Submittals": [3, 10],
+  "Approval": [13, 7],
+  "Manufacturing": [20, 45],
+  "FAT preparation": [55, 10],
+  "FAT": [65, 10],
+  "FAT closeout": [75, 8],
+  "Freight planning": [30, 5],
+  "Shipping documents": [70, 5],
+  "Delivery planning": [80, 3],
+  "Dispatch": [83, 5],
+  "Transit": [88, 15],
+  "Customs": [103, 5],
+  "Local handling": [108, 3],
+  "Receipt": [111, 2],
+  "Handover": [113, 5],
+  "Site interface": [118, 3],
+  "SAT preparation": [100, 10],
+  "SAT": [122, 10],
+  "SAT closeout": [132, 5],
+}
+
+/** The default [offset, days] window for a stage, or undefined for a stage with none (everything outside equipment). */
+export const stageWindow = (stage: string): readonly [offset: number, days: number] | undefined =>
+  Object.hasOwn(STAGE_WINDOWS, stage) ? STAGE_WINDOWS[stage as ProcStage] : undefined
