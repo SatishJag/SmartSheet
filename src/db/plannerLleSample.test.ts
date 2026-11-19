@@ -116,11 +116,13 @@ describe('LLE sample seed (0005)', () => {
     ).toBe(0)
   })
 
-  it('summarizes as sample-only, with plausible, ordered statistics for every non-target activity', async () => {
+  it('summarizes as sample-only, with plausible, ordered statistics for every non-target activity that has history', async () => {
     const all = await summary(LLE)
     expect(all.sampleOnly).toBe(true)
     const rows = await catalog()
-    const work = rows.filter((r) => !r.is_target).map((r) => r.code)
+    // 0012 added three activities that have no sample history (the planner uses their catalog defaults).
+    const noHistory = ['FATPREP', 'FRTFWD', 'SHIPDOC']
+    const work = rows.filter((r) => !r.is_target && !noHistory.includes(r.code)).map((r) => r.code)
     expect(all.stats.map((s) => s.code)).toEqual(work)
     for (const s of all.stats) {
       expect(s.min).toBeGreaterThan(0)

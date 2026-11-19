@@ -95,6 +95,55 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('PlannerWizard: project type and schedule type', () => {
+  const OPTIONS_BY_PROJECT: PlannerOptions = {
+    projectTypes: [
+      { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+      { id: 'properties', name: 'Properties', description: 'Buildings' },
+    ],
+    // In the order the server lists them (by position). LLE is offered under both project types.
+    scheduleTypes: [
+      { id: 'materials-procurement', name: 'Materials procurement', description: 'Bulk materials', projectTypes: ['properties'] },
+      { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] },
+      { id: 'other-equipment-procurement', name: 'Other equipment procurement', description: 'Other', projectTypes: ['data-centre'] },
+      { id: 'consultant-appointment', name: 'Consultant appointment', description: 'Consultants', projectTypes: ['data-centre', 'properties'] },
+    ],
+    equipmentTypes: { 'lle-procurement': ['Power transformer'], 'materials-procurement': [], 'other-equipment-procurement': [], 'consultant-appointment': [] },
+  }
+  const names = (select: HTMLElement) => within(select).getAllByRole('option').map((o) => o.textContent)
+
+  it('moves the schedule type to the first one the new project type offers, even when the old one is still on offer', async () => {
+    mockServer({ options: () => json(200, OPTIONS_BY_PROJECT) })
+    const { user } = setup()
+    const project = await screen.findByLabelText('Project type')
+    const schedule = screen.getByLabelText('Schedule type')
+    expect(project).toHaveDisplayValue('Data centre')
+    expect(schedule).toHaveDisplayValue('Long-lead equipment procurement')
+    expect(names(schedule)).toEqual(['Long-lead equipment procurement', 'Other equipment procurement', 'Consultant appointment'])
+
+    // LLE is offered under Properties too, but the schedule type still follows the project type.
+    await user.selectOptions(project, 'properties')
+    expect(schedule).toHaveDisplayValue('Materials procurement')
+    expect(names(schedule)).toEqual(['Materials procurement', 'Long-lead equipment procurement', 'Consultant appointment'])
+    expect(screen.getByText('Bulk materials')).toBeInTheDocument()
+
+    await user.selectOptions(project, 'data-centre')
+    expect(schedule).toHaveDisplayValue('Long-lead equipment procurement')
+  })
+
+  it('plans with the schedule type shown after switching', async () => {
+    const { drafts } = mockServer({ options: () => json(200, OPTIONS_BY_PROJECT) })
+    const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project type'), 'properties')
+    await user.type(screen.getByLabelText('Equipment type'), 'Rebar') // no history for materials yet: free text
+    await fillRequest(user)
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    expect(drafts).toHaveLength(1)
+    expect(drafts[0].scheduleType).toBe('materials-procurement')
+  })
+})
+
 describe('PlannerWizard: request step', () => {
   it('is a labelled modal that loads the options and focuses inside', async () => {
     mockServer()

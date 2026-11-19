@@ -354,9 +354,10 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     void generate(jobFromForm(context ? { ...form, notes: appendNote(notes, context) ?? context } : form), 'request')
   }
 
+  /** The schedule type follows the project type: it moves to the first one the new project type offers. */
   function chooseProjectType(id: string) {
     setProjectType(id)
-    if (options && !schedulesFor(options, id).some((t) => t.id === scheduleType)) setScheduleType(schedulesFor(options, id)[0]?.id ?? '')
+    if (options) setScheduleType(schedulesFor(options, id)[0]?.id ?? '')
   }
 
   const updateItem = (key: string, patch: Partial<ItemForm>) => setItems((all) => all.map((i) => (i.key === key ? { ...i, ...patch } : i)))

@@ -12,7 +12,8 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
   return {
     async options(): Promise<PlannerOptions> {
       const [types, equipment, projects] = await Promise.all([
-        client.from('schedule_types').select('id, name, description, project_types').order('name', { ascending: true }),
+        // By position, so a project type opens on its main schedule type; name breaks ties.
+        client.from('schedule_types').select('id, name, description, project_types').order('position', { ascending: true }).order('name', { ascending: true }),
         client
           .from('planner_equipment_types')
           .select('schedule_type, equipment_type')
