@@ -10,7 +10,12 @@
  *   columns, foreign keys and cascade deletes (supabase/migrations/0001_schema.sql), plus
  *   0002_hardening.sql's same-sheet parents/endpoints and one dependency per pair.
  * - PostgREST's 1000-row response cap (`.range()` pages), and `upsert` (ON CONFLICT DO UPDATE).
- * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`.
+ * - access (0001, 0002, 0017_sharing): a sheet is visible to its owner and to the users it is shared with
+ *   (`sheet_members`); owners and editors may write its rows, columns and dependencies (stamped
+ *   with the SHEET owner's id), viewers may not, and only the owner may rename, delete or share
+ *   it. Members are added only through `rpc('share_sheet')`.
+ * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`;
+ *   they run as the caller, so they act on any sheet the caller may write (owner or editor).
  * - tables `baselines` and `baseline_rows` and the function `save_baseline` (0006_baselines.sql):
  *   cascade on sheet delete, NO cascade from `rows` (a baseline outlives a deleted row).
  * - tables `resources`, `resource_time_off` and `assignments` (0010_resources.sql): their checks, the
@@ -18,8 +23,12 @@
  *   cascade from `rows` (an assignment outlives a deleted task).
  * - the smart-asset tables of 0008_assets.sql (workspaces, folders, reports, dashboards,
  *   workspace_items, favorites), in fakeAssets.ts.
- * - ownership: every read and write is limited to rows owned by the signed-in user, and
- *   inserts/updates must keep `owner_id` = that user and point at the user's own sheet.
+ * - the resource-management tables of 0016_resource_management.sql (checks, same-owner
+ *   references, cascades and the projects policy). They are private to their owner: sharing a
+ *   sheet does not share them, and a project may only link a sheet the caller owns.
+ * - every other table (baselines, resources, automation, assets, WhatsApp) is owner-only, as in
+ *   its migration: reads and writes are limited to rows owned by the signed-in user, pointing at the
+ *   user's own sheet.
  *
  * - the automation tables and `copy_row_to_sheet` (0009_automation.sql): see fakeAutomation.ts.
  *
@@ -71,6 +80,11 @@ export type TableName =
   | AutomationTable
   | AssetTable
   | WhatsAppTable
+  | 'sheet_members'
+  | 'rm_people'
+  | 'rm_projects'
+  | 'rm_assignments'
+  | 'rm_views'
 export type DbRecord = Record<string, unknown>
 
 export interface FakeUser {
@@ -121,7 +135,15 @@ const TABLES: readonly TableName[] = [
   ...AUTOMATION_TABLES,
   ...ASSET_TABLES,
   ...WHATSAPP_TABLES,
+  'sheet_members',
+  'rm_people',
+  'rm_projects',
+  'rm_assignments',
+  'rm_views',
 ]
+
+/** Tables shared through a sheet's members (0017_sharing): owners and editors write, members read. */
+const SHARED_TABLES: ReadonlySet<string> = new Set(['columns', 'rows', 'dependencies'])
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
 export const MAX_ROWS = 1000
@@ -238,6 +260,74 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     created_at: { default: ({ now }) => now(), notNull: true },
   },
   ...ASSET_SCHEMA,
+  sheet_members: {
+    // The real table has a composite key and no id; the fake keeps one so generic updates and deletes work.
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    sheet_id: { notNull: true },
+    user_id: { notNull: true },
+    email: { notNull: true },
+    role: { notNull: true },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  // 0004_resource_management.sql
+  rm_people: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    first_name: { notNull: true },
+    last_name: { default: () => '', notNull: true },
+    email: { default: () => null },
+    role: { default: () => null },
+    discipline: { default: () => null },
+    location: { default: () => null },
+    tags: { default: () => [], notNull: true },
+    capacity_hours_per_day: { default: () => 8, notNull: true },
+    bill_rate: { default: () => 0, notNull: true },
+    office_status: { default: () => null },
+    member_type: { default: () => 'employee', notNull: true },
+    is_approver: { default: () => false, notNull: true },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  rm_projects: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    name: { notNull: true },
+    client: { default: () => null },
+    project_type: { default: () => 'confirmed', notNull: true },
+    state: { default: () => 'active', notNull: true },
+    starts_at: { notNull: true },
+    ends_at: { notNull: true },
+    project_owner_id: { default: () => null },
+    budget_type: { default: () => 'none', notNull: true },
+    budget_amount: { default: () => null },
+    budget_days: { default: () => null },
+    tags: { default: () => [], notNull: true },
+    sheet_id: { default: () => null },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  rm_assignments: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    project_id: { notNull: true },
+    person_id: { notNull: true },
+    starts_at: { notNull: true },
+    ends_at: { notNull: true },
+    allocation_percent: { default: () => 100, notNull: true },
+    status: { default: () => 'confirmed', notNull: true },
+    notes: { default: () => null },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  rm_views: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    page: { notNull: true },
+    name: { notNull: true },
+    state: { default: () => ({}), notNull: true },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
 }
 
 const COLUMN_TYPES = ['TEXT_NUMBER', 'DATE', 'CHECKBOX', 'PICKLIST', 'MULTI_PICKLIST', 'CONTACT_LIST', 'DURATION', 'PREDECESSOR']
@@ -706,9 +796,29 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
       return { data: rows, error: null }
     }
 
-    /** Rows of this table the user may see (RLS `using owner_id = auth.uid()`), after filters. */
+    /** Rows of this table the user may see (RLS select policies), after filters. */
     private visible(state: FakeState, uid: string): DbRecord[] {
-      return state.tables[this.table].filter((r) => (serviceRole || r.owner_id === uid) && this.filters.every((f) => f(r)))
+      const may = (r: DbRecord): boolean => {
+        if (serviceRole) return true
+        if (this.table === 'sheets') return sheetRole(state, uid, r.id) !== null
+        if (this.table === 'sheet_members') return r.user_id === uid || sheetRole(state, uid, r.sheet_id) === 'owner'
+        if (SHARED_TABLES.has(this.table)) return sheetRole(state, uid, r.sheet_id) !== null
+        // rm_* and every table added after sharing are owner-only.
+        return r.owner_id === uid
+      }
+      return state.tables[this.table].filter((r) => may(r) && this.filters.every((f) => f(r)))
+    }
+
+    /** Whether the user may update or delete this existing row (RLS `using`). */
+    private canWrite(state: FakeState, uid: string, r: DbRecord): boolean {
+      if (serviceRole) return true
+      if (this.table === 'sheets') return r.owner_id === uid
+      if (this.table === 'sheet_members') return r.user_id === uid || sheetRole(state, uid, r.sheet_id) === 'owner'
+      if (SHARED_TABLES.has(this.table)) {
+        const role = sheetRole(state, uid, r.sheet_id)
+        return role === 'owner' || role === 'editor'
+      }
+      return r.owner_id === uid
     }
 
     private runSelect(state: FakeState, uid: string, columns: string): FakeResult {
@@ -743,16 +853,33 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
           return pgError(`null value in column "${col}" of relation "${this.table}" violates not-null constraint`, '23502')
         }
       }
-      if (!serviceRole && row.owner_id !== uid) return rlsError(this.table)
-      if (isAssetTable(this.table)) return assetRowError(this.table, state, uid, row) // 0008_assets.sql
-      if (this.table === 'resources' || this.table === 'resource_time_off') {
-        const bad = resourceError(state, this.table, row)
-        if (bad) return bad
+      if (this.table === 'sheet_members' && !serviceRole) return rlsError(this.table) // only share_sheet() adds members
+      if (this.table.startsWith('rm_')) {
+        // 0016: owner-only, like the sheets row itself.
+        if (!serviceRole && (row.owner_id !== uid || row.workspace_id !== uid)) return rlsError(this.table)
+        return checkRmRow(state, uid, this.table, row)
       }
-      if (this.table !== 'sheets' && this.table !== 'resources' && this.table !== 'resource_time_off' && !(row.sheet_id == null && this.table === 'notifications') && !sheetless(this.table, row)) {
+      if (this.table === 'sheets') {
+        if (!serviceRole && (row.owner_id !== uid || row.workspace_id !== uid)) return rlsError(this.table)
+      } else if (SHARED_TABLES.has(this.table)) {
+        // 0017_sharing: owners and editors write, stamping the SHEET owner's id.
         const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
         if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
-        if (!serviceRole && sheet.owner_id !== uid) return rlsError(this.table)
+        const role = sheetRole(state, uid, row.sheet_id)
+        if (!serviceRole && role !== 'owner' && role !== 'editor') return rlsError(this.table)
+        if (row.owner_id !== sheet.owner_id || row.workspace_id !== sheet.owner_id) return rlsError(this.table)
+      } else {
+        if (!serviceRole && row.owner_id !== uid) return rlsError(this.table)
+        if (isAssetTable(this.table)) return assetRowError(this.table, state, uid, row) // 0008_assets.sql
+        if (this.table === 'resources' || this.table === 'resource_time_off') {
+          const bad = resourceError(state, this.table, row)
+          if (bad) return bad
+        }
+        if (this.table !== 'resources' && this.table !== 'resource_time_off' && !(row.sheet_id == null && this.table === 'notifications') && !sheetless(this.table, row)) {
+          const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
+          if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
+          if (!serviceRole && sheet.owner_id !== uid) return rlsError(this.table)
+        }
       }
       // 0002_hardening.sql: parents and dependency endpoints must be rows of the SAME sheet.
       const rowExists = (id: unknown) =>
@@ -870,7 +997,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
         let row: DbRecord
         if (i >= 0) {
           // The conflicting row must be visible to the caller for the UPDATE (RLS `using`).
-          if (!serviceRole && working[i].owner_id !== uid) return { data: null, error: rlsError(this.table) }
+          if (!this.canWrite(state, uid, working[i])) return { data: null, error: rlsError(this.table) }
           row = { ...working[i], ...structuredClone(v) }
           working[i] = row
         } else {
@@ -889,7 +1016,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
     }
 
     private runUpdate(state: FakeState, uid: string, patch: DbRecord): FakeResult {
-      const targets = this.visible(state, uid).filter((r) => serviceRole || automationUpdatable(this.table, r, patch))
+      const targets = this.visible(state, uid).filter((r) => this.canWrite(state, uid, r) && (serviceRole || automationUpdatable(this.table, r, patch)))
       const updated = targets.map((r) => ({ ...r, ...structuredClone(patch) }))
       if (isAssetTable(this.table)) {
         const now = () => {
@@ -911,7 +1038,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
     }
 
     private runDelete(state: FakeState, uid: string): FakeResult {
-      const targets = this.visible(state, uid)
+      const targets = this.visible(state, uid).filter((r) => this.canWrite(state, uid, r))
       if (this.table === 'baseline_rows' || this.table === 'row_locks') {
         // No id column: remove the matched records themselves.
         const gone = new Set(targets)
@@ -924,8 +1051,9 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
   }
 
   /**
-   * The database functions of 0003_columns.sql (SECURITY INVOKER, so limited to the caller's own
-   * rows like everything else): `delete_column` and `set_column_cells`.
+   * The database functions: share_sheet(p_sheet, p_email, p_role) (sharing migration, SECURITY
+   * DEFINER, owner only), and delete_column / set_column_cells (0003_columns.sql, SECURITY INVOKER:
+   * they act on the sheets the caller may write, i.e. as owner or editor).
    */
   async function rpc(fn: string, args: Record<string, unknown> = {}): Promise<FakeResult<string | null>> {
     await tick()
@@ -934,13 +1062,40 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
     if (!serviceRole && (!uid || !state.users.some((u) => u.id === uid))) {
       return { data: null, error: pgError(`permission denied for function ${fn}`, '42501') }
     }
-    const ownRows = (sheetId: unknown) => state.tables.rows.filter((r) => (serviceRole || r.owner_id === uid) && r.sheet_id === sheetId)
-    if (fn === 'delete_column') {
+    const fail = (message: string, code = 'P0001') => ({ data: null, error: pgError(message, code) })
+    const canWrite = (sheetId: unknown) => {
+      if (serviceRole) return state.tables.sheets.some((s) => s.id === sheetId)
+      const role = sheetRole(state, uid, sheetId)
+      return role === 'owner' || role === 'editor'
+    }
+    const writableRows = (sheetId: unknown) => (canWrite(sheetId) ? state.tables.rows.filter((r) => r.sheet_id === sheetId) : [])
+    if (fn === 'share_sheet') {
+      const sheetId = String(args.p_sheet)
+      const roleArg = String(args.p_role)
+      if (sheetRole(state, uid, sheetId) !== 'owner') return fail('Only the sheet owner can share it', '42501')
+      if (roleArg !== 'viewer' && roleArg !== 'editor') return fail('Role must be viewer or editor')
+      const email = String(args.p_email ?? '').trim().toLowerCase()
+      const target = state.users.find((u) => u.email === email)
+      if (!target) return fail(`No account found for ${email}`)
+      if (target.id === uid) return fail('You already own this sheet')
+      const existing = state.tables.sheet_members.find((m) => m.sheet_id === sheetId && m.user_id === target.id)
+      if (existing) existing.role = roleArg
+      else {
+        state.tables.sheet_members.push({
+          id: crypto.randomUUID(),
+          sheet_id: sheetId,
+          user_id: target.id,
+          email,
+          role: roleArg,
+          created_at: new Date().toISOString(),
+        })
+      }
+    } else if (fn === 'delete_column') {
       const colId = args.p_column_id
-      const col = state.tables.columns.find((c) => c.id === colId && c.owner_id === uid)
-      if (!col) return { data: null, error: null } // already gone, or not the caller's: a no-op
+      const col = state.tables.columns.find((c) => c.id === colId && canWrite(c.sheet_id))
+      if (!col) return { data: null, error: null } // already gone, or not writable by the caller: a no-op
       const key = String(colId)
-      for (const r of ownRows(col.sheet_id)) {
+      for (const r of writableRows(col.sheet_id)) {
         const cells = r.cells as Record<string, unknown>
         if (key in cells) delete cells[key]
       }
@@ -948,7 +1103,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
     } else if (fn === 'set_column_cells') {
       const key = String(args.p_column_id)
       const values = (args.p_values ?? {}) as Record<string, unknown>
-      const byId = new Map(ownRows(args.p_sheet_id).map((r) => [r.id, r]))
+      const byId = new Map(writableRows(args.p_sheet_id).map((r) => [r.id, r]))
       for (const [rowId, value] of Object.entries(values)) {
         const cells = byId.get(rowId)?.cells as Record<string, unknown> | undefined
         if (!cells) continue
@@ -1130,6 +1285,15 @@ const PAIR_KEY = ['sheet_id', 'predecessor_row_id', 'successor_row_id'] as const
 
 const samePair = (a: DbRecord, b: DbRecord) => PAIR_KEY.every((c) => a[c] === b[c])
 
+/** 0017_sharing.sql sheet_role(): 'owner', 'editor', 'viewer' or null. */
+function sheetRole(state: FakeState, uid: string, sheetId: unknown): 'owner' | 'editor' | 'viewer' | null {
+  const sheet = state.tables.sheets.find((s) => s.id === sheetId)
+  if (!sheet) return null
+  if (sheet.owner_id === uid) return 'owner'
+  const m = state.tables.sheet_members.find((r) => r.sheet_id === sheetId && r.user_id === uid)
+  return m ? (m.role as 'editor' | 'viewer') : null
+}
+
 function compare(a: unknown, b: unknown): number {
   if (a === b) return 0
   // Postgres sorts NULLs last in ascending order.
@@ -1148,6 +1312,8 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
   cascadeAutomation(state, table, ids)
   if (table === 'sheets') {
     cascadeAssets(state, 'sheets', ids) // placements and stars of the sheets
+    // rm_projects.sheet_id: on delete set null
+    for (const p of state.tables.rm_projects) if (ids.has(p.sheet_id)) p.sheet_id = null
     state.tables.sheets = state.tables.sheets.filter((r) => !ids.has(r.id))
     state.tables.columns = state.tables.columns.filter((r) => !ids.has(r.sheet_id))
     state.tables.dependencies = state.tables.dependencies.filter((r) => !ids.has(r.sheet_id))
@@ -1156,6 +1322,8 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
     state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !ids.has(r.sheet_id))
     // Unlike rows, a deleted sheet takes its assignments with it (on delete cascade).
     state.tables.assignments = state.tables.assignments.filter((r) => !ids.has(r.sheet_id))
+    state.tables.sheet_members = state.tables.sheet_members.filter((r) => !ids.has(r.sheet_id))
+    state.tables.whatsapp_sheet_settings = state.tables.whatsapp_sheet_settings.filter((r) => !ids.has(r.sheet_id))
     return
   }
   if (table === 'resources') {
@@ -1190,5 +1358,62 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
     )
     return
   }
+  if (table === 'rm_people') {
+    for (const p of state.tables.rm_projects) if (ids.has(p.project_owner_id)) p.project_owner_id = null
+    state.tables.rm_assignments = state.tables.rm_assignments.filter((a) => !ids.has(a.person_id))
+  }
+  if (table === 'rm_projects') {
+    state.tables.rm_assignments = state.tables.rm_assignments.filter((a) => !ids.has(a.project_id))
+  }
   state.tables[table] = state.tables[table].filter((r) => !ids.has(r.id))
+}
+
+const oneOf = (v: unknown, allowed: readonly unknown[]) => allowed.includes(v)
+
+/** 0016_resource_management.sql: checks, same-owner references and the projects policy. */
+function checkRmRow(state: FakeState, uid: string, table: TableName, row: DbRecord): FakeError | null {
+  const check = (name: string) => pgError(`new row violates check constraint "${table}_${name}_check"`, '23514')
+  const fk = () => pgError(`insert or update on table "${table}" violates foreign key constraint`, '23503')
+  const owned = (t: TableName, id: unknown) => state.tables[t].some((r) => r.id === id && r.owner_id === uid)
+  const exists = (t: TableName, id: unknown) => state.tables[t].some((r) => r.id === id)
+  if (!Array.isArray(row.tags ?? [])) return check('tags')
+  switch (table) {
+    case 'rm_people': {
+      const cap = Number(row.capacity_hours_per_day)
+      if (!(cap > 0 && cap <= 24)) return check('capacity_hours_per_day')
+      if (!(Number(row.bill_rate) >= 0)) return check('bill_rate')
+      if (row.office_status != null && !oneOf(row.office_status, ['in_office', 'remote', 'out_of_office'])) return check('office_status')
+      if (!oneOf(row.member_type, ['employee', 'contractor', 'placeholder'])) return check('member_type')
+      return null
+    }
+    case 'rm_projects': {
+      if (!oneOf(row.project_type, ['confirmed', 'tentative', 'internal'])) return check('project_type')
+      if (!oneOf(row.state, ['active', 'archived'])) return check('state')
+      if (!oneOf(row.budget_type, ['none', 'amount', 'days'])) return check('budget_type')
+      if (String(row.ends_at) < String(row.starts_at)) return check('dates')
+      if (row.project_owner_id != null) {
+        if (!exists('rm_people', row.project_owner_id)) return fk()
+        if (!owned('rm_people', row.project_owner_id)) return rlsError(table)
+      }
+      if (row.sheet_id != null) {
+        if (!exists('sheets', row.sheet_id)) return fk()
+        if (!owned('sheets', row.sheet_id)) return rlsError(table)
+      }
+      return null
+    }
+    case 'rm_assignments': {
+      if (!owned('rm_projects', row.project_id) || !owned('rm_people', row.person_id)) return fk()
+      if (String(row.ends_at) < String(row.starts_at)) return check('dates')
+      const pct = Number(row.allocation_percent)
+      if (!(pct > 0 && pct <= 200)) return check('allocation_percent')
+      if (!oneOf(row.status, ['confirmed', 'tentative'])) return check('status')
+      return null
+    }
+    case 'rm_views':
+      if (!oneOf(row.page, ['people', 'schedule', 'projects'])) return check('page')
+      if (String(row.name ?? '').trim() === '') return check('name')
+      return null
+    default:
+      return null
+  }
 }

@@ -26,7 +26,8 @@ function makeAuthClient(initial: Session | null = null) {
       callback = cb
       return { data: { subscription: { unsubscribe } } }
     }),
-    signInAnonymously: vi.fn() as ReturnType<typeof vi.fn>,
+    signInWithPassword: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+    signUp: vi.fn().mockResolvedValue({ data: { session: null, user: null }, error: null }),
   }
   const client = { auth } as unknown as SupabaseClient
   return {
@@ -37,71 +38,96 @@ function makeAuthClient(initial: Session | null = null) {
   }
 }
 
-describe('AuthGate (MVP: anonymous sessions, no sign-in screen)', () => {
-  const anonSession = { ...fakeSession, user: { id: 'anon-1', email: '', is_anonymous: true } } as unknown as Session
+function fillAndSubmit(email: string, password: string, buttonName: string) {
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: email } })
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: password } })
+  fireEvent.click(screen.getByRole('button', { name: buttonName }))
+}
 
-  it('signs a first-time visitor in anonymously and renders the app; no sign-in form', async () => {
-    const { client, auth } = makeAuthClient()
-    auth.signInAnonymously = vi.fn().mockResolvedValue({ data: { session: anonSession, user: anonSession.user }, error: null })
-    const children = vi.fn((s: Session) => <p>app for {s.user.id}</p>)
+describe('AuthGate', () => {
+  it('shows the sign-in form when there is no session', async () => {
+    const { client } = makeAuthClient()
+    const children = vi.fn(() => <p>app content</p>)
     render(<AuthGate client={client}>{children}</AuthGate>)
-    expect(await screen.findByText('app for anon-1')).toBeInTheDocument()
-    expect(auth.signInAnonymously).toHaveBeenCalledTimes(1)
-    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
+
+    expect(await screen.findByLabelText('Email')).toBeInTheDocument()
+    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
+    expect(children).not.toHaveBeenCalled()
   })
 
-  it('reuses the session a returning visitor already has (no new anonymous user)', async () => {
-    const { client, auth } = makeAuthClient(fakeSession)
-    auth.signInAnonymously = vi.fn()
-    render(<AuthGate client={client}>{() => <p>app content</p>}</AuthGate>)
-    expect(await screen.findByText('app content')).toBeInTheDocument()
-    expect(auth.signInAnonymously).not.toHaveBeenCalled()
-  })
-
-  it('shows a loading state while the session is being set up', async () => {
-    const { client, auth } = makeAuthClient()
-    auth.signInAnonymously = vi.fn(() => new Promise(() => {}))
+  it('shows a loading state while the initial session is read', async () => {
+    const { client } = makeAuthClient()
     render(<AuthGate client={client}>{() => <p>app content</p>}</AuthGate>)
     expect(screen.getByText('Loading...')).toBeInTheDocument()
-    await waitFor(() => expect(auth.signInAnonymously).toHaveBeenCalled())
-    expect(screen.queryByText('app content')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
+    await screen.findByLabelText('Email')
   })
 
-  it('explains how to enable anonymous sign-ins when the project refuses them, and retries', async () => {
-    const { client, auth } = makeAuthClient()
-    auth.signInAnonymously = vi
-      .fn()
-      .mockResolvedValueOnce({ data: { session: null, user: null }, error: { message: 'Anonymous sign-ins are disabled' } })
-      .mockResolvedValueOnce({ data: { session: anonSession, user: anonSession.user }, error: null })
-    render(<AuthGate client={client}>{() => <p>app content</p>}</AuthGate>)
-    const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Anonymous sign-ins are disabled')
-    expect(alert).toHaveTextContent('Allow anonymous sign-ins')
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
-    expect(await screen.findByText('app content')).toBeInTheDocument()
-    expect(auth.signInAnonymously).toHaveBeenCalledTimes(2)
+  it('renders children immediately when a session already exists', async () => {
+    const { client } = makeAuthClient(fakeSession)
+    render(<AuthGate client={client}>{(s) => <p>hello {s.user.email}</p>}</AuthGate>)
+    expect(await screen.findByText('hello test@example.com')).toBeInTheDocument()
   })
 
-  it('creates one anonymous user even when effects run twice (StrictMode)', async () => {
+  it('renders children after sign-in delivers a session', async () => {
+    const { client, auth, deliver } = makeAuthClient()
+    render(<AuthGate client={client}>{(s) => <p>hello {s.user.email}</p>}</AuthGate>)
+
+    await screen.findByLabelText('Email')
+    fillAndSubmit('test@example.com', 'not-a-real-password', 'Sign in')
+
+    await waitFor(() =>
+      expect(auth.signInWithPassword).toHaveBeenCalledWith({
+        email: 'test@example.com',
+        password: 'not-a-real-password',
+      }),
+    )
+    deliver('SIGNED_IN', fakeSession)
+    expect(await screen.findByText('hello test@example.com')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
+  })
+
+  it('shows the auth error message in an alert', async () => {
     const { client, auth } = makeAuthClient()
-    let resolve!: (v: unknown) => void
-    auth.signInAnonymously = vi.fn(() => new Promise((r) => (resolve = r)))
-    const { unmount } = render(<AuthGate client={client}>{() => <p>app content</p>}</AuthGate>)
-    unmount()
+    auth.signInWithPassword.mockResolvedValue({
+      data: { session: null },
+      error: { message: 'Invalid login credentials' },
+    })
     render(<AuthGate client={client}>{() => <p>app content</p>}</AuthGate>)
-    await waitFor(() => expect(auth.signInAnonymously).toHaveBeenCalledTimes(1))
-    await act(async () => resolve({ data: { session: anonSession, user: anonSession.user }, error: null }))
-    expect(await screen.findByText('app content')).toBeInTheDocument()
-    expect(auth.signInAnonymously).toHaveBeenCalledTimes(1)
+
+    await screen.findByLabelText('Email')
+    fillAndSubmit('test@example.com', 'wrong', 'Sign in')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid login credentials')
+  })
+
+  it('create-account toggle calls signUp and shows the confirm-email message', async () => {
+    const { client, auth } = makeAuthClient()
+    render(<AuthGate client={client}>{() => <p>app content</p>}</AuthGate>)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create account' }))
+    fillAndSubmit('new@example.com', 'not-a-real-password', 'Create account')
+
+    await waitFor(() =>
+      expect(auth.signUp).toHaveBeenCalledWith({
+        email: 'new@example.com',
+        password: 'not-a-real-password',
+      }),
+    )
+    expect(auth.signInWithPassword).not.toHaveBeenCalled()
+    expect(
+      await screen.findByText('Check your email to confirm your account'),
+    ).toBeInTheDocument()
   })
 
   it('unsubscribes from auth changes on unmount', async () => {
-    const { client, unsubscribe } = makeAuthClient(fakeSession)
-    const { unmount } = render(<AuthGate client={client}>{() => <p>app content</p>}</AuthGate>)
-    await screen.findByText('app content')
+    const { client, unsubscribe } = makeAuthClient()
+    const { unmount } = render(<AuthGate client={client}>{() => <p>x</p>}</AuthGate>)
+    await screen.findByLabelText('Email')
+    expect(unsubscribe).not.toHaveBeenCalled()
     unmount()
-    expect(unsubscribe).toHaveBeenCalled()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -131,7 +157,7 @@ describe('SheetList', () => {
     expect(await screen.findByText('No sheets yet')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New sheet' })).toBeInTheDocument()
     expect(from).toHaveBeenCalledWith('sheets')
-    expect(select).toHaveBeenCalledWith('id,name,created_at')
+    expect(select).toHaveBeenCalledWith('id,name,created_at,owner_id')
     expect(order).toHaveBeenCalledWith('created_at', { ascending: false })
   })
 

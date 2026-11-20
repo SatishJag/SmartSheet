@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
 
 interface AuthGateProps {
@@ -7,78 +7,105 @@ interface AuthGateProps {
 }
 
 /**
- * MVP: no sign-in screen. Each browser gets an anonymous Supabase user on its first visit (kept
- * across reloads), so row-level security still keeps one visitor's sheets from another's and the
- * planner's limits still apply per visitor. Needs "Allow anonymous sign-ins" in the Supabase project.
+ * E-mail and password sign-in. Real accounts are needed to share sheets by e-mail and to know who
+ * people are (WhatsApp, notifications); the earlier anonymous-visitor MVP is gone.
  */
 export function AuthGate({ client, children }: AuthGateProps) {
   const [session, setSession] = useState<Session | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [attempt, setAttempt] = useState(0)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let active = true
     const { data } = client.auth.onAuthStateChange((_event, next) => {
-      if (active && next) setSession(next)
+      if (active) setSession(next)
     })
-    ensureSession(client).then(
-      (s) => {
-        if (active) setSession((current) => current ?? s)
-      },
-      (err: unknown) => {
-        if (active) setError(describe(err))
-      },
-    )
+    client.auth.getSession().then(({ data: { session: initial } }) => {
+      if (!active) return
+      // Do not clobber a session already delivered by the subscription.
+      setSession((current) => current ?? initial)
+      setLoading(false)
+    })
     return () => {
       active = false
       data.subscription.unsubscribe()
     }
-  }, [client, attempt])
+  }, [client])
 
+  if (loading) return <p className="auth-status">Loading...</p>
   if (session) return <>{children(session)}</>
-  if (error) {
-    return (
-      <main className="screen-message">
-        <h1>Could not start the app</h1>
-        <p role="alert">{error}</p>
-        <button
-          type="button"
-          onClick={() => {
-            setError(null)
-            setAttempt((n) => n + 1)
-          }}
-        >
-          Try again
-        </button>
-      </main>
-    )
-  }
-  return <p className="auth-status">Loading...</p>
+  return <SignInForm client={client} />
 }
 
-/** One sign-in per client at a time: React StrictMode runs effects twice, which would make two users. */
-const pending = new WeakMap<SupabaseClient, Promise<Session>>()
+function SignInForm({ client }: { client: SupabaseClient }) {
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-function ensureSession(client: SupabaseClient): Promise<Session> {
-  const inFlight = pending.get(client)
-  if (inFlight) return inFlight
-  const p = (async () => {
-    const { data: current } = await client.auth.getSession()
-    if (current.session) return current.session
-    const { data, error } = await client.auth.signInAnonymously()
-    if (error) throw new Error(error.message)
-    if (!data.session) throw new Error('No session was returned.')
-    return data.session
-  })()
-  pending.set(client, p)
-  p.catch(() => pending.delete(client)) // let Try again start over
-  return p
-}
+  const submitLabel = mode === 'signin' ? 'Sign in' : 'Create account'
 
-function describe(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err)
-  if (/anonymous/i.test(message)) {
-    return `${message}. Turn on "Allow anonymous sign-ins" in the Supabase project (Authentication → Sign In / Providers).`
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setNotice(null)
+    setBusy(true)
+    try {
+      if (mode === 'signin') {
+        const { error: err } = await client.auth.signInWithPassword({ email, password })
+        if (err) setError(err.message)
+      } else {
+        const { data, error: err } = await client.auth.signUp({ email, password })
+        if (err) setError(err.message)
+        else if (!data.session) setNotice('Check your email to confirm your account')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      setBusy(false)
+    }
   }
-  return message || 'Something went wrong.'
+
+  function toggleMode() {
+    setMode(mode === 'signin' ? 'signup' : 'signin')
+    setError(null)
+    setNotice(null)
+  }
+
+  return (
+    <form className="auth-form" onSubmit={onSubmit}>
+      <h1>{mode === 'signin' ? 'Sign in' : 'Create account'}</h1>
+      <label>
+        Email
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="input"
+          autoComplete="email"
+          required
+        />
+      </label>
+      <label>
+        Password
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="input"
+          autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+          required
+        />
+      </label>
+      {error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
+      <button type="submit" className="btn-primary" disabled={busy}>
+        {submitLabel}
+      </button>
+      <button type="button" className="link-button" onClick={toggleMode}>
+        {mode === 'signin' ? 'Create account' : 'Have an account? Sign in'}
+      </button>
+    </form>
+  )
 }

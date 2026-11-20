@@ -6,7 +6,7 @@ import { initTheme } from './ui/theme'
 initTheme() // the inline script in index.html already applied it before first paint; this syncs the meta tag + storage
 
 // Links in e-mails open /u/<token> (update request) or /a/<token> (approval): a public page with no
-// shell and no sign-in, so it is chosen before the app (and its anonymous session) starts.
+// shell and no sign-in, so it is chosen before the app (and its sign-in screen) starts.
 const PublicRequestPage = lazy(() => import('./automation/public/PublicRequestPage').then((m) => ({ default: m.PublicRequestPage })))
 const link = /^\/(u|a)\/([A-Za-z0-9_-]{20,100})\/?$/.exec(window.location.pathname)
 

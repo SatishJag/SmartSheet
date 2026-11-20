@@ -13,7 +13,7 @@ export function renderAssets(ui: ReactElement, sheets: (string | SeedSheet)[] = 
   const store = createAssetsStore(supabaseAssetsPersistence(backend.client), { saveDelayMs: 5 })
   const openSheet = vi.fn()
   const view = render(
-    <ShellProvider value={{ client: backend.client, userId: backend.userId, openSheet }}>
+    <ShellProvider value={{ client: backend.client, userId: backend.userId, email: 'user@example.com', openSheet }}>
       <AssetsStoreProvider store={store}>{ui}</AssetsStoreProvider>
     </ShellProvider>,
   )

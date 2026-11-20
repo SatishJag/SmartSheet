@@ -1,38 +1,46 @@
 import { expect, type Locator, type Page } from '@playwright/test'
-import { FAKE_STORAGE_KEY } from './fakeSupabase'
 
 /** Obviously fake test accounts; they exist only in the browser's fake backend. */
 export const USER_A = { email: 'e2e-user-a@example.com', password: 'e2e-password-a' }
+export const USER_B = { email: 'e2e-user-b@example.com', password: 'e2e-password-b' }
 
 export type User = typeof USER_A
 
-/** Opens the app as a visitor (MVP: no sign-in; the app makes an anonymous session); ends on the sheet list. */
-export async function openApp(page: Page): Promise<void> {
+/** Creates an account through the app's own form; ends on the (empty) sheet list. */
+export async function signUp(page: Page, user: User): Promise<void> {
   await page.goto('/')
+  await page.getByRole('button', { name: 'Create account' }).click() // switch the form to sign-up
+  await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible()
+  await page.getByLabel('Email').fill(user.email)
+  await page.getByLabel('Password').fill(user.password)
+  await page.getByRole('button', { name: 'Create account', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Your sheets' })).toBeVisible()
+  await expect(page.getByRole('button', { name: `Account: ${user.email}` })).toBeVisible()
+}
+
+/** Fills and submits the sign-in form (which must be showing). */
+export async function submitSignIn(page: Page, user: User): Promise<void> {
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+  await page.getByLabel('Email').fill(user.email)
+  await page.getByLabel('Password').fill(user.password)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+}
+
+export async function signIn(page: Page, user: User): Promise<void> {
+  await submitSignIn(page, user)
   await expect(page.getByRole('heading', { name: 'Your sheets' })).toBeVisible()
 }
 
-/** Forgets this browser's session but keeps the backend data: the next load is a new visitor. */
-export async function becomeNewVisitor(page: Page): Promise<string | null> {
-  return page.evaluate((key) => {
-    const state = JSON.parse(localStorage.getItem(key) ?? '{}') as { sessionUserId?: string | null }
-    const previous = state.sessionUserId ?? null
-    state.sessionUserId = null
-    localStorage.setItem(key, JSON.stringify(state))
-    return previous
-  }, FAKE_STORAGE_KEY)
+export async function signOut(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /^Account: / }).click()
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
 }
 
-/** Switches this browser back to an earlier visitor's session (as if returning on their device). */
-export async function returnAsVisitor(page: Page, userId: string): Promise<void> {
-  await page.evaluate(
-    ([key, id]) => {
-      const state = JSON.parse(localStorage.getItem(key) ?? '{}') as { sessionUserId?: string | null }
-      state.sessionUserId = id
-      localStorage.setItem(key, JSON.stringify(state))
-    },
-    [FAKE_STORAGE_KEY, userId] as const,
-  )
+/** Signs up a fresh account (a new user every time); ends on the sheet list. */
+export async function openApp(page: Page): Promise<void> {
+  const id = Math.random().toString(36).slice(2, 10)
+  await signUp(page, { email: `e2e-${id}@example.com`, password: `e2e-password-${id}` })
 }
 
 /** Creates a sheet from the "Project schedule" template; ends inside the new sheet's grid. */

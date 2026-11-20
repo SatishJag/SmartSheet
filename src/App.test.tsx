@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -70,14 +70,16 @@ describe('App', () => {
     expect(screen.queryByRole('grid')).not.toBeInTheDocument()
   })
 
-  it('has no sign-in or sign-out (MVP): the header shows no account controls', async () => {
+  it('shows the signed-in e-mail and a Sign out button in the header', async () => {
     vi.stubEnv('VITE_SUPABASE_URL', 'http://localhost:54321')
     vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'test-anon-key')
     vi.mocked(createSupabaseClient).mockReturnValue(fakeClient())
     vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
     render(<App />)
     expect(await screen.findByRole('button', { name: /^Tower A/ }, SLOW)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
-    expect(screen.queryByText('pm@example.com')).not.toBeInTheDocument()
+    const account = screen.getByRole('button', { name: 'Account: pm@example.com' })
+    fireEvent.click(account)
+    expect(screen.getByText('pm@example.com')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 })

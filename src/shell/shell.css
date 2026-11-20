@@ -27,7 +27,39 @@
 }
 .section-stub { max-width: 720px; margin: 48px auto; padding: 0 16px; }
 .section-stub h1 { margin: 0 0 8px; }
-@media (max-width: 720px) {
+/* Eight sections do not fit with labels on a laptop screen: below 1440px only the current section
+   keeps its label (the others show their icon, with the name as tooltip and accessible name). */
+@media (max-width: 1440px) {
   .section-nav button span.label { display: none; }
   .section-nav button[aria-current='page'] span.label { display: inline; }
 }
+
+/* Account menu (header): initial button + panel with the e-mail and Sign out. */
+.account-menu { position: relative; flex: none; }
+.account-button {
+  width: var(--control-h);
+  height: var(--control-h);
+  min-height: 0;
+  padding: 0;
+  font-weight: 800;
+  color: rgb(var(--b800));
+  background: rgb(var(--b100));
+  border-color: rgb(var(--b300) / 0.7);
+}
+.account-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+}
+.account-label { margin: 0; font-size: 0.75rem; color: var(--ink-3); }
+.account-email { margin: 0 0 4px; font-weight: 600; overflow-wrap: anywhere; }

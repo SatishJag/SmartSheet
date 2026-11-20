@@ -47,7 +47,7 @@ async function mount(p = fixture(), initial?: Partial<WorkloadView>) {
   const store = createResourceStore(p)
   const openSheet = vi.fn()
   render(
-    <ShellProvider value={{ client: {} as SupabaseClient, userId: 'u', openSheet }}>
+    <ShellProvider value={{ client: {} as SupabaseClient, userId: 'u', email: 'u@example.com', openSheet }}>
       <ResourceStoreProvider store={store}>
         <Harness initial={initial} />
       </ResourceStoreProvider>

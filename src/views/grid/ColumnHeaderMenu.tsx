@@ -31,12 +31,16 @@ export function ColumnHeaderMenu({ columnTitle, items, open, onOpenChange, onSel
   const returnFocus = useRef<HTMLElement | null>(null)
   const menuId = useId()
   const [pos, setPos] = useState({ top: 0, left: 0 })
+  const placed = useRef({ top: 0, left: 0 })
 
   useLayoutEffect(() => {
     if (!open) return
     returnFocus.current = document.activeElement as HTMLElement | null
-    const r = buttonRef.current?.getBoundingClientRect()
-    if (r) setPos({ top: r.bottom + 2, left: Math.max(4, Math.min(r.left, window.innerWidth - 230)) })
+    const p = placeUnder(buttonRef.current)
+    if (p) {
+      placed.current = p
+      setPos(p)
+    }
     const first = menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')
     first?.focus()
   }, [open])
@@ -47,9 +51,13 @@ export function ColumnHeaderMenu({ columnTitle, items, open, onOpenChange, onSel
       const t = e.target as Node
       if (!menuRef.current?.contains(t) && !buttonRef.current?.contains(t)) onOpenChange(false)
     }
-    // The menu is placed under the button once; scrolling the grid would leave it behind.
+    // The menu is placed under the button once; scrolling the grid would leave it behind. A scroll that
+    // brought the button into view just before the menu was placed (clicking the button of a column off
+    // screen) leaves the button where the menu expects it, so the menu stays open.
     const onScroll = (e: Event) => {
-      if (!menuRef.current?.contains(e.target as Node)) onOpenChange(false)
+      if (menuRef.current?.contains(e.target as Node)) return
+      const p = placeUnder(buttonRef.current)
+      if (!p || Math.abs(p.top - placed.current.top) > 1 || Math.abs(p.left - placed.current.left) > 1) onOpenChange(false)
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('scroll', onScroll, true)
@@ -144,4 +152,10 @@ export function ColumnHeaderMenu({ columnTitle, items, open, onOpenChange, onSel
         )}
     </>
   )
+}
+
+/** Where the menu goes: just under the button, kept inside the window. */
+function placeUnder(button: HTMLElement | null): { top: number; left: number } | null {
+  const r = button?.getBoundingClientRect()
+  return r ? { top: r.bottom + 2, left: Math.max(4, Math.min(r.left, window.innerWidth - 230)) } : null
 }

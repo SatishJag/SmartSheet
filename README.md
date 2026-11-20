@@ -10,9 +10,12 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
 
 ## Features
 
-- **No sign-in (MVP)**: each browser gets an anonymous Supabase session on its first visit, so
-  visitors keep their own sheets (row-level security on every table) without an account. Needs
-  "Allow anonymous sign-ins" turned on in the Supabase project (Authentication → Sign In / Providers)
+- **Sign-in and per-user sheets**: e-mail and password accounts (Supabase Auth), row-level security
+  on every table
+- **Sharing**: the owner shares a sheet by email as viewer (read-only grid, Gantt and Kanban) or
+  editor (can edit rows, columns and dependencies); only the owner renames, deletes, changes
+  schedule settings or shares. Baselines, automation rules, resources and WhatsApp settings stay
+  the owner's
 - **Grid**: typed columns (text/number, date, checkbox, picklist, multi-picklist, contact,
   duration, predecessor), inline editing with validation, row hierarchy (Tab / Shift+Tab),
   drag to reorder, collapse, sort and filter, basic formulas (`SUM`, `IF`, arithmetic,
@@ -36,6 +39,25 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
 - **Templates**: Project schedule, Punch list, Simple list, with trade and status presets
 - **Import CSV**: create a sheet from a CSV file (first row = headers; date, checkbox and text columns are
   detected; up to 5,000 rows and 50 columns)
+- **App templates** ("Create app from template" on the sheet list): Construction Management, Data
+  Center Build, Real Estate Development and Tenant Fit-Out. Each creates a phased, scheduled
+  project-plan sheet (durations, dependencies, disciplines, roles), supporting sheets (RFI log,
+  punch list, risk register, long-lead equipment, commissioning tracker, due diligence, leasing
+  tracker) and, optionally, a linked People & projects booking with a placeholder person per
+  role booked phase by phase. Templates live in `src/apps/catalog.ts`
+- **People & projects** (portfolio resource management; separate from the task-level *Resources*):
+  - *People*: team directory (role, discipline, location, tags, hours per day, bill rate, office
+    status), filters, first/last-name sort, saved views
+  - *Schedule*: people (or projects) against a day/week/month timeline with availability strips,
+    assignment bars (click the lane to assign; drag to move, drag an edge to resize; undo/redo),
+    allocation heatmap, people and project filters, saved views
+  - *Projects*: portfolio list or cards with type, client, dates, owner, budget status and the
+    linked sheet; *Add work from a sheet* creates a project from a sheet's dates and turns
+    contacts that match people into assignments
+  - *Reports*: who is available this week and next, active projects tracked in currency or days
+    (incurred vs future scheduled vs budget, with the forecast), and live saved reports with CSV
+    export
+  - *My Work*: the signed-in user's assignments (matched by email)
 - **Saving**: optimistic edits, background save with retry, unsaved-changes guard
 - **WhatsApp assistant** (WhatsApp page): link your phone with a one-time code, then on WhatsApp pick
   a project and use the menu (delayed, due in 30 days, at risk / on track, critical path, milestones,
@@ -61,12 +83,24 @@ cp .env.example .env.local
 ```
 
 Fill `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env.local`, then apply the
-migrations in `supabase/migrations/` in order (Supabase SQL editor, or `supabase db push`
-with the Supabase CLI).
+migrations in `supabase/migrations/` in order (Supabase SQL editor, or `supabase db push` with the
+Supabase CLI). `0016_resource_management.sql` (People & projects) and `0017_sharing.sql` were
+`0004` / `0005` on the older `main` line; a database that already applied them under those numbers
+needs only the others (see *Migration numbering* below).
 
 ```bash
 npm run dev
 ```
+
+### Migration numbering
+
+Two lines of work were merged: the planner, automation, assets and WhatsApp line (`0004` to `0015`)
+and the sharing and People & projects line, whose migrations were `0004_resource_management.sql`
+and `0005_sharing.sql`. They are now `0016_resource_management.sql` and `0017_sharing.sql`, applied
+after the others (sharing last, because it replaces the owner-only policies of `columns`, `rows` and
+`dependencies`). A fresh database just applies every file in order. A database that already applied
+the old `0004`/`0005` files has those tables: apply the remaining files and skip `0016`/`0017`
+(with the Supabase CLI, record them as applied with `supabase migration repair --status applied 0016 0017`).
 
 ## Scripts
 
@@ -124,9 +158,9 @@ Environment variables:
 | `PLANNER_DRAFTS_PER_HOUR_TOTAL` | runtime, optional | AI drafts across all users per rolling hour (default 60) |
 
 Each AI draft can cost several large model calls, so the server limits drafts per user and in
-total, and stops the AI call when the browser disconnects. Without sign-in anyone can get a new
-anonymous account, so the total hourly cap is what bounds cost: also set a monthly spend limit
-on the Anthropic key.
+total, and stops the AI call when the browser disconnects. Anyone can still sign up for an
+account, so the total hourly cap is what bounds cost: also set a monthly spend limit on the
+Anthropic key.
 
 ### WhatsApp
 

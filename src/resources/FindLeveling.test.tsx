@@ -17,7 +17,7 @@ async function mount(ui: React.ReactNode, p: ReturnType<typeof memory>) {
   const store = createResourceStore(p)
   const openSheet = vi.fn()
   render(
-    <ShellProvider value={{ client: {} as SupabaseClient, userId: 'u', openSheet }}>
+    <ShellProvider value={{ client: {} as SupabaseClient, userId: 'u', email: 'u@example.com', openSheet }}>
       <ResourceStoreProvider store={store}>{ui}</ResourceStoreProvider>
     </ShellProvider>,
   )

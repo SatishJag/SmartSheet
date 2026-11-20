@@ -51,7 +51,7 @@ function renderPage(ui = <AutomationPage />) {
   openSheet = vi.fn<(sheetId: string) => void>()
   localStorage.setItem('automation:sheet', sheetId) // the page remembers the last sheet; the list is alphabetical
   return render(
-    <ShellProvider value={{ client: fake as unknown as SupabaseClient, userId: 'u', openSheet }}>
+    <ShellProvider value={{ client: fake as unknown as SupabaseClient, userId: 'u', email: 'u@example.com', openSheet }}>
       {ui}
     </ShellProvider>,
   )
@@ -227,7 +227,7 @@ describe('Notification centre', () => {
 
     const broken = { from: () => { throw new Error('relation "notifications" does not exist') } } as unknown as SupabaseClient
     render(
-      <ShellProvider value={{ client: broken, userId: 'u', openSheet: vi.fn() }}>
+      <ShellProvider value={{ client: broken, userId: 'u', openSheet: vi.fn(), email: 'u@example.com' }}>
         <NotificationBell />
       </ShellProvider>,
     )

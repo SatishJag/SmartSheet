@@ -6,6 +6,7 @@ import { supabasePersistence } from '../store/persistence'
 import { SheetStoreProvider, useSheetStore, useSheetStoreApi } from '../store/SheetStoreContext'
 import { createSheetStore, type SaveStatus, type SheetState } from '../store/sheetStore'
 import { ConfirmDialog } from './ConfirmDialog'
+import { ShareDialog } from './ShareDialog'
 import { ShowCriticalPathProvider } from './criticalPathContext'
 import { InlineRename } from './InlineRename'
 import { ScheduleSettingsButton } from './ScheduleSettingsDialog'
@@ -20,6 +21,8 @@ import './sheetView.css'
 
 export interface SheetViewProps {
   client: SupabaseClient
+  /** The signed-in user: decides whether they own the sheet or have been given a role on it. */
+  userId: string
   sheetId: string
   onBack: () => void
   /** Opens the "Plan with AI" wizard (it creates a new sheet); the button is hidden when absent. */
@@ -40,7 +43,7 @@ export function SheetView(props: SheetViewProps) {
   return <SheetViewForSheet key={props.sheetId} {...props} />
 }
 
-function SheetViewForSheet({ client, sheetId, onBack, onPlanWithAI, onSaveStatusChange, store: given }: SheetViewProps) {
+function SheetViewForSheet({ client, userId, sheetId, onBack, onPlanWithAI, onSaveStatusChange, store: given }: SheetViewProps) {
   // Created once per mounted sheet; useState's initializer is safe under StrictMode.
   const [store] = useState(() => given ?? createSheetStore(supabasePersistence(client)))
   const loadStarted = useRef(false)
@@ -54,7 +57,7 @@ function SheetViewForSheet({ client, sheetId, onBack, onPlanWithAI, onSaveStatus
   return (
     <SheetStoreProvider store={store}>
       <AutomationRuntime client={client} />
-      <SheetContent client={client} sheetId={sheetId} onBack={onBack} onPlanWithAI={onPlanWithAI} onSaveStatusChange={onSaveStatusChange} />
+      <SheetContent client={client} userId={userId} sheetId={sheetId} onBack={onBack} onPlanWithAI={onPlanWithAI} onSaveStatusChange={onSaveStatusChange} />
     </SheetStoreProvider>
   )
 }
@@ -166,8 +169,46 @@ function useSaveGuards(onSaveStatusChange?: (status: SaveStatus) => void): SaveS
   return status
 }
 
-/** The sheet's name as the page heading, with an inline Rename that saves to the sheets table. */
-function SheetName({ client, sheetId, name }: { client: SupabaseClient; sheetId: string; name: string }) {
+type SheetRole = 'owner' | 'editor' | 'viewer'
+
+/**
+ * The user's role on the open sheet. Anyone who is not the owner is a viewer until their
+ * membership row says editor (fail closed: a failed lookup leaves the sheet read-only).
+ * Applies the viewer's read-only flag to the store.
+ */
+function useSheetRole(client: SupabaseClient, userId: string, sheetId: string): SheetRole | null {
+  const api = useSheetStoreApi()
+  const ownerId = useSheetStore((s) => s.data?.sheet.ownerId)
+  const [member, setMember] = useState<{ sheetId: string; role: SheetRole } | null>(null)
+  const isOwner = ownerId === userId
+
+  useEffect(() => {
+    if (ownerId === undefined || isOwner) return
+    let live = true
+    void client
+      .from('sheet_members')
+      .select('role')
+      .eq('sheet_id', sheetId)
+      .eq('user_id', userId)
+      .then(({ data }) => {
+        const role = (data as { role: string }[] | null)?.[0]?.role
+        if (live) setMember({ sheetId, role: role === 'editor' ? 'editor' : 'viewer' })
+      })
+    return () => {
+      live = false
+    }
+  }, [client, userId, sheetId, ownerId, isOwner])
+
+  const role: SheetRole | null = ownerId === undefined ? null : isOwner ? 'owner' : member?.sheetId === sheetId ? member.role : 'viewer'
+  const readOnly = ownerId !== undefined && role !== 'owner' && role !== 'editor'
+  useEffect(() => {
+    api.getState().setReadOnly(readOnly)
+  }, [api, readOnly])
+  return role
+}
+
+/** The sheet's name as the page heading, with an inline Rename (owners only) that saves to the sheets table. */
+function SheetName({ client, sheetId, name, canRename }: { client: SupabaseClient; sheetId: string; name: string; canRename: boolean }) {
   const api = useSheetStoreApi()
   const [editing, setEditing] = useState(false)
 
@@ -184,9 +225,11 @@ function SheetName({ client, sheetId, name }: { client: SupabaseClient; sheetId:
   ) : (
     <>
       <h2 className="sheet-title">{name}</h2>
-      <button type="button" className="btn-icon" aria-label="Rename sheet" title="Rename sheet" onClick={() => setEditing(true)}>
-        <Icon name="pencil" size={16} />
-      </button>
+      {canRename && (
+        <button type="button" className="btn-icon" aria-label="Rename sheet" title="Rename sheet" onClick={() => setEditing(true)}>
+          <Icon name="pencil" size={16} />
+        </button>
+      )}
     </>
   )
 }
@@ -209,12 +252,14 @@ function DensityToggle({ density, onChange }: { density: Density; onChange: (d: 
 
 function SheetContent({
   client,
+  userId,
   sheetId,
   onBack,
   onPlanWithAI,
   onSaveStatusChange,
 }: {
   client: SupabaseClient
+  userId: string
   sheetId: string
   onBack: () => void
   onPlanWithAI?: () => void
@@ -224,6 +269,8 @@ function SheetContent({
   const loadError = useSheetStore((s) => s.loadError)
   const status = useSaveGuards(onSaveStatusChange)
   const [confirmBack, setConfirmBack] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  const role = useSheetRole(client, userId, sheetId)
   const [showCritical, setShowCritical] = useState(false)
   const dependenciesOn = data?.sheet.dependenciesEnabled ?? false
   const [density, setDensity] = useState<Density>(readDensity)
@@ -247,6 +294,7 @@ function SheetContent({
           onCancel={() => setConfirmBack(false)}
         />
       )}
+      {sharing && data && <ShareDialog client={client} sheetId={sheetId} sheetName={data.sheet.name} onClose={() => setSharing(false)} />}
       <header className="sheet-view-header">
         <nav aria-label="Breadcrumb" className="breadcrumb">
           <button
@@ -261,12 +309,19 @@ function SheetContent({
           {data && (
             <>
               <Icon name="chevron" size={14} className="crumb-sep" />
-              <SheetName client={client} sheetId={sheetId} name={data.sheet.name} />
+              <SheetName client={client} sheetId={sheetId} name={data.sheet.name} canRename={role === 'owner'} />
             </>
           )}
         </nav>
+        {role === 'viewer' && <span className="role-badge">View only</span>}
+        {role === 'editor' && <span className="role-badge">Shared with you · can edit</span>}
         <span className="spacer" />
         {data && <SaveStatusBadge />}
+        {role === 'owner' && (
+          <button type="button" className="btn" onClick={() => setSharing(true)}>
+            Share
+          </button>
+        )}
       </header>
       {loadError ? (
         <p role="alert">Could not load the sheet: {loadError}</p>
@@ -276,7 +331,8 @@ function SheetContent({
             <SheetTabs
               tools={
                 <>
-                  <ScheduleSettingsButton />
+                  {/* Sheet settings live on the sheets row, which only the owner may change. */}
+                  {role === 'owner' && <ScheduleSettingsButton />}
                   {onPlanWithAI && (
                     <button type="button" className="btn" onClick={onPlanWithAI} title="Draft a new schedule from history, worked back from your required dates">
                       <Icon name="sparkles" size={16} />

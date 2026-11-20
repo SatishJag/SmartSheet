@@ -5,6 +5,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 export interface ShellApi {
   client: SupabaseClient
   userId: string
+  /** The signed-in user's e-mail address. */
+  email: string
   /** Opens a sheet in the Sheets section (and switches to it). */
   openSheet(sheetId: string): void
 }

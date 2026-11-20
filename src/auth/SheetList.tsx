@@ -14,12 +14,15 @@ interface SheetRow {
   id: string
   name: string
   created_at: string
+  owner_id: string
 }
 
 interface SheetListProps {
   client: SupabaseClient
   userId: string
   onOpen: (sheetId: string) => void
+  /** Opens the app-template gallery (Construction, Data Center, Real Estate, Fit-Out). */
+  onCreateApp?: () => void
 }
 
 const TEMPLATE_ICONS: Record<TemplateId, IconName> = {
@@ -33,7 +36,7 @@ const formatDate = (iso: string) =>
 
 const message = (err: unknown, fallback: string) => (err instanceof Error ? err.message : fallback)
 
-export function SheetList({ client, userId, onOpen }: SheetListProps) {
+export function SheetList({ client, userId, onOpen, onCreateApp }: SheetListProps) {
   const [sheets, setSheets] = useState<SheetRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
@@ -51,7 +54,7 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
   const load = useCallback(async () => {
     try {
       const rows = await fetchAllPages<SheetRow>((from, to) =>
-        client.from('sheets').select('id,name,created_at').order('created_at', { ascending: false }).order('id').range(from, to),
+        client.from('sheets').select('id,name,created_at,owner_id').order('created_at', { ascending: false }).order('id').range(from, to),
       )
       if (active.current) setSheets(rows)
     } catch (err) {
@@ -187,6 +190,11 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
                 e.target.value = '' // lets the same file be chosen again after a failure
               }}
             />
+            {onCreateApp && (
+              <button type="button" className="btn btn-ghost sheet-list-create-app" onClick={onCreateApp} disabled={creating}>
+                Create app from template
+              </button>
+            )}
             <span className="create-hint">Creates a sheet from the selected template, or from a CSV file.</span>
           </div>
         </div>
@@ -268,9 +276,13 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
                       <Icon name="sheet" size={22} />
                     </span>
                     <span className="sheet-name">{sheet.name}</span>
-                    <small className="sheet-date">Created {formatDate(sheet.created_at)}</small>
+                    <small className="sheet-date">
+                      {sheet.owner_id !== userId && 'Shared with you · '}Created {formatDate(sheet.created_at)}
+                    </small>
                   </button>
                 )}
+                {/* Only the owner can rename or delete a sheet. */}
+                {sheet.owner_id === userId && (
                 <div className="sheet-actions">
                   <button
                     type="button"
@@ -291,6 +303,7 @@ export function SheetList({ client, userId, onOpen }: SheetListProps) {
                     <Icon name="trash" size={17} />
                   </button>
                 </div>
+                )}
               </li>
             ))}
           </ul>

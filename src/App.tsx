@@ -3,7 +3,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { AuthGate } from './auth/AuthGate'
 import { SheetList } from './auth/SheetList'
 import { createSupabaseClient, getSupabaseConfig } from './lib/supabase'
-import { SheetView } from './views/SheetView'
+import { CreateAppPage } from './apps/CreateAppPage'
+import type { SaveStatus } from './store/sheetStore'
+import { ConfirmDialog } from './views/ConfirmDialog'
+import { SheetView, UNSAVED_MESSAGE } from './views/SheetView'
 import { PlannerWizard } from './planner/PlannerWizard'
 import { Icon } from './ui/Icon'
 import { ShellProvider } from './shell/ShellContext'
@@ -11,6 +14,7 @@ import { SECTIONS } from './shell/sections'
 import './shell/shell.css'
 import { NotificationBell } from './automation/NotificationBell'
 import { ThemePicker } from './ui/ThemePicker'
+import { AccountMenu } from './shell/AccountMenu'
 import './theme.css'
 import './App.css'
 
@@ -37,35 +41,62 @@ function ConfiguredApp({ url, anonKey }: { url: string; anonKey: string }) {
   return (
     <AuthGate client={client}>
       {(session) => (
-        <Shell client={client} userId={session.user.id} />
+        <Shell client={client} userId={session.user.id} email={session.user.email ?? ''} />
       )}
     </AuthGate>
   )
 }
 
-function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
+function Shell({ client, userId, email }: { client: SupabaseClient; userId: string; email: string }) {
   // A link from an e-mail or a notification can open a sheet directly: /?sheet=<id>.
   const [openSheetId, setOpenSheetId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('sheet'))
   const [sectionId, setSectionId] = useState('sheets')
   const [planning, setPlanning] = useState(false)
+  const [creatingApp, setCreatingApp] = useState(false)
   // Choosing the section you are already in starts it over (closes an open report or dashboard).
   const [restart, setRestart] = useState(0)
+  // Save status of the open sheet: leaving it (Sign out, another section) asks first while unsaved.
+  const [sheetStatus, setSheetStatus] = useState<SaveStatus>('saved')
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
   const section = SECTIONS.find((s) => s.id === sectionId) ?? SECTIONS[0]
+  const unsaved = section.id === 'sheets' && openSheetId !== null && sheetStatus !== 'saved'
+  /** Runs `leave` now, or after confirmation when the open sheet has unsaved changes. */
+  const guard = (leave: () => void) => (unsaved ? setPendingLeave(() => leave) : leave())
   const shell = useMemo(
     () => ({
       client,
       userId,
+      email,
       openSheet: (id: string) => {
+        setCreatingApp(false)
         setOpenSheetId(id)
         setSectionId('sheets')
       },
     }),
-    [client, userId],
+    [client, userId, email],
   )
+  const closeSheet = () => {
+    setSheetStatus('saved')
+    setOpenSheetId(null)
+  }
 
   return (
     <ShellProvider value={shell}>
     <div className="app">
+      {pendingLeave && (
+        <ConfirmDialog
+          title="Unsaved changes"
+          message={UNSAVED_MESSAGE}
+          confirmLabel="Leave"
+          cancelLabel="Stay"
+          onConfirm={() => {
+            const leave = pendingLeave
+            setPendingLeave(null)
+            leave()
+          }}
+          onCancel={() => setPendingLeave(null)}
+        />
+      )}
       <header className="app-header">
         <span className="brand">
           <span className="brand-mark">
@@ -79,12 +110,18 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
               key={s.id}
               type="button"
               aria-label={s.label}
+              title={s.label}
               aria-current={s.id === section.id ? 'page' : undefined}
-              onClick={() => {
-                if (s.id === section.id) setRestart((n) => n + 1)
-                setSectionId(s.id)
-                if (s.id === 'sheets') setOpenSheetId(null)
-              }}
+              onClick={() =>
+                guard(() => {
+                  if (s.id === section.id) setRestart((n) => n + 1)
+                  setSectionId(s.id)
+                  if (s.id === 'sheets') {
+                    closeSheet()
+                    setCreatingApp(false)
+                  }
+                })
+              }
             >
               <Icon name={s.icon} size={16} />
               <span className="label">{s.label}</span>
@@ -94,14 +131,32 @@ function Shell({ client, userId }: { client: SupabaseClient; userId: string }) {
         <span className="spacer" />
         <NotificationBell />
         <ThemePicker />
+        <AccountMenu email={email} onSignOut={() => guard(() => void client.auth.signOut())} />
       </header>
-      <main className={section.id !== 'sheets' ? 'page page-list' : openSheetId === null ? 'page page-list' : 'page page-sheet'}>
+      <main className={section.id !== 'sheets' || openSheetId === null ? 'page page-list' : 'page page-sheet'}>
         {section.Page ? (
           <section.Page key={restart} />
+        ) : creatingApp ? (
+          <CreateAppPage
+            client={client}
+            userId={userId}
+            onBack={() => setCreatingApp(false)}
+            onCreated={(sheetId) => {
+              setCreatingApp(false)
+              setOpenSheetId(sheetId)
+            }}
+          />
         ) : openSheetId === null ? (
-          <SheetList client={client} userId={userId} onOpen={setOpenSheetId} />
+          <SheetList client={client} userId={userId} onOpen={setOpenSheetId} onCreateApp={() => setCreatingApp(true)} />
         ) : (
-          <SheetView client={client} sheetId={openSheetId} onBack={() => setOpenSheetId(null)} onPlanWithAI={() => setPlanning(true)} />
+          <SheetView
+            client={client}
+            userId={userId}
+            sheetId={openSheetId}
+            onSaveStatusChange={setSheetStatus}
+            onBack={closeSheet}
+            onPlanWithAI={() => setPlanning(true)}
+          />
         )}
       </main>
       {planning && (

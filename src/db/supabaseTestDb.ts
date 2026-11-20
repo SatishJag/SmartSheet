@@ -20,6 +20,7 @@ export async function createSupabaseLikeDb(migrations: string[] = allMigrations(
   const db = new PGlite()
   await db.exec(`
     create schema auth;
+    create table auth.users (id uuid primary key, email text);
     create role authenticated nologin;
     create role anon nologin;
     create function auth.uid() returns uuid language sql stable as

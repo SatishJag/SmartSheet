@@ -4,6 +4,7 @@ import { AutomationPage } from '../automation/AutomationPage'
 import { DashboardsPage } from '../assets/DashboardsPage'
 import { ReportsPage } from '../assets/ReportsPage'
 import { ResourcesPage } from '../resources/ResourcesPage'
+import { PeopleProjectsPage } from '../rm/PeopleProjectsPage'
 import { WorkspacesPage } from '../assets/WorkspacesPage'
 import { WhatsAppPage } from '../whatsapp/ui/WhatsAppPage'
 
@@ -26,6 +27,7 @@ export const SECTIONS: Section[] = [
   { id: 'reports', label: 'Reports', icon: 'list', Page: ReportsPage },
   { id: 'dashboards', label: 'Dashboards', icon: 'chart', Page: DashboardsPage },
   { id: 'resources', label: 'Resources', icon: 'users', Page: ResourcesPage },
+  { id: 'people', label: 'People & projects', icon: 'briefcase', Page: PeopleProjectsPage },
   { id: 'automation', label: 'Automation', icon: 'bolt', Page: AutomationPage },
   { id: 'whatsapp', label: 'WhatsApp', icon: 'chat', Page: WhatsAppPage },
 ]
