@@ -533,6 +533,18 @@ describe('shared sheets (0017_sharing)', () => {
     expect(await say(EDITOR_PHONE, '1 Complete')).toBe('You can only update tasks you are responsible for.')
     expect(await say(EDITOR_PHONE, '1')).toContain('*Villa B — Delayed*') // the only sheet left opens
   })
+
+  it('does not e-mail a list from a sheet the user was removed from', async () => {
+    const { store, say, mails } = shared()
+    store.state.accounts.set(EDITOR, { email: 'qs@builder.example', anonymous: false })
+    await say(EDITOR_PHONE, 'menu')
+    await say(EDITOR_PHONE, '1')
+    expect(await say(EDITOR_PHONE, 'EMAIL')).toContain('Sent the full list (2)')
+    expect(mails).toHaveLength(1)
+    store.state.members = store.state.members.filter((m) => m.userId !== EDITOR)
+    expect(await say(EDITOR_PHONE, 'EMAIL')).toBe('None of the tasks in that list are available to you any more. Reply *MENU*.')
+    expect(mails).toHaveLength(1)
+  })
 })
 
 describe('the Supabase store reads roles and shared sheets like 0017_sharing', () => {

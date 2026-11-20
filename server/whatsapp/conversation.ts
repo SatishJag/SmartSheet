@@ -241,14 +241,22 @@ export function createConversation(deps: ConversationDeps) {
     await reply(a, listMessage(title, items.map((i) => (i.label ? { ...i.task, name: `${i.task.name} (${i.label})` } : i.task)), opts))
   }
 
+  /**
+   * May see the task now: any role on its sheet, or a person the task belongs to. Checked again on every
+   * read of a remembered list, so access removed since the list was shown takes effect at once.
+   */
+  async function mayRead(a: Actor, s: LoadedSheet, task: TaskFact): Promise<boolean> {
+    const role = await roleOf(a, s.meta.id)
+    return role !== null || canTouch(a, s.meta.ownerId, task, role)
+  }
+
   async function listItem(a: Actor, st: SessionState, n: number): Promise<{ s: LoadedSheet; task: TaskFact } | string> {
     const item = st.list?.items[n - 1]
     if (!st.list || !item) return st.list ? `There is no item ${n} in the last list (${st.list.items.length} items).` : 'There is no list yet: reply *MENU* first.'
     const s = await load(item.sheetId)
     const task = s?.facts.tasks.find((t) => t.rowId === item.rowId)
     if (!s || !task) return 'That task no longer exists.'
-    const role = await roleOf(a, s.meta.id)
-    if (role === null && !canTouch(a, s.meta.ownerId, task, role)) return 'That task is not one of yours.'
+    if (!(await mayRead(a, s, task))) return 'That task is not one of yours.'
     return { s, task }
   }
 
@@ -409,13 +417,14 @@ export function createConversation(deps: ConversationDeps) {
     const lines: string[] = [st.list.title, '']
     let i = 0
     for (const item of st.list.items) {
-      i++
       const s = await load(item.sheetId)
       const t = s?.facts.tasks.find((x) => x.rowId === item.rowId)
-      if (t) lines.push(taskLine(i, t).replace(/\*/g, ''))
+      // Only what the user may still see: access can be removed after the list was shown.
+      if (s && t && (await mayRead(a, s, t))) lines.push(taskLine(++i, t).replace(/\*/g, ''))
     }
+    if (i === 0) return reply(a, 'None of the tasks in that list are available to you any more. Reply *MENU*.')
     const ok = await deps.sendEmail(account.email, st.list.title, lines.join('\n'))
-    return reply(a, ok ? `📧 Sent the full list (${st.list.items.length}) to ${account.email}.` : 'The e-mail could not be sent. Try again later.')
+    return reply(a, ok ? `📧 Sent the full list (${i}) to ${account.email}.` : 'The e-mail could not be sent. Try again later.')
   }
 
   async function question(a: Actor, st: SessionState, text: string) {
