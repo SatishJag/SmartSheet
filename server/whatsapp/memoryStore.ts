@@ -29,6 +29,8 @@ export interface MemoryState {
   ruleMessages: (PendingRuleMessage & { status: string; error: string | null; deliverAfter: number })[]
   inApp: { ownerId: string; sheetId: string | null; rowId: string | null; title: string; body: string }[]
   accounts: Map<string, { email: string | null; anonymous: boolean }>
+  /** sheet_members (0017_sharing). */
+  members: { sheetId: string; userId: string; role: 'editor' | 'viewer' }[]
 }
 
 export function createMemoryStore(now: () => number = Date.now): WhatsAppStore & { state: MemoryState; outbound(phone?: string): MemoryMessage[] } {
@@ -46,6 +48,7 @@ export function createMemoryStore(now: () => number = Date.now): WhatsAppStore &
     ruleMessages: [],
     inApp: [],
     accounts: new Map(),
+    members: [],
   }
   let seq = 0
   const clone = <T>(v: T): T => structuredClone(v)
@@ -191,6 +194,19 @@ export function createMemoryStore(now: () => number = Date.now): WhatsAppStore &
         .filter((d) => d.sheet.ownerId === userId)
         .slice(0, limit)
         .map((d) => ({ id: d.sheet.id, name: d.sheet.name }))
+    },
+    async accessibleSheets(userId, limit) {
+      const owned = [...s.sheets.values()].filter((d) => d.sheet.ownerId === userId).map((d) => ({ id: d.sheet.id, name: d.sheet.name, role: 'owner' as const }))
+      const shared = s.members
+        .filter((m) => m.userId === userId && s.sheets.has(m.sheetId))
+        .map((m) => ({ id: m.sheetId, name: s.sheets.get(m.sheetId)!.sheet.name, role: m.role }))
+      return [...owned, ...shared].slice(0, limit)
+    },
+    async sheetRole(userId, sheetId) {
+      const d = s.sheets.get(sheetId)
+      if (!d) return null
+      if (d.sheet.ownerId === userId) return 'owner'
+      return s.members.find((m) => m.sheetId === sheetId && m.userId === userId)?.role ?? null
     },
     async sheetMeta(sheetId) {
       const d = s.sheets.get(sheetId)

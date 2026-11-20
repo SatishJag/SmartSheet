@@ -104,8 +104,9 @@ export function whatsappApi(client: SupabaseClient) {
 
     unlink: () => server<{ ok: true }>('/api/whatsapp/unlink', 'POST'),
 
-    async listSheets(): Promise<{ id: string; name: string }[]> {
-      return check(await client.from('sheets').select('id, name').order('name').order('id').range(0, 999)) as { id: string; name: string }[]
+    /** Sheets the user can open (their own and shared ones), with the owner, by name. */
+    async listSheets(): Promise<{ id: string; name: string; owner_id: string }[]> {
+      return check(await client.from('sheets').select('id, name, owner_id').order('name').order('id').range(0, 999)) as { id: string; name: string; owner_id: string }[]
     },
     async listColumns(sheetId: string): Promise<Column[]> {
       const rows = check(await client.from('columns').select('*').eq('sheet_id', sheetId).order('position').order('id').range(0, 999)) as DbColumn[]

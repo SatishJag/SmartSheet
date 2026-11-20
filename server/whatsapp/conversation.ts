@@ -8,9 +8,10 @@
  *                                 details and updates of those tasks only
  *   anyone else                   how to link (once a day); LINK / JOIN codes; STOP / START
  *
- * Who may see or change a task is decided in one place, `canTouch`: the sheet's owner, or a person
- * whose e-mail is in the task's owner column and who is either a linked planner user under that
- * e-mail or an active contact of the sheet's owner.
+ * Who may see or change a task is decided in one place, `canTouch`: the sheet's owner or an editor it
+ * is shared with (0017_sharing), or a person whose e-mail is in the task's owner column and who is
+ * either a linked planner user under that e-mail or an active contact of the sheet's owner. A viewer
+ * of a shared sheet sees its menu, lists and details and may ask questions, but changes nothing.
  */
 import { createHash } from 'node:crypto'
 import { validateCell, type Column } from '../../src/model/validate'
@@ -35,7 +36,7 @@ import type { AnthropicLike } from '../ai'
 import type { Logger } from '../log'
 import { askAssistant, buildContext } from './assistant'
 import { queue, resolveRecipients } from './outbox'
-import type { Contact, Link, ListState, Session, SessionState, SheetSettings, WhatsAppStore } from './store'
+import type { Contact, Link, ListState, Session, SessionState, SheetRole, SheetSettings, WhatsAppStore } from './store'
 
 const HOUR_MS = 3_600_000
 const PENDING_TTL_MS = 72 * HOUR_MS
@@ -58,6 +59,9 @@ export interface Actor {
   /** The account this conversation's messages belong to. */
   ownerId: string | null
 }
+
+/** A sheet opened in a user's conversation, with their role on it. */
+export type OpenSheet = LoadedSheet & { role: SheetRole }
 
 export interface LoadedSheet {
   meta: { id: string; name: string; ownerId: string }
@@ -87,8 +91,16 @@ export function createConversation(deps: ConversationDeps) {
     }
   }
 
-  function canTouch(a: Actor, ownerId: string, task: TaskFact): boolean {
-    if (a.link && a.link.userId === ownerId) return true
+  /** The linked user's role on a sheet (owner, editor, viewer), or null (contacts and strangers have none). */
+  async function roleOf(a: Actor, sheetId: string): Promise<SheetRole | null> {
+    return a.link ? store.sheetRole(a.link.userId, sheetId) : null
+  }
+
+  const canEdit = (role: SheetRole | null) => role === 'owner' || role === 'editor'
+
+  /** May change the task: owner or editor of the sheet, or a person the task belongs to. */
+  function canTouch(a: Actor, ownerId: string, task: TaskFact, role: SheetRole | null): boolean {
+    if (canEdit(role)) return true
     return task.owners.some((e) => (a.link?.email === e) || a.contacts.some((c) => c.ownerId === ownerId && c.email === e))
   }
 
@@ -103,7 +115,10 @@ export function createConversation(deps: ConversationDeps) {
     if (!s) return 'That project no longer exists.'
     const task = s.facts.tasks.find((t) => t.rowId === target.rowId)
     if (!task) return 'That task no longer exists.'
-    if (!canTouch(a, s.meta.ownerId, task)) return 'You can only update tasks you are responsible for.'
+    const role = await roleOf(a, s.meta.id)
+    if (!canTouch(a, s.meta.ownerId, task, role)) {
+      return role === 'viewer' ? 'This sheet is shared with you to view only, so you cannot change its tasks.' : 'You can only update tasks you are responsible for.'
+    }
     if (task.summary) return `Row ${task.number} (*${task.name}*) is a summary row: update the tasks under it.`
     if (await store.isRowLocked(task.rowId)) return `Row ${task.number} (*${task.name}*) is locked in the planner and cannot be changed.`
 
@@ -226,13 +241,22 @@ export function createConversation(deps: ConversationDeps) {
     await reply(a, listMessage(title, items.map((i) => (i.label ? { ...i.task, name: `${i.task.name} (${i.label})` } : i.task)), opts))
   }
 
+  /**
+   * May see the task now: any role on its sheet, or a person the task belongs to. Checked again on every
+   * read of a remembered list, so access removed since the list was shown takes effect at once.
+   */
+  async function mayRead(a: Actor, s: LoadedSheet, task: TaskFact): Promise<boolean> {
+    const role = await roleOf(a, s.meta.id)
+    return role !== null || canTouch(a, s.meta.ownerId, task, role)
+  }
+
   async function listItem(a: Actor, st: SessionState, n: number): Promise<{ s: LoadedSheet; task: TaskFact } | string> {
     const item = st.list?.items[n - 1]
     if (!st.list || !item) return st.list ? `There is no item ${n} in the last list (${st.list.items.length} items).` : 'There is no list yet: reply *MENU* first.'
     const s = await load(item.sheetId)
     const task = s?.facts.tasks.find((t) => t.rowId === item.rowId)
     if (!s || !task) return 'That task no longer exists.'
-    if (!canTouch(a, s.meta.ownerId, task)) return 'That task is not one of yours.'
+    if (!(await mayRead(a, s, task))) return 'That task is not one of yours.'
     return { s, task }
   }
 
@@ -257,8 +281,12 @@ export function createConversation(deps: ConversationDeps) {
   // ---------------------------------------------------------------------------------------------
   // Planner users
 
+  /** The menu of an open sheet, saying when it is shared with the user (and whether they can edit). */
+  const menuFor = (s: OpenSheet) =>
+    menuMessage(s.meta.name, menuCounts(s.facts.work), { canNotifyOwners: canEdit(s.role), ...(s.role !== 'owner' ? { access: s.role } : {}) })
+
   async function picker(a: Actor, st: SessionState) {
-    const sheets = await store.ownedSheets(a.link!.userId, PICKER_SIZE + 1)
+    const sheets = await store.accessibleSheets(a.link!.userId, PICKER_SIZE + 1)
     const account = await store.account(a.link!.userId)
     const name = account?.email?.split('@')[0] ?? null
     st.lastMenuAt = now()
@@ -272,33 +300,34 @@ export function createConversation(deps: ConversationDeps) {
   }
 
   async function selectSheet(a: Actor, st: SessionState, sheetId: string) {
-    const s = await load(sheetId)
-    if (!s || s.meta.ownerId !== a.link!.userId) {
-      delete st.sheetId
+    st.sheetId = sheetId
+    const s = await currentSheet(a, st)
+    if (!s) {
       await reply(a, 'That project is no longer available. Reply *MENU*.')
       return
     }
-    st.sheetId = sheetId
     st.awaitingSheet = false
     st.lastMenuAt = now()
-    await reply(a, menuMessage(s.meta.name, menuCounts(s.facts.work), { canNotifyOwners: true }))
+    await reply(a, menuFor(s))
   }
 
-  async function currentSheet(a: Actor, st: SessionState): Promise<LoadedSheet | null> {
+  /** The selected sheet with the user's role on it; forgets it when the user can no longer open it. */
+  async function currentSheet(a: Actor, st: SessionState): Promise<OpenSheet | null> {
     if (!st.sheetId) return null
-    const s = await load(st.sheetId)
-    if (!s || s.meta.ownerId !== a.link!.userId) {
+    const role = await roleOf(a, st.sheetId)
+    const s = role ? await load(st.sheetId) : null
+    if (!s || !role) {
       delete st.sheetId
       return null
     }
-    return s
+    return { ...s, role }
   }
 
   async function menuOption(a: Actor, st: SessionState, n: number) {
     let s = await currentSheet(a, st)
     if (!s) {
       // With a single project there is nothing to pick: use it.
-      const sheets = await store.ownedSheets(a.link!.userId, 2)
+      const sheets = await store.accessibleSheets(a.link!.userId, 2)
       if (sheets.length !== 1) return picker(a, st)
       st.sheetId = sheets[0].id
       s = await currentSheet(a, st)
@@ -306,7 +335,7 @@ export function createConversation(deps: ConversationDeps) {
     }
     const w = s.facts.work
     const items = (ts: TaskFact[]) => ts.map((task) => ({ sheetId: s.meta.id, task }))
-    const opts = (empty: string) => ({ canUpdate: true, empty })
+    const opts = (empty: string) => ({ canUpdate: canEdit(s.role), empty })
     switch (n) {
       case 1:
         return showList(a, st, `${s.meta.name} — Delayed`, items(delayed(w)), opts('Nothing is late. 🎉'))
@@ -321,13 +350,17 @@ export function createConversation(deps: ConversationDeps) {
       case 5:
         return showList(a, st, `${s.meta.name} — Milestones`, items(milestones(w)), opts('No open milestones (a milestone is a task with zero duration).'))
       case 6:
+        if (!canEdit(s.role)) {
+          st.lastMenuAt = now()
+          return reply(a, 'This sheet is shared with you to view only, so you cannot send reminders from it.')
+        }
         return remindOwners(a, st, s)
       case 7:
         st.lastMenuAt = now()
         return reply(a, summaryMessage(s.meta.name, s.today, menuCounts(w), delayed(w)))
       default:
         st.lastMenuAt = now()
-        return reply(a, menuMessage(s.meta.name, menuCounts(w), { canNotifyOwners: true }))
+        return reply(a, menuFor(s))
     }
   }
 
@@ -384,13 +417,14 @@ export function createConversation(deps: ConversationDeps) {
     const lines: string[] = [st.list.title, '']
     let i = 0
     for (const item of st.list.items) {
-      i++
       const s = await load(item.sheetId)
       const t = s?.facts.tasks.find((x) => x.rowId === item.rowId)
-      if (t) lines.push(taskLine(i, t).replace(/\*/g, ''))
+      // Only what the user may still see: access can be removed after the list was shown.
+      if (s && t && (await mayRead(a, s, t))) lines.push(taskLine(++i, t).replace(/\*/g, ''))
     }
+    if (i === 0) return reply(a, 'None of the tasks in that list are available to you any more. Reply *MENU*.')
     const ok = await deps.sendEmail(account.email, st.list.title, lines.join('\n'))
-    return reply(a, ok ? `📧 Sent the full list (${st.list.items.length}) to ${account.email}.` : 'The e-mail could not be sent. Try again later.')
+    return reply(a, ok ? `📧 Sent the full list (${i}) to ${account.email}.` : 'The e-mail could not be sent. Try again later.')
   }
 
   async function question(a: Actor, st: SessionState, text: string) {
@@ -400,14 +434,14 @@ export function createConversation(deps: ConversationDeps) {
     if (!deps.ai || recent.length >= aiPerHour) {
       st.lastMenuAt = now()
       const why = deps.ai ? 'You have asked a lot of questions this hour; here is the menu.' : 'I can only answer from the menu here.'
-      return reply(a, `${why}\n\n${menuMessage(s.meta.name, menuCounts(s.facts.work), { canNotifyOwners: true })}`)
+      return reply(a, `${why}\n\n${menuFor(s)}`)
     }
     st.aiAt = [...recent, now()]
     const counts = menuCounts(s.facts.work)
     const answer = await askAssistant({ client: deps.ai.client, model: deps.ai.model, context: buildContext(s.meta.name, s.today, counts, s.facts.work), question: text, log })
     if (answer) return reply(a, answer)
     st.lastMenuAt = now()
-    return reply(a, `I'm not sure what you need. Here is the menu:\n\n${menuMessage(s.meta.name, counts, { canNotifyOwners: true })}`)
+    return reply(a, `I'm not sure what you need. Here is the menu:\n\n${menuFor(s)}`)
   }
 
   async function userFlow(a: Actor, st: SessionState, cmd: Command) {
@@ -419,7 +453,7 @@ export function createConversation(deps: ConversationDeps) {
           const s = await currentSheet(a, st)
           if (s) {
             st.lastMenuAt = now()
-            return reply(a, menuMessage(s.meta.name, menuCounts(s.facts.work), { canNotifyOwners: true }))
+            return reply(a, menuFor(s))
           }
         }
         return picker(a, st)
