@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test'
-import { createScheduleSheet, editCell, ganttBar, openTab, signUp, USER_A } from './support/app'
+import { createScheduleSheet, editCell, ganttBar, openTab, openApp } from './support/app'
 
 test('the critical path view highlights the longest chain and shows float', async ({ page }) => {
-  await signUp(page, USER_A)
+  await openApp(page)
   await createScheduleSheet(page)
 
   // Task 1 (3d, Mon 11-09) -> Task 2 (2d) -> Task 4 (1d), and Task 1 -> Task 3 (1d) -> Task 4.

@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Resource management tables (0004_resource_management.sql), verified against PGlite with the
+// Resource management tables (0016_resource_management.sql), verified against PGlite with the
 // same stand-ins for Supabase's auth schema as rls.test.ts.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 60_000 })
 
@@ -17,7 +17,7 @@ const PERSON_B = 'bbbbbbbb-0000-0000-0000-0000000000a1'
 const PROJECT_B = 'bbbbbbbb-0000-0000-0000-0000000000b1'
 const SHEET_B = 'bbbbbbbb-0000-0000-0000-0000000000c1'
 
-const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql', '0003_columns.sql', '0004_resource_management.sql', '0005_sharing.sql']
+const MIGRATIONS = ['0001_schema.sql', '0002_hardening.sql', '0003_columns.sql', '0016_resource_management.sql', '0017_sharing.sql']
 const TABLES = ['rm_people', 'rm_projects', 'rm_assignments', 'rm_views'] as const
 
 let db: PGlite

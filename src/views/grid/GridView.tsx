@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react'
 import { useTable } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Column } from '../../model/validate'
@@ -22,6 +22,7 @@ import {
 } from './clipboard'
 import {
   buildColumnDefs,
+  columnFormulaOf,
   displayText,
   editString,
   formulaError,
@@ -29,9 +30,11 @@ import {
   isEditable,
   readOnlyReason,
   ROW_NUMBER_COLUMN_ID,
+  toEditString,
   type GridRow,
 } from './columns'
 import { FilterBar } from './FilterBar'
+import { FormulaBar } from './FormulaBar'
 import { HierarchyCell } from './HierarchyCell'
 import { PredecessorCell } from './PredecessorCell'
 import { useGridViewState } from './useGridViewState'
@@ -39,8 +42,12 @@ import { useColumnManagement } from './useColumnManagement'
 import { useRowDrag } from './useRowDrag'
 import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow } from './viewModel'
 import { fixedViewport, measuredViewport } from './viewport'
+import { useDensity } from '../density'
+import { formulaDisplay } from '../../formula/sheetFormulas'
+import { Icon } from '../../ui/Icon'
 import './grid.css'
 
+/** Row height in the default (compact) density; the sheet's density setting can raise it (see views/density). */
 export const ROW_HEIGHT = 32
 const OVERSCAN = 10
 const EMPTY_COLUMNS: Column[] = []
@@ -105,16 +112,22 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const widthOf = (colId: string) => table.getColumn(colId)?.getSize() ?? 0
   const totalWidth = table.getTotalSize()
 
+  const { rowHeight } = useDensity()
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN,
-    scrollPaddingStart: ROW_HEIGHT, // the sticky header covers the first row's height
+    scrollPaddingStart: rowHeight, // the sticky header covers the first row's height
     getItemKey: (i) => rows[i]?.id ?? i,
     ...(viewportHeight !== undefined ? fixedViewport(viewportHeight) : measuredViewport),
   })
+
+  // A density change alters every row's height: tell the virtualizer to re-measure.
+  useEffect(() => {
+    virtualizer.measure()
+  }, [rowHeight, virtualizer])
 
   const [active, setActive] = useState<ActiveCell | null>(null)
   /** The fixed corner of a range selection; the active cell is the moving corner. Null: no range. */
@@ -165,7 +178,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
   function startEdit(row: GridRow, col: Column) {
     if (!canEdit(col, row)) return
     if (col.type === 'CHECKBOX') {
-      toggleCheckbox(row, col)
+      if (!row.formulaOf?.(col.id)) toggleCheckbox(row, col) // a checkbox the column formula fills in is read-only
       return
     }
     setActive({ rowId: row.id, colId: col.id })
@@ -292,7 +305,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
         const row = rows[r]
         const col = columns[c]
         if (!canEdit(col, row)) continue
-        const empty = col.type === 'CHECKBOX' ? row.record.cells[col.id] !== true : editString(col, row) === ''
+        // A cell that only shows its column formula has nothing of its own to clear.
+        const ownEmpty = columnFormulaOf(col, row) !== undefined && toEditString(row.record.cells[col.id]) === ''
+        const empty = col.type === 'CHECKBOX' ? row.record.cells[col.id] !== true : editString(col, row) === '' || ownEmpty
         if (empty && !errorByCell.has(`${row.id}:${col.id}`)) continue
         const result = api.getState().setCell(row.id, col.id, '')
         if (!result.ok) rejected.push({ where: `row ${row.rowNumber} ${col.title}`, reason: result.error })
@@ -398,6 +413,13 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const activeRendered = activeValid && renderedIds.includes(active!.rowId)
   const firstRenderedRowId = renderedIds[0]
 
+  /** Width, plus --pct on a % Complete cell so the CSS can draw its progress bar. */
+  function cellStyle(col: Column, row: ViewRow, width: number): CSSProperties {
+    if (col.role !== 'percentComplete') return { width }
+    const pct = parseFloat(displayText(col, row))
+    return Number.isFinite(pct) ? { width, ['--pct' as string]: `${Math.min(100, Math.max(0, pct))}%` } : { width }
+  }
+
   function renderCell(row: ViewRow, col: Column, idx: number) {
     const key = `${row.id}:${col.id}`
     // A validation error from the last edit wins; otherwise a formula that fails to evaluate.
@@ -416,6 +438,14 @@ export function GridView({ viewportHeight }: GridViewProps) {
           onCommit={(raw, reason) => commit(row.id, col.id, raw, reason, initial)}
           onCancel={cancel}
         />
+      )
+    } else if (col.type === 'CHECKBOX' && row.formulaOf?.(col.id)) {
+      // A checkbox column with a column formula shows the formula's result and is not toggled by hand.
+      const f = row.formulaOf(col.id)!
+      content = f.ok ? (
+        <input type="checkbox" aria-label={`${col.title}, row ${row.rowNumber}`} checked={f.value === true} disabled readOnly tabIndex={-1} />
+      ) : (
+        <span className="cell-text">{formulaDisplay(f)}</span>
       )
     } else if (col.type === 'CHECKBOX') {
       content = (
@@ -448,8 +478,10 @@ export function GridView({ viewportHeight }: GridViewProps) {
       <div
         key={col.id}
         role="gridcell"
-        className={`grid-cell${isActive ? ' is-active' : ''}${inSelection ? ' is-selected' : ''}${error ? ' has-error' : ''}${editable ? '' : ' is-readonly'}`}
-        style={{ width: widthOf(col.id) }}
+        data-role={col.role}
+        data-status={col.role === 'status' ? displayText(col, row) : undefined}
+        className={`grid-cell${idx === 0 ? ' is-first' : ''}${isActive ? ' is-active' : ''}${inSelection ? ' is-selected' : ''}${error ? ' has-error' : ''}${editable ? '' : ' is-readonly'}`}
+        style={cellStyle(col, row, widthOf(col.id))}
         aria-colindex={idx + 2}
         aria-selected={isActive || inSelection}
         aria-readonly={editable ? undefined : true}
@@ -486,8 +518,26 @@ export function GridView({ viewportHeight }: GridViewProps) {
     )
   }
 
+  const barRow = activeValid ? rows[activeRowIdx] : null
+  const barCol = activeValid ? columns[activeColIdx] : null
+
   return (
     <div className="grid-view">
+      <FormulaBar
+        label={barRow && barCol ? `${barCol.title} · row ${barRow.rowNumber}` : null}
+        text={barRow && barCol ? editString(barCol, barRow) : ''}
+        editable={barRow && barCol ? barCol.type !== 'CHECKBOX' && isEditable(barCol, barRow) : false}
+        readOnlyReason={barRow && barCol ? (readOnlyReason(barCol, barRow) ?? 'This cell is calculated') : undefined}
+        fromColumn={barRow && barCol ? columnFormulaOf(barCol, barRow) !== undefined && toEditString(barRow.record.cells[barCol.id]) === '' : false}
+        error={barRow && barCol ? (errorByCell.get(`${barRow.id}:${barCol.id}`) ?? formulaError(barCol, barRow)) : undefined}
+        onCommit={(raw) => {
+          if (barRow && barCol) api.getState().setCell(barRow.id, barCol.id, raw)
+        }}
+        onReturn={() => {
+          focusRequest.current = true
+          if (active) setActive({ ...active })
+        }}
+      />
       <div
         ref={scrollRef}
         className="grid-scroll"
@@ -499,13 +549,13 @@ export function GridView({ viewportHeight }: GridViewProps) {
           aria-colcount={columns.length + 1}
           aria-multiselectable
           className="grid"
-          style={{ width: totalWidth }}
+          style={{ width: totalWidth, ['--rn-w' as string]: `${widthOf(ROW_NUMBER_COLUMN_ID)}px` }}
           onKeyDown={onGridKeyDown}
           onCopy={(e) => onGridCopy(e)}
           onCut={(e) => onGridCopy(e, true)}
           onPaste={onGridPaste}
         >
-          <div role="row" aria-rowindex={1} className="grid-header" style={{ height: ROW_HEIGHT }}>
+          <div role="row" aria-rowindex={1} className="grid-header" style={{ height: rowHeight }}>
             {headers.map((h, i) => (
               <div
                 key={h.id}
@@ -548,7 +598,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
                   aria-level={row.depth + 1}
                   aria-expanded={row.hasChildren ? row.expanded : undefined}
                   className={`grid-row${row.isParent ? ' is-parent' : ''}${rowDrag.overId === row.id ? ' is-drop-target' : ''}${critical?.byRow[row.id]?.critical ? ' is-critical' : ''}`}
-                  style={{ height: ROW_HEIGHT, transform: `translateY(${item.start}px)` }}
+                  style={{ height: rowHeight, transform: `translateY(${item.start}px)` }}
                   {...rowDrag.rowProps(row.id)}
                 >
                   <div
@@ -577,6 +627,7 @@ export function GridView({ viewportHeight }: GridViewProps) {
       </div>
       <div className="grid-toolbar">
         <button type="button" disabled={viewOnly} onClick={addRow}>
+          <Icon name="plus" size={16} />
           Add row
         </button>
         <button type="button" disabled={viewOnly || !activeValid} onClick={() => shiftActiveRow('indent')}>
@@ -590,6 +641,13 @@ export function GridView({ viewportHeight }: GridViewProps) {
         </button>
         <FilterBar columns={columns} filter={view.filter} onChange={setFilter} />
       </div>
+      <p className="grid-hints" aria-hidden="true">
+        <span><kbd>Enter</kbd> edit cell</span>
+        <span><kbd>Tab</kbd> next cell</span>
+        <span><kbd>Shift</kbd> + click select range</span>
+        <span><kbd>Ctrl</kbd> <kbd>C</kbd> / <kbd>V</kbd> copy &amp; paste</span>
+        <span><kbd>Del</kbd> clear</span>
+      </p>
       {pendingDelete && (
         <ConfirmDialog
           title="Delete row"

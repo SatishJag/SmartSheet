@@ -31,7 +31,7 @@ test('creates a Data Center app: plan sheet, support sheets and a resource proje
   }
 
   // Resource management: project linked to the plan, placeholder roles scheduled
-  await page.getByRole('navigation', { name: 'Areas' }).getByRole('button', { name: 'Resource Management' }).click()
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'People & projects' }).click()
   await expect(page.getByRole('button', { name: 'Commissioning Agent' })).toBeVisible()
   await page.getByRole('tab', { name: 'Projects' }).click()
   const row = page.getByRole('row', { name: /DC1 Ashburn/ })

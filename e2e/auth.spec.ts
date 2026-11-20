@@ -16,7 +16,7 @@ test('create an account, sign out, sign back in; a wrong password is refused', a
   // The session survives a reload.
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Your sheets' })).toBeVisible()
-  await expect(page.getByText(USER_A.email)).toBeVisible()
+  await expect(page.getByRole('button', { name: `Account: ${USER_A.email}` })).toBeVisible()
 })
 
 test("a second user sees none of the first user's sheets", async ({ page }) => {

@@ -6,6 +6,10 @@ interface AuthGateProps {
   children: (session: Session) => ReactNode
 }
 
+/**
+ * E-mail and password sign-in. Real accounts are needed to share sheets by e-mail and to know who
+ * people are (WhatsApp, notifications); the earlier anonymous-visitor MVP is gone.
+ */
 export function AuthGate({ client, children }: AuthGateProps) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
@@ -78,6 +82,7 @@ function SignInForm({ client }: { client: SupabaseClient }) {
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          className="input"
           autoComplete="email"
           required
         />
@@ -88,13 +93,14 @@ function SignInForm({ client }: { client: SupabaseClient }) {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          className="input"
           autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
           required
         />
       </label>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
-      <button type="submit" disabled={busy}>
+      <button type="submit" className="btn-primary" disabled={busy}>
         {submitLabel}
       </button>
       <button type="button" className="link-button" onClick={toggleMode}>

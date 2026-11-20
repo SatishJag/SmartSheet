@@ -4,10 +4,18 @@ import { AuthGate } from './auth/AuthGate'
 import { SheetList } from './auth/SheetList'
 import { createSupabaseClient, getSupabaseConfig } from './lib/supabase'
 import { CreateAppPage } from './apps/CreateAppPage'
-import { ResourceManagement } from './rm/ResourceManagement'
 import type { SaveStatus } from './store/sheetStore'
 import { ConfirmDialog } from './views/ConfirmDialog'
 import { SheetView, UNSAVED_MESSAGE } from './views/SheetView'
+import { PlannerWizard } from './planner/PlannerWizard'
+import { Icon } from './ui/Icon'
+import { ShellProvider } from './shell/ShellContext'
+import { SECTIONS } from './shell/sections'
+import './shell/shell.css'
+import { NotificationBell } from './automation/NotificationBell'
+import { ThemePicker } from './ui/ThemePicker'
+import { AccountMenu } from './shell/AccountMenu'
+import './theme.css'
 import './App.css'
 
 export default function App() {
@@ -39,29 +47,41 @@ function ConfiguredApp({ url, anonKey }: { url: string; anonKey: string }) {
   )
 }
 
-type Area = 'sheets' | 'resources'
-
 function Shell({ client, userId, email }: { client: SupabaseClient; userId: string; email: string }) {
-  const [area, setArea] = useState<Area>('sheets')
-  const [openSheetId, setOpenSheetId] = useState<string | null>(null)
+  // A link from an e-mail or a notification can open a sheet directly: /?sheet=<id>.
+  const [openSheetId, setOpenSheetId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('sheet'))
+  const [sectionId, setSectionId] = useState('sheets')
+  const [planning, setPlanning] = useState(false)
   const [creatingApp, setCreatingApp] = useState(false)
-  // Save status of the open sheet: leaving it (Sign out, switching area) asks first while unsaved.
+  // Choosing the section you are already in starts it over (closes an open report or dashboard).
+  const [restart, setRestart] = useState(0)
+  // Save status of the open sheet: leaving it (Sign out, another section) asks first while unsaved.
   const [sheetStatus, setSheetStatus] = useState<SaveStatus>('saved')
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
-  const unsaved = area === 'sheets' && openSheetId !== null && sheetStatus !== 'saved'
-  const signOut = () => void client.auth.signOut()
+  const section = SECTIONS.find((s) => s.id === sectionId) ?? SECTIONS[0]
+  const unsaved = section.id === 'sheets' && openSheetId !== null && sheetStatus !== 'saved'
   /** Runs `leave` now, or after confirmation when the open sheet has unsaved changes. */
   const guard = (leave: () => void) => (unsaved ? setPendingLeave(() => leave) : leave())
-  const goTo = (next: Area) =>
-    guard(() => {
-      if (next === area) return
-      setSheetStatus('saved')
-      setOpenSheetId(null)
-      setCreatingApp(false)
-      setArea(next)
-    })
+  const shell = useMemo(
+    () => ({
+      client,
+      userId,
+      email,
+      openSheet: (id: string) => {
+        setCreatingApp(false)
+        setOpenSheetId(id)
+        setSectionId('sheets')
+      },
+    }),
+    [client, userId, email],
+  )
+  const closeSheet = () => {
+    setSheetStatus('saved')
+    setOpenSheetId(null)
+  }
 
   return (
+    <ShellProvider value={shell}>
     <div className="app">
       {pendingLeave && (
         <ConfirmDialog
@@ -78,33 +98,44 @@ function Shell({ client, userId, email }: { client: SupabaseClient; userId: stri
         />
       )}
       <header className="app-header">
-        <strong>Construction Work Management</strong>
-        <nav className="app-areas" aria-label="Areas">
-          <button type="button" aria-current={area === 'sheets' ? 'page' : undefined} onClick={() => goTo('sheets')}>
-            Sheets
-          </button>
-          <button type="button" aria-current={area === 'resources' ? 'page' : undefined} onClick={() => goTo('resources')}>
-            Resource Management
-          </button>
+        <span className="brand">
+          <span className="brand-mark">
+            <Icon name="logo" size={18} />
+          </span>
+          <strong className="brand-name">Construction Work Management</strong>
+        </span>
+        <nav className="section-nav" aria-label="Main">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              aria-label={s.label}
+              title={s.label}
+              aria-current={s.id === section.id ? 'page' : undefined}
+              onClick={() =>
+                guard(() => {
+                  if (s.id === section.id) setRestart((n) => n + 1)
+                  setSectionId(s.id)
+                  if (s.id === 'sheets') {
+                    closeSheet()
+                    setCreatingApp(false)
+                  }
+                })
+              }
+            >
+              <Icon name={s.icon} size={16} />
+              <span className="label">{s.label}</span>
+            </button>
+          ))}
         </nav>
         <span className="spacer" />
-        <span>{email}</span>
-        <button type="button" onClick={() => guard(signOut)}>
-          Sign out
-        </button>
+        <NotificationBell />
+        <ThemePicker />
+        <AccountMenu email={email} onSignOut={() => guard(() => void client.auth.signOut())} />
       </header>
-      <main>
-        {area === 'resources' ? (
-          <ResourceManagement
-            client={client}
-            email={email}
-            userId={userId}
-            onOpenSheet={(sheetId) => {
-              setCreatingApp(false)
-              setArea('sheets')
-              setOpenSheetId(sheetId)
-            }}
-          />
+      <main className={section.id !== 'sheets' || openSheetId === null ? 'page page-list' : 'page page-sheet'}>
+        {section.Page ? (
+          <section.Page key={restart} />
         ) : creatingApp ? (
           <CreateAppPage
             client={client}
@@ -123,13 +154,23 @@ function Shell({ client, userId, email }: { client: SupabaseClient; userId: stri
             userId={userId}
             sheetId={openSheetId}
             onSaveStatusChange={setSheetStatus}
-            onBack={() => {
-              setSheetStatus('saved')
-              setOpenSheetId(null)
-            }}
+            onBack={closeSheet}
+            onPlanWithAI={() => setPlanning(true)}
           />
         )}
       </main>
+      {planning && (
+        <PlannerWizard
+          client={client}
+          userId={userId}
+          onClose={() => setPlanning(false)}
+          onCreated={(id) => {
+            setPlanning(false)
+            setOpenSheetId(id)
+          }}
+        />
+      )}
     </div>
+    </ShellProvider>
   )
 }

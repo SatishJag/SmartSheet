@@ -1,0 +1,161 @@
+/* Formula bar (above the grid) and the column-formula dialog. Uses the tokens of theme.css. */
+
+.formula-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 4px 0 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: 0.8125rem;
+}
+
+.formula-bar-ref {
+  flex: none;
+  max-width: 14rem;
+  padding: 0 10px;
+  overflow: hidden;
+  border-right: 1px solid var(--line-2);
+  color: var(--ink-2);
+  font-weight: 600;
+  line-height: 30px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formula-bar-fx {
+  flex: none;
+  color: var(--accent);
+  font-style: italic;
+  font-weight: 700;
+}
+
+.formula-bar-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  min-height: 0;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: transparent;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--ink);
+}
+.formula-bar-input:disabled {
+  color: var(--ink-3);
+  background: transparent;
+}
+.formula-bar-input:focus {
+  background: var(--surface);
+}
+
+.formula-bar-note {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.formula-bar-note.is-column {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.formula-bar-note.is-error {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ---- column formula dialog ---- */
+.formula-dialog {
+  max-width: 560px;
+}
+.formula-dialog-help {
+  margin: 0 0 12px;
+}
+.formula-dialog-help code {
+  padding: 0 4px;
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  font-size: 0.8125rem;
+}
+.formula-dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+}
+
+.formula-suggestions {
+  margin: -6px 0 12px;
+  padding: 4px;
+  max-height: 11rem;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  font-size: 0.8125rem;
+}
+.formula-suggestions[hidden] {
+  display: none;
+}
+.formula-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 5px 8px;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+}
+.formula-suggestion.is-active,
+.formula-suggestion:hover {
+  background: var(--accent-soft-2);
+}
+.formula-suggestion-sig {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+  color: var(--ink);
+}
+.formula-suggestion-tag {
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+.formula-suggestion-doc {
+  flex-basis: 100%;
+  color: var(--ink-2);
+}
+
+.formula-preview {
+  min-height: 2.4em;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: 0.8125rem;
+}
+.formula-preview-empty {
+  color: var(--ink-3);
+}
+.formula-preview-row {
+  color: var(--ink-3);
+}
+.formula-preview-ok strong {
+  color: var(--ok);
+}
+.formula-preview-error {
+  color: var(--danger);
+  font-weight: 600;
+}

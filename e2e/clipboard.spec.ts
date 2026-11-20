@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { createScheduleSheet, expectSaved, gridCell, signUp, USER_A } from './support/app'
+import { createScheduleSheet, expectSaved, gridCell, openApp } from './support/app'
 
 /**
  * Pastes text at the focused grid cell with a synthetic paste event carrying a DataTransfer,
@@ -27,7 +27,7 @@ async function copyText(page: Page, type: 'copy' | 'cut' = 'copy'): Promise<stri
 const selected = (page: Page) => page.getByRole('grid').locator('[role="gridcell"][aria-selected="true"]')
 
 test('range selection, copy, paste and clear in the grid', async ({ page }) => {
-  await signUp(page, USER_A)
+  await openApp(page)
   await createScheduleSheet(page)
   const addRow = page.getByRole('button', { name: 'Add row' })
   for (let i = 0; i < 3; i++) await addRow.click()
@@ -87,7 +87,7 @@ test('range selection, copy, paste and clear in the grid', async ({ page }) => {
 
 test('the keyboard shortcuts use the real clipboard', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
-  await signUp(page, USER_A)
+  await openApp(page)
   await createScheduleSheet(page)
   const addRow = page.getByRole('button', { name: 'Add row' })
   for (let i = 0; i < 2; i++) await addRow.click()

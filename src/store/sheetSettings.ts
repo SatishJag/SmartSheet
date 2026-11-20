@@ -7,11 +7,14 @@ export type NormalizeCalendarResult = { ok: true; calendar: Calendar } | { ok: f
 
 export const HOURS_PER_DAY_MSG = 'Hours per day must be between 1 and 24 (in whole minutes)'
 export const NO_WORKING_WEEKDAY_MSG = 'Choose at least one working day of the week'
+export const NON_WORKING_START_MSG = "Start dates on non-working days must be 'shift' or 'keep'"
 
 /**
  * Validates a sheet calendar and returns it in canonical form: weekdays (0 = Sunday .. 6) and
  * non-working dates deduped and sorted. hoursPerDay must lie in 1..24 and be a whole number of
- * minutes (so 7.5 is fine), because durations are stored in minutes. Pure.
+ * minutes (so 7.5 is fine), because durations are stored in minutes. nonWorkingStart is 'shift' or
+ * 'keep'; the default 'shift' is stored as no key at all, so calendars saved before the option existed
+ * stay byte-identical. Pure.
  */
 export function normalizeCalendar(cal: Calendar): NormalizeCalendarResult {
   const weekdays = [...new Set(cal.workingWeekdays)].sort((a, b) => a - b)
@@ -28,14 +31,20 @@ export function normalizeCalendar(cal: Calendar): NormalizeCalendarResult {
       return { ok: false, error: `"${d}" is not a valid date between ${MIN_DATE} and ${MAX_DATE}` }
     }
   }
+  if (cal.nonWorkingStart !== undefined && cal.nonWorkingStart !== 'shift' && cal.nonWorkingStart !== 'keep') {
+    return { ok: false, error: NON_WORKING_START_MSG }
+  }
   const dates = [...new Set(cal.nonWorkingDates)].sort()
-  return { ok: true, calendar: { workingWeekdays: weekdays, nonWorkingDates: dates, hoursPerDay: h } }
+  const calendar: Calendar = { workingWeekdays: weekdays, nonWorkingDates: dates, hoursPerDay: h }
+  if (cal.nonWorkingStart === 'keep') calendar.nonWorkingStart = 'keep'
+  return { ok: true, calendar }
 }
 
 /** Same calendar, compared in canonical form. */
 export function sameCalendar(a: Calendar, b: Calendar): boolean {
   return (
     a.hoursPerDay === b.hoursPerDay &&
+    (a.nonWorkingStart ?? 'shift') === (b.nonWorkingStart ?? 'shift') &&
     a.workingWeekdays.length === b.workingWeekdays.length &&
     a.workingWeekdays.every((d, i) => d === b.workingWeekdays[i]) &&
     a.nonWorkingDates.length === b.nonWorkingDates.length &&
@@ -54,6 +63,10 @@ const SCHEDULE_ROLES: readonly ColumnRole[] = ['start', 'end', 'duration', 'pred
 export function scheduleFormulaProblem(data: SheetData): string | null {
   const cols = data.columns.filter((c) => c.role && SCHEDULE_ROLES.includes(c.role))
   if (cols.length === 0) return null
+  const withColumnFormula = cols.find((c) => c.formula?.trim())
+  if (withColumnFormula) {
+    return `Remove the column formula of ${withColumnFormula.title} first: formulas are not allowed in schedule columns when dependencies are on`
+  }
   const byId = new Map(data.rows.map((r) => [r.id, r]))
   const order = fullOrder(data.rows)
   for (let i = 0; i < order.length; i++) {

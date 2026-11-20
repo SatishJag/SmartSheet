@@ -36,6 +36,8 @@ describe('isFormula / formatFormulaValue', () => {
     expect(isFormula(3)).toBe(false)
     expect(formatFormulaValue(3)).toBe('3')
     expect(formatFormulaValue(0.1 + 0.2)).toBe('0.3')
+    expect(formatFormulaValue(1 / 3)).toBe('0.33333') // 5 decimals shown
+    expect(formatFormulaValue(null)).toBe('')
     expect(formatFormulaValue(true)).toBe('TRUE')
     expect(formatFormulaValue(false)).toBe('FALSE')
     expect(formatFormulaValue('big')).toBe('big')
@@ -63,29 +65,33 @@ describe('formulaEvaluator', () => {
     expect(formulaEvaluator(data)('r1', 'calc')).toEqual({ ok: true, value: 7 })
   })
 
-  it('reports errors with #ERROR: division by zero, unknown function, unknown column', () => {
+  it('reports errors by name with an explanation: division by zero, unknown function, unknown column', () => {
     const data = sheet([row('r1', 'a0', { calc: '=1/0', qty: '=FOO(1)', cost: '=[Nope]+1' })])
     const ev = formulaEvaluator(data)
-    expect(ev('r1', 'calc')).toEqual({ ok: false, error: 'Division by zero', display: '#ERROR' })
-    expect(ev('r1', 'qty')).toEqual({ ok: false, error: "Unknown function 'FOO'", display: '#ERROR' })
-    expect(ev('r1', 'cost')).toEqual({ ok: false, error: "Unknown column 'Nope'", display: '#ERROR' })
+    expect(ev('r1', 'calc')).toMatchObject({ ok: false, error: '#DIVIDE BY ZERO' })
+    expect(ev('r1', 'qty')).toEqual({ ok: false, error: '#UNPARSEABLE', message: "Unknown function 'FOO'" })
+    expect(ev('r1', 'cost')).toEqual({ ok: false, error: '#UNPARSEABLE', message: "Unknown column 'Nope'" })
   })
 
-  it('an error in a referenced cell propagates', () => {
+  it('an error in a referenced cell propagates (same error name)', () => {
     const data = sheet([row('r1', 'a0', { qty: '=1/0', calc: '=[Qty]+1' })])
-    expect(formulaEvaluator(data)('r1', 'calc')).toMatchObject({ ok: false, display: '#ERROR' })
+    expect(formulaEvaluator(data)('r1', 'calc')).toMatchObject({ ok: false, error: '#DIVIDE BY ZERO' })
   })
 
-  it('self references and cycles show #CIRCULAR without hanging', () => {
+  it('self references and cycles show #CIRCULAR REFERENCE without hanging; a cell that only depends on one is #BLOCKED', () => {
     const data = sheet([
       row('r1', 'a0', { calc: '=[Calc]+1', qty: '=[Cost]', cost: '=[Qty]' }),
       row('r2', 'a1', { calc: '=SUM([Calc])' }),
+      row('r3', 'a2', { calc: '=[Qty]+1' }), // its Qty is blank: fine
+      row('r4', 'a3', { qty: '=[Cost]', cost: '=[Qty]', calc: '=IF(TRUE,[Qty],0)' }),
     ])
     const ev = formulaEvaluator(data)
-    expect(ev('r1', 'calc')).toMatchObject({ ok: false, display: '#CIRCULAR' })
-    expect(ev('r1', 'qty')).toMatchObject({ ok: false, display: '#CIRCULAR' })
-    expect(ev('r1', 'cost')).toMatchObject({ ok: false, display: '#CIRCULAR' })
-    expect(ev('r2', 'calc')).toMatchObject({ ok: false, display: '#CIRCULAR' })
+    expect(ev('r1', 'calc')).toMatchObject({ ok: false, error: '#CIRCULAR REFERENCE' })
+    expect(ev('r1', 'qty')).toMatchObject({ ok: false, error: '#CIRCULAR REFERENCE' })
+    expect(ev('r1', 'cost')).toMatchObject({ ok: false, error: '#CIRCULAR REFERENCE' })
+    expect(ev('r2', 'calc')).toMatchObject({ ok: false, error: '#CIRCULAR REFERENCE' }) // SUM over the column it is in
+    expect(ev('r3', 'calc')).toEqual({ ok: true, value: 1 })
+    expect(ev('r4', 'calc')).toMatchObject({ ok: false, error: '#BLOCKED' })
   })
 
   it('does not evaluate formulas stored in schedule-role columns (shown as stored)', () => {

@@ -15,7 +15,7 @@ export async function signUp(page: Page, user: User): Promise<void> {
   await page.getByLabel('Password').fill(user.password)
   await page.getByRole('button', { name: 'Create account', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Your sheets' })).toBeVisible()
-  await expect(page.getByText(user.email)).toBeVisible()
+  await expect(page.getByRole('button', { name: `Account: ${user.email}` })).toBeVisible()
 }
 
 /** Fills and submits the sign-in form (which must be showing). */
@@ -32,13 +32,20 @@ export async function signIn(page: Page, user: User): Promise<void> {
 }
 
 export async function signOut(page: Page): Promise<void> {
+  await page.getByRole('button', { name: /^Account: / }).click()
   await page.getByRole('button', { name: 'Sign out' }).click()
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
 }
 
+/** Signs up a fresh account (a new user every time); ends on the sheet list. */
+export async function openApp(page: Page): Promise<void> {
+  const id = Math.random().toString(36).slice(2, 10)
+  await signUp(page, { email: `e2e-${id}@example.com`, password: `e2e-password-${id}` })
+}
+
 /** Creates a sheet from the "Project schedule" template; ends inside the new sheet's grid. */
 export async function createScheduleSheet(page: Page): Promise<void> {
-  await page.getByLabel('Template').selectOption({ label: 'Project schedule' })
+  await page.getByRole('radio', { name: 'Project schedule' }).check()
   await page.getByRole('button', { name: 'New sheet' }).click()
   await expect(page.getByRole('heading', { name: 'Project schedule' })).toBeVisible()
   await expect(page.getByRole('grid')).toBeVisible()

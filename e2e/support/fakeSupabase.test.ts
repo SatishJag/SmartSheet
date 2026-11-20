@@ -282,7 +282,7 @@ describe('fakeSupabase tables', () => {
   })
 
   it('throws loudly on anything it does not implement', async () => {
-    expect(() => client.from('workspaces')).toThrow(/fakeSupabase: unsupported call from\("workspaces"\)/)
+    expect(() => client.from('webhooks')).toThrow(/fakeSupabase: unsupported call from\("webhooks"\)/)
     const b = client.from('sheets') as unknown as Record<string, () => unknown>
     expect(() => b.rpc()).toThrow(/fakeSupabase: unsupported call .*rpc/)
     expect(() => client.from('sheets').upsert({ id: 'x' }, { onConflict: 'name' })).toThrow(/unsupported call .*onConflict/)
@@ -317,6 +317,363 @@ describe('fakeSupabase tables', () => {
     await client.rpc('delete_column', { p_column_id: col })
     expect((await client.from('rows').select('cells').eq('id', row)).data).toEqual([{ cells: { keep: 2 } }])
     expect((await client.from('columns').select('id')).data).toEqual([])
+  })
+})
+
+describe('fakeSupabase baselines', () => {
+  let client: ReturnType<typeof createFakeSupabase>
+  const R1 = '00000000-0000-4000-8000-0000000000a1'
+  const R2 = '00000000-0000-4000-8000-0000000000a2'
+  const rowsFor = (...ids: string[]) => ids.map((rowId, i) => ({ rowId, start: '2026-11-09', end: '2026-11-1' + i, durationDays: i + 1 }))
+
+  beforeEach(async () => {
+    client = createFakeSupabase({ storage: memoryStorage() })
+    await client.auth.signUp(A)
+  })
+
+  async function newSheet(name = 'S'): Promise<string> {
+    return ((await client.from('sheets').insert({ name }).select('id').single()).data as { id: string }).id
+  }
+  const save = (sheet: string, slot: number, name: string, rows: unknown[] = rowsFor(R1, R2)) =>
+    client.rpc('save_baseline', { p_sheet_id: sheet, p_slot: slot, p_name: name, p_rows: rows })
+
+  it('save_baseline returns the new id, stores header and rows, and replaces the slot', async () => {
+    const s = await newSheet()
+    const first = await save(s, 2, 'Agreed plan')
+    expect(first.error).toBeNull()
+    const id = first.data as string
+    expect(id).toMatch(/^[0-9a-f-]{36}$/)
+    const header = await client.from('baselines').select('id, slot, name, created_at').eq('sheet_id', s)
+    expect(header.data).toEqual([{ id, slot: 2, name: 'Agreed plan', created_at: expect.any(String) }])
+    const rows = await client.from('baseline_rows').select('*').eq('baseline_id', id).order('row_id')
+    expect(rows.data).toMatchObject([
+      { row_id: R1, start_date: '2026-11-09', end_date: '2026-11-10', duration_days: 1 },
+      { row_id: R2, start_date: '2026-11-09', end_date: '2026-11-11', duration_days: 2 },
+    ])
+
+    const again = await save(s, 2, 'Revised', rowsFor(R1))
+    expect(again.data).not.toBe(id)
+    expect((await client.from('baselines').select('id, name').eq('sheet_id', s)).data).toEqual([{ id: again.data, name: 'Revised' }])
+    expect((await client.from('baseline_rows').select('baseline_id')).data).toEqual([{ baseline_id: again.data }])
+    await save(s, 3, 'Other slot')
+    expect((await client.from('baselines').select('slot').eq('sheet_id', s).order('slot')).data).toEqual([{ slot: 2 }, { slot: 3 }])
+  })
+
+  it('save_baseline validates the slot, name and rows, and changes nothing on failure', async () => {
+    const s = await newSheet()
+    const kept = (await save(s, 1, 'Keep')).data as string
+    const bad = [
+      await save(s, 0, 'x'),
+      await save(s, 6, 'x'),
+      await save(s, 1.5, 'x'),
+      await save(s, 1, '   '),
+      await save(s, 1, 'n'.repeat(101)),
+      await save(s, 1, 'x', [{ rowId: R1, start: '2026-11-10', end: '2026-11-09', durationDays: 1 }]),
+      await save(s, 1, 'x', [{ rowId: R1, start: '2026-11-09', end: '2026-11-10', durationDays: -1 }]),
+      await save(s, 1, 'x', [{ rowId: 'not-a-uuid', start: '2026-11-09', end: '2026-11-10', durationDays: 1 }]),
+      await save(s, 1, 'x', [...rowsFor(R1), ...rowsFor(R1)]),
+    ]
+    for (const r of bad) {
+      expect(r.data).toBeNull()
+      expect(r.error?.message).toBeTruthy()
+    }
+    expect((await client.from('baselines').select('id')).data).toEqual([{ id: kept }])
+    expect((await client.from('baseline_rows').select('baseline_id')).data).toHaveLength(2)
+  })
+
+  it("refuses another user's sheet and a missing sheet, and hides baselines from other users", async () => {
+    const s = await newSheet()
+    await save(s, 1, 'Mine')
+    await client.auth.signOut()
+    await client.auth.signUp(B)
+    const theirs = await save(s, 1, 'Hack')
+    expect(theirs.data).toBeNull()
+    expect(theirs.error?.code).toBe('42501')
+    expect((await save(crypto.randomUUID(), 1, 'x')).error?.code).toBe('42501')
+    expect((await client.from('baselines').select('*')).data).toEqual([])
+    expect((await client.from('baseline_rows').select('*')).data).toEqual([])
+    expect((await client.from('baselines').delete().eq('sheet_id', s)).error).toBeNull()
+    await client.auth.signOut()
+    await client.auth.signInWithPassword(A)
+    expect((await client.from('baselines').select('id')).data).toHaveLength(1)
+  })
+
+  it('deleting a baseline removes its rows; deleting a sheet removes its baselines; deleting a row keeps them', async () => {
+    const s = await newSheet()
+    await client.from('rows').insert({ sheet_id: s, position: 'a0', id: R1 })
+    const a = (await save(s, 1, 'A')).data as string
+    await save(s, 2, 'B')
+    await client.from('rows').delete().in('id', [R1])
+    expect((await client.from('baseline_rows').select('row_id').eq('baseline_id', a)).data).toHaveLength(2)
+
+    expect((await client.from('baselines').delete().eq('id', a)).error).toBeNull()
+    expect((await client.from('baselines').select('slot')).data).toEqual([{ slot: 2 }])
+    expect((await client.from('baseline_rows').select('baseline_id').eq('baseline_id', a)).data).toEqual([])
+    expect((await client.from('baseline_rows').select('baseline_id')).data).toHaveLength(2)
+
+    await client.from('sheets').delete().eq('id', s)
+    expect((await client.from('baselines').select('id')).data).toEqual([])
+    expect((await client.from('baseline_rows').select('baseline_id')).data).toEqual([])
+  })
+
+  it('caps baseline_rows at 1000 per response and pages with .range()', async () => {
+    const s = await newSheet()
+    const many = Array.from({ length: 2500 }, (_, i) => ({
+      rowId: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      start: '2026-11-09',
+      end: '2026-11-09',
+      durationDays: 1,
+    }))
+    const id = (await save(s, 1, 'Big', many)).data as string
+    const q = () => client.from('baseline_rows').select('row_id').eq('baseline_id', id).order('row_id')
+    expect((await q()).data).toHaveLength(1000)
+    expect((await q().range(1000, 1999)).data).toHaveLength(1000)
+    expect((await q().range(2000, 2999)).data).toHaveLength(500)
+  })
+
+  it('enforces slot uniqueness and checks on direct inserts, and rejects updates of snapshot rows loudly', async () => {
+    const s = await newSheet()
+    expect((await client.from('baselines').insert({ sheet_id: s, slot: 1, name: 'a' })).error).toBeNull()
+    expect((await client.from('baselines').insert({ sheet_id: s, slot: 1, name: 'b' })).error?.code).toBe('23505')
+    expect((await client.from('baselines').insert({ sheet_id: s, slot: 9, name: 'b' })).error?.code).toBe('23514')
+    expect((await client.from('baselines').insert({ sheet_id: s, slot: 2, name: '' })).error?.code).toBe('23514')
+    const orphan = { baseline_id: crypto.randomUUID(), sheet_id: s, row_id: R1, start_date: '2026-11-09', end_date: '2026-11-09', duration_days: 1 }
+    expect((await client.from('baseline_rows').insert(orphan)).error?.code).toBe('23503')
+    expect(() => client.from('baseline_rows').update({ duration_days: 3 })).toThrow(/unsupported call .*baseline_rows.update/)
+  })
+})
+
+describe('fakeSupabase resources', () => {
+  let client: ReturnType<typeof createFakeSupabase>
+  const ROW = '00000000-0000-4000-8000-0000000000b1'
+
+  beforeEach(async () => {
+    client = createFakeSupabase({ storage: memoryStorage() })
+    await client.auth.signUp(A)
+  })
+
+  async function newSheet(): Promise<string> {
+    return ((await client.from('sheets').insert({ name: 'S' }).select('id').single()).data as { id: string }).id
+  }
+  async function newResource(name = 'Ada'): Promise<string> {
+    return ((await client.from('resources').insert({ name }).select('id').single()).data as { id: string }).id
+  }
+  const assignment = (sheet: string, resource: string, over: Record<string, unknown> = {}) =>
+    client.from('assignments').insert({ sheet_id: sheet, row_id: ROW, resource_id: resource, allocation_kind: 'percent', allocation_value: 50, ...over })
+
+  it('fills the resource defaults (a person with a Monday to Friday 8 hour week)', async () => {
+    const id = await newResource()
+    const r = (await client.from('resources').select('*').eq('id', id).single()).data as Record<string, unknown>
+    expect(r).toMatchObject({ kind: 'person', skills: [], cost_rate: 0, hours_by_weekday: [0, 8, 8, 8, 8, 8, 0], department: null })
+  })
+
+  it('enforces the resource checks', async () => {
+    const bad = async (v: Record<string, unknown>) => (await client.from('resources').insert({ name: 'x', ...v })).error?.code
+    expect(await bad({ name: '  ' })).toBe('23514')
+    expect(await bad({ kind: 'robot' })).toBe('23514')
+    expect(await bad({ cost_rate: -1 })).toBe('23514')
+    expect(await bad({ hours_by_weekday: [8, 8, 8] })).toBe('23514')
+    expect(await bad({ hours_by_weekday: [0, 8, 8, 8, 8, 8, 25] })).toBe('23514')
+    expect(await bad({ skills: Array.from({ length: 31 }, (_, i) => `s${i}`) })).toBe('23514')
+    expect(await bad({ department: '  ' })).toBe('23514')
+  })
+
+  it('time off needs one of the owner’s resources, ordered dates and sane hours', async () => {
+    const r = await newResource()
+    const ok = { resource_id: r, start_date: '2026-12-21', end_date: '2027-01-01' }
+    expect((await client.from('resource_time_off').insert(ok)).error).toBeNull()
+    expect((await client.from('resource_time_off').insert({ ...ok, end_date: '2026-12-01' })).error?.code).toBe('23514')
+    expect((await client.from('resource_time_off').insert({ ...ok, hours: 25 })).error?.code).toBe('23514')
+    expect((await client.from('resource_time_off').insert({ ...ok, resource_id: crypto.randomUUID() })).error?.code).toBe('23503')
+  })
+
+  it('enforces the assignment checks, one assignment per task and resource, and the owner’s resource', async () => {
+    const s = await newSheet()
+    const r = await newResource()
+    const other = () => crypto.randomUUID()
+    expect((await assignment(s, r)).error).toBeNull()
+    expect((await assignment(s, r, { allocation_value: 70 })).error?.code).toBe('23505')
+    expect((await assignment(s, r, { row_id: other(), allocation_value: 0 })).error?.code).toBe('23514')
+    expect((await assignment(s, r, { row_id: other(), allocation_value: 1001 })).error?.code).toBe('23514')
+    expect((await assignment(s, r, { row_id: other(), allocation_kind: 'hours_per_day', allocation_value: 25 })).error?.code).toBe('23514')
+    expect((await assignment(s, r, { row_id: other(), allocation_kind: 'weeks' })).error?.code).toBe('23514')
+    expect((await assignment(s, r, { row_id: other(), start_date: '2026-11-20', end_date: '2026-11-16' })).error?.code).toBe('23514')
+    expect((await assignment(s, other(), { row_id: other() })).error?.code).toBe('23503')
+    expect((await assignment(other(), r, { row_id: other() })).error?.code).toBe('23503')
+  })
+
+  it('cascades: a resource takes its time off and assignments; a sheet takes its assignments; a deleted row keeps them', async () => {
+    const s = await newSheet()
+    const r = await newResource()
+    await client.from('rows').insert({ sheet_id: s, position: 'a0', id: ROW })
+    await client.from('resource_time_off').insert({ resource_id: r, start_date: '2026-12-21', end_date: '2026-12-22' })
+    await assignment(s, r)
+    await client.from('rows').delete().eq('id', ROW)
+    expect((await client.from('assignments').select('id')).data).toHaveLength(1)
+
+    await client.from('resources').delete().eq('id', r)
+    expect((await client.from('resource_time_off').select('id')).data).toEqual([])
+    expect((await client.from('assignments').select('id')).data).toEqual([])
+
+    const r2 = await newResource('Ben')
+    await assignment(s, r2)
+    await client.from('sheets').delete().eq('id', s)
+    expect((await client.from('assignments').select('id')).data).toEqual([])
+    expect((await client.from('resources').select('id')).data).toHaveLength(1) // resources outlive a sheet
+  })
+
+  it('hides resources and assignments from other users and refuses their sheets', async () => {
+    const s = await newSheet()
+    const r = await newResource()
+    await assignment(s, r)
+    await client.auth.signOut()
+    await client.auth.signUp({ email: 'e2e-user-b@example.com', password: 'e2e-password-b' })
+    expect((await client.from('resources').select('id')).data).toEqual([])
+    expect((await client.from('assignments').select('id')).data).toEqual([])
+    expect((await assignment(s, r)).error).not.toBeNull()
+  })
+})
+
+describe('fakeSupabase automation tables (0009)', () => {
+  let client: ReturnType<typeof createFakeSupabase>
+  let sheet: string
+  let row: string
+  const trigger = { type: 'row_added' }
+  const action = { type: 'notify', recipients: [{ kind: 'owner' }], frequency: 'immediately', include: 'all', linkToRow: true }
+  beforeEach(async () => {
+    client = createFakeSupabase({ storage: memoryStorage() })
+    await client.auth.signUp(A)
+    sheet = ((await client.from('sheets').insert({ name: 'S' }).select('id').single()).data as { id: string }).id
+    row = ((await client.from('rows').insert({ sheet_id: sheet, position: 'a0', cells: {} }).select('id').single()).data as { id: string }).id
+  })
+
+  it('stores rules with defaults and checks the shapes; rules go with their sheet', async () => {
+    const ok = await client.from('automation_rules').insert({ sheet_id: sheet, name: 'R', trigger, action }).select('id, enabled, conditions').single()
+    expect(ok.data).toMatchObject({ enabled: true, conditions: null })
+    expect((await client.from('automation_rules').insert({ sheet_id: sheet, name: 'R', trigger: { type: 'x' }, action })).error?.code).toBe('23514')
+    expect((await client.from('automation_rules').insert({ sheet_id: sheet, name: ' ', trigger, action })).error?.code).toBe('23514')
+    await client.from('sheets').delete().eq('id', sheet)
+    expect((await client.from('automation_rules').select('id')).data).toEqual([])
+  })
+
+  it('the run log is append-only and its dedup key is unique', async () => {
+    const run = { rule_name: 'R', sheet_id: sheet, source: 'browser', outcome: 'done', dedup_key: 'k' }
+    expect((await client.from('automation_runs').insert(run)).error).toBeNull()
+    expect((await client.from('automation_runs').insert(run)).error?.code).toBe('23505')
+    expect((await client.from('automation_runs').update({ outcome: 'error' })).error?.code).toBe('42501')
+    expect((await client.from('automation_runs').delete()).error?.code).toBe('42501')
+    expect((await client.from('automation_runs').insert({ ...run, dedup_key: null, outcome: 'weird' })).error?.code).toBe('23514')
+  })
+
+  it('notifications: app and e-mail rows, only read_at changes, a sheet is optional', async () => {
+    expect((await client.from('notifications').insert({ channel: 'app', title: 'Hi', delivery_status: 'sent' })).error).toBeNull()
+    expect((await client.from('notifications').insert({ channel: 'email', title: 'Hi' })).error?.code).toBe('23514')
+    expect((await client.from('notifications').insert({ channel: 'email', title: 'Hi', recipient_email: 'a@b.co', sheet_id: sheet })).error).toBeNull()
+    expect((await client.from('notifications').update({ title: 'x' })).error?.code).toBe('42501')
+    const read = await client.from('notifications').update({ read_at: '2026-11-16T10:00:00Z' }).eq('channel', 'app').select('read_at')
+    expect(read.data).toEqual([{ read_at: '2026-11-16T10:00:00Z' }])
+  })
+
+  it('requests cannot be created or read with their token hash by the browser', async () => {
+    const req = { sheet_id: sheet, row_id: row, token_hash: 'a'.repeat(64), recipient_email: 'p@q.co', column_ids: ['c'], expires_at: '2026-12-01T00:00:00Z' }
+    expect((await client.from('update_requests').insert(req)).error?.code).toBe('42501')
+    expect((await client.from('update_requests').select('*')).error?.code).toBe('42501')
+    expect((await client.from('update_requests').select('token_hash')).error?.code).toBe('42501')
+    expect((await client.from('update_requests').select('id, status')).data).toEqual([])
+  })
+
+  it('row locks are unique per row and go with the row; copy_row_to_sheet maps cells by title and type', async () => {
+    expect((await client.from('row_locks').insert({ row_id: row, sheet_id: sheet })).error).toBeNull()
+    expect((await client.from('row_locks').insert({ row_id: row, sheet_id: sheet })).error?.code).toBe('23505')
+    expect((await client.from('row_locks').select('row_id')).data).toEqual([{ row_id: row }])
+
+    const other = ((await client.from('sheets').insert({ name: 'Other' }).select('id').single()).data as { id: string }).id
+    const c1 = crypto.randomUUID()
+    const c2 = crypto.randomUUID()
+    await client.from('columns').insert([
+      { id: c1, sheet_id: sheet, title: 'Task', type: 'TEXT_NUMBER', position: 0 },
+      { sheet_id: other, id: c2, title: 'TASK', type: 'TEXT_NUMBER', position: 0 },
+    ])
+    await client.from('rows').update({ cells: { [c1]: 'Pour' } }).eq('id', row)
+    const copied = await client.rpc('copy_row_to_sheet', { p_row_id: row, p_target_sheet_id: other, p_position: 'a0', p_move: false })
+    expect(copied.error).toBeNull()
+    expect((await client.from('rows').select('cells').eq('sheet_id', other)).data).toEqual([{ cells: { [c2]: 'Pour' } }])
+    expect((await client.rpc('copy_row_to_sheet', { p_row_id: row, p_target_sheet_id: sheet, p_position: 'a0', p_move: false })).error?.message).toMatch(/different sheet/)
+    await client.from('rows').delete().eq('id', row)
+    expect((await client.from('row_locks').select('row_id')).data).toEqual([])
+  })
+})
+
+describe('fakeSupabase smart assets (0008_assets.sql)', () => {
+  let client: ReturnType<typeof createFakeSupabase>
+  beforeEach(async () => {
+    client = createFakeSupabase({ storage: memoryStorage() })
+    await client.auth.signUp(A)
+  })
+  const id = async (table: string, row: Record<string, unknown>): Promise<string> => {
+    const { data, error } = await client.from(table).insert(row).select('id').single()
+    expect(error).toBeNull()
+    return (data as { id: string }).id
+  }
+  const count = async (table: string) => ((await client.from(table).select('id')).data as unknown[]).length
+
+  it('derives asset_type and kind, and allows one placement per asset and one star per target', async () => {
+    const space = await id('workspaces', { name: 'W' })
+    const report = await id('reports', { name: 'R', definition: { sources: [] } })
+    const item = await client.from('workspace_items').insert({ space_id: space, report_id: report }).select('asset_type').single()
+    expect(item.data).toEqual({ asset_type: 'report' })
+    expect((await client.from('workspace_items').insert({ space_id: space, report_id: report })).error?.code).toBe('23505')
+    expect((await client.from('workspace_items').insert({ space_id: space })).error?.code).toBe('23514')
+    const star = await client.from('favorites').insert({ report_id: report }).select('kind').single()
+    expect(star.data).toEqual({ kind: 'report' })
+    expect((await client.from('favorites').insert({ report_id: report })).error?.code).toBe('23505')
+  })
+
+  it('checks names, json objects, folder parents, nesting depth and cycles', async () => {
+    expect((await client.from('workspaces').insert({ name: '  ' })).error?.code).toBe('23514')
+    expect((await client.from('reports').insert({ name: 'R', definition: [1] })).error?.code).toBe('23514')
+    const w1 = await id('workspaces', { name: 'One' })
+    const w2 = await id('workspaces', { name: 'Two' })
+    const f1 = await id('folders', { space_id: w1, name: 'f1' })
+    expect((await client.from('folders').insert({ space_id: w2, parent_id: f1, name: 'bad' })).error?.code).toBe('23503')
+    let parent = f1
+    for (let i = 2; i <= 5; i++) parent = await id('folders', { space_id: w1, parent_id: parent, name: `f${i}` })
+    expect((await client.from('folders').insert({ space_id: w1, parent_id: parent, name: 'f6' })).error?.code).toBe('23514')
+    expect((await client.from('folders').update({ parent_id: parent }).eq('id', f1)).error?.code).toBe('23514') // into its own subtree
+    expect((await client.from('folders').update({ space_id: w2 }).eq('id', f1)).error?.code).toBe('23514') // never changes workspace
+  })
+
+  it('stamps updated_at on update and cascades deletes', async () => {
+    const space = await id('workspaces', { name: 'W' })
+    const folder = await id('folders', { space_id: space, name: 'F' })
+    const dash = await id('dashboards', { name: 'D', layout: { widgets: [] } })
+    const before = (await client.from('dashboards').select('updated_at').eq('id', dash).single()).data as { updated_at: string }
+    await new Promise((r) => setTimeout(r, 3))
+    await client.from('dashboards').update({ name: 'D2' }).eq('id', dash)
+    const after = (await client.from('dashboards').select('updated_at').eq('id', dash).single()).data as { updated_at: string }
+    expect(after.updated_at > before.updated_at).toBe(true)
+
+    await client.from('workspace_items').insert({ space_id: space, folder_id: folder, dashboard_id: dash })
+    await client.from('favorites').insert({ folder_id: folder })
+    await client.from('folders').delete().eq('id', folder)
+    expect([await count('workspace_items'), await count('favorites')]).toEqual([0, 0])
+    expect(await count('dashboards')).toBe(1)
+    await client.from('dashboards').delete().eq('id', dash)
+    expect(await count('dashboards')).toBe(0)
+  })
+
+  it('a sheet delete removes its placement and star; another user sees nothing', async () => {
+    const sheet = await id('sheets', { name: 'S' })
+    const space = await id('workspaces', { name: 'W' })
+    await client.from('workspace_items').insert({ space_id: space, sheet_id: sheet })
+    await client.from('favorites').insert({ sheet_id: sheet })
+    await client.from('sheets').delete().eq('id', sheet)
+    expect([await count('workspace_items'), await count('favorites')]).toEqual([0, 0])
+
+    await client.auth.signOut()
+    await client.auth.signUp(B)
+    expect([await count('workspaces'), await count('folders'), await count('reports')]).toEqual([0, 0, 0])
+    expect((await client.from('workspace_items').insert({ space_id: space, sheet_id: crypto.randomUUID() })).error).not.toBeNull()
   })
 })
 

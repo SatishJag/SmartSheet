@@ -1,0 +1,57 @@
+/* WhatsApp page: builds on the automation page styles (au-*) and the tokens of theme.css. */
+
+.wa-grid { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+@media (min-width: 960px) { .wa-grid { grid-template-columns: 1fr 1fr; } }
+.wa-card { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; min-width: 0; }
+.wa-card h2 { font-size: 1.125rem; }
+.wa-muted { color: var(--ink-2); font-size: 0.9375rem; overflow-wrap: anywhere; }
+.wa-block { display: block; margin-top: 2px; font-weight: 400; }
+.wa-warn { padding: 10px 14px; font-size: 0.875rem; background: var(--warn-soft); border: 1px solid rgb(181 71 8 / 0.3); border-radius: var(--r-sm); }
+.wa-linked { display: flex; align-items: center; gap: 10px; font-size: 1.125rem; font-weight: 700; }
+.wa-help { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); }
+
+.wa-code { display: flex; flex-direction: column; gap: 8px; padding: 14px; background: var(--accent-soft); border: 1px solid rgb(var(--b300) / 0.6); border-radius: var(--r-sm); }
+.wa-code-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; overflow-wrap: anywhere; user-select: all; }
+
+/* test chat */
+.wa-chat-card { grid-column: 1 / -1; }
+.wa-chat-phone { max-width: 320px; }
+.wa-chat {
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 220px; max-height: min(520px, 60dvh); overflow-y: auto;
+  padding: 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.wa-chat-empty { margin: auto; color: var(--ink-3); font-size: 0.875rem; text-align: center; }
+.wa-bubble {
+  align-self: flex-start; max-width: min(560px, 92%);
+  padding: 8px 12px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 4px 14px 14px 14px; box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+}
+.wa-bubble.is-me { align-self: flex-end; background: var(--ok-soft); border-color: rgb(6 118 71 / 0.25); border-radius: 14px 4px 14px 14px; }
+.wa-bubble-status { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--warn); }
+.wa-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9375rem; line-height: 1.45; }
+.wa-chat-form { display: flex; gap: 8px; }
+.wa-chat-form .input { flex: 1; min-width: 0; }
+
+/* sheet alerts */
+.wa-page .au-sheet-pick { max-width: 360px; }
+.wa-settings { display: flex; flex-direction: column; gap: 16px; padding: 20px; max-width: 880px; }
+.wa-master { align-items: flex-start; color: var(--ink); font-size: 1rem; }
+.wa-master > span:last-child { display: flex; flex-direction: column; }
+.wa-fields { display: flex; flex-direction: column; gap: 16px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.wa-fields:disabled { opacity: 0.55; }
+.wa-option { display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--line); }
+.wa-option .au-grid { max-width: 560px; }
+.wa-save { padding-top: 4px; }
+
+/* contacts */
+.wa-contact-form { display: flex; flex-direction: column; gap: 12px; }
+.wa-contacts { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.wa-contact { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 10px 0; }
+.wa-contact + .wa-contact { border-top: 1px solid var(--line); }
+.wa-contact-main { min-width: 0; flex: 1 1 220px; }
+.wa-invite { grid-column: 1 / -1; }
+.wa-invite-text { margin: 0; padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 0.9375rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); }
+
+/* messages */
+.wa-msg-body { margin-top: 4px; max-height: 9.5em; overflow: hidden; color: var(--ink); }

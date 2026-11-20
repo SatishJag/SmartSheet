@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { createScheduleSheet, editCell, expectSaved, ganttBar, gridCell, openTab, signUp, USER_A } from './support/app'
+import { createScheduleSheet, editCell, expectSaved, ganttBar, gridCell, openTab, openApp } from './support/app'
 
 async function openSettings(page: Page) {
   await page.getByRole('button', { name: 'Schedule settings' }).click()
@@ -9,7 +9,7 @@ async function openSettings(page: Page) {
 }
 
 test('schedule settings: a non-working weekday moves dates, settings persist, dependencies can be turned off', async ({ page }) => {
-  await signUp(page, USER_A)
+  await openApp(page)
   await createScheduleSheet(page)
 
   const addRow = page.getByRole('button', { name: 'Add row' })

@@ -9,7 +9,7 @@ Shared sheets appear in the recipient's sheet list marked "Shared with you".
 
 ## Why this shape
 - Smallest model that fits the existing schema: one `sheet_members` table, roles on the sheet, no teams.
-- Enforced in the database (`supabase/migrations/0005_sharing.sql`), not just the UI. The UI follows it.
+- Enforced in the database (`supabase/migrations/0017_sharing.sql`), not just the UI. The UI follows it.
 - Child rows (rows, columns, dependencies) keep `owner_id` = the SHEET owner, whoever edits them, so the
   existing client code that copies the owner onto new rows needs no change.
 

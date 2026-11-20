@@ -6,19 +6,31 @@
  *
  * What it models:
  * - auth: email + password users, one persisted session, auth state events.
- * - tables `sheets`, `columns`, `rows`, `dependencies` with the schema's defaults, not-null
+ * - tables `sheets`, `columns` (incl. `formula`, 0007_column_formula.sql), `rows`, `dependencies` with the schema's defaults, not-null
  *   columns, foreign keys and cascade deletes (supabase/migrations/0001_schema.sql), plus
  *   0002_hardening.sql's same-sheet parents/endpoints and one dependency per pair.
  * - PostgREST's 1000-row response cap (`.range()` pages), and `upsert` (ON CONFLICT DO UPDATE).
- * - access (0001, 0002, 0005_sharing): a sheet is visible to its owner and to the users it is shared with
+ * - access (0001, 0002, 0017_sharing): a sheet is visible to its owner and to the users it is shared with
  *   (`sheet_members`); owners and editors may write its rows, columns and dependencies (stamped
  *   with the SHEET owner's id), viewers may not, and only the owner may rename, delete or share
  *   it. Members are added only through `rpc('share_sheet')`.
  * - the database functions `delete_column` and `set_column_cells` (0003_columns.sql), via `rpc`;
  *   they run as the caller, so they act on any sheet the caller may write (owner or editor).
- * - the resource-management tables of 0004_resource_management.sql (checks, same-owner
+ * - tables `baselines` and `baseline_rows` and the function `save_baseline` (0006_baselines.sql):
+ *   cascade on sheet delete, NO cascade from `rows` (a baseline outlives a deleted row).
+ * - tables `resources`, `resource_time_off` and `assignments` (0010_resources.sql): their checks, the
+ *   (resource, owner) foreign keys with cascade, one assignment per task and resource, and NO
+ *   cascade from `rows` (an assignment outlives a deleted task).
+ * - the smart-asset tables of 0008_assets.sql (workspaces, folders, reports, dashboards,
+ *   workspace_items, favorites), in fakeAssets.ts.
+ * - the resource-management tables of 0016_resource_management.sql (checks, same-owner
  *   references, cascades and the projects policy). They are private to their owner: sharing a
  *   sheet does not share them, and a project may only link a sheet the caller owns.
+ * - every other table (baselines, resources, automation, assets, WhatsApp) is owner-only, as in
+ *   its migration: reads and writes are limited to rows owned by the signed-in user, pointing at the
+ *   user's own sheet.
+ *
+ * - the automation tables and `copy_row_to_sheet` (0009_automation.sql): see fakeAutomation.ts.
  *
  * This mimics RLS ownership so the UI flows behave as they would against Supabase. It is NOT a
  * security test: the real row-level security policies are covered by the PGlite tests in
@@ -29,6 +41,30 @@
  * `Error('fakeSupabase: unsupported call ...')` so gaps show up loudly.
  */
 
+import {
+  AUTOMATION_SCHEMA,
+  AUTOMATION_TABLES,
+  automationAccessError,
+  automationRowError,
+  automationUniqueError,
+  automationUpdatable,
+  cascadeAutomation,
+  copyRowToSheet,
+  type AutomationTable,
+} from './fakeAutomation'
+import {
+  ASSET_SCHEMA,
+  ASSET_TABLES,
+  assetRowError,
+  assetUniqueError,
+  beforeAssetUpdate,
+  cascadeAssets,
+  computeGenerated,
+  isAssetTable,
+  type AssetTable,
+} from './fakeAssets'
+import { sheetless, WHATSAPP_SCHEMA, WHATSAPP_TABLES, whatsappAccessError, whatsappUniqueError, type WhatsAppTable } from './fakeWhatsApp'
+
 export const FAKE_STORAGE_KEY = 'fakeSupabase:v1'
 
 export type TableName =
@@ -36,6 +72,14 @@ export type TableName =
   | 'columns'
   | 'rows'
   | 'dependencies'
+  | 'baselines'
+  | 'baseline_rows'
+  | 'resources'
+  | 'resource_time_off'
+  | 'assignments'
+  | AutomationTable
+  | AssetTable
+  | WhatsAppTable
   | 'sheet_members'
   | 'rm_people'
   | 'rm_projects'
@@ -83,12 +127,23 @@ const TABLES: readonly TableName[] = [
   'columns',
   'rows',
   'dependencies',
+  'baselines',
+  'baseline_rows',
+  'resources',
+  'resource_time_off',
+  'assignments',
+  ...AUTOMATION_TABLES,
+  ...ASSET_TABLES,
+  ...WHATSAPP_TABLES,
   'sheet_members',
   'rm_people',
   'rm_projects',
   'rm_assignments',
   'rm_views',
 ]
+
+/** Tables shared through a sheet's members (0017_sharing): owners and editors write, members read. */
+const SHARED_TABLES: ReadonlySet<string> = new Set(['columns', 'rows', 'dependencies'])
 
 /** PostgREST's default `max-rows` on Supabase: the most rows one response returns. */
 export const MAX_ROWS = 1000
@@ -103,6 +158,8 @@ interface ColumnSpec {
 }
 
 const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
+  ...AUTOMATION_SCHEMA,
+  ...WHATSAPP_SCHEMA,
   sheets: {
     id: { default: () => crypto.randomUUID(), notNull: true },
     owner_id: { default: ({ uid }) => uid, notNull: true },
@@ -124,6 +181,7 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     system_type: { default: () => null },
     role: { default: () => null },
     width: { default: () => null },
+    formula: { default: () => null },
   },
   rows: {
     id: { default: () => crypto.randomUUID(), notNull: true },
@@ -145,6 +203,63 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     type: { notNull: true },
     lag_minutes: { default: () => 0, notNull: true },
   },
+  baselines: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    sheet_id: { notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    slot: { notNull: true },
+    name: { notNull: true },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  // No `id`: the primary key is (baseline_id, row_id).
+  baseline_rows: {
+    baseline_id: { notNull: true },
+    sheet_id: { notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    row_id: { notNull: true },
+    start_date: { notNull: true },
+    end_date: { notNull: true },
+    duration_days: { notNull: true },
+  },
+  resources: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    name: { notNull: true },
+    kind: { default: () => 'person', notNull: true },
+    department: { default: () => null },
+    skills: { default: () => [], notNull: true },
+    cost_rate: { default: () => 0, notNull: true },
+    hours_by_weekday: { default: () => [0, 8, 8, 8, 8, 8, 0], notNull: true },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  resource_time_off: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    resource_id: { notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    start_date: { notNull: true },
+    end_date: { notNull: true },
+    hours: { default: () => 0, notNull: true },
+    note: { default: () => null },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  assignments: {
+    id: { default: () => crypto.randomUUID(), notNull: true },
+    sheet_id: { notNull: true },
+    owner_id: { default: ({ uid }) => uid, notNull: true },
+    workspace_id: { default: ({ uid }) => uid, notNull: true },
+    row_id: { notNull: true },
+    resource_id: { notNull: true },
+    allocation_kind: { notNull: true },
+    allocation_value: { notNull: true },
+    start_date: { default: () => null },
+    end_date: { default: () => null },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+  ...ASSET_SCHEMA,
   sheet_members: {
     // The real table has a composite key and no id; the fake keeps one so generic updates and deletes work.
     id: { default: () => crypto.randomUUID(), notNull: true },
@@ -223,17 +338,7 @@ export function emptyState(): FakeState {
   return {
     users: [],
     sessionUserId: null,
-    tables: {
-      sheets: [],
-      columns: [],
-      rows: [],
-      dependencies: [],
-      sheet_members: [],
-      rm_people: [],
-      rm_projects: [],
-      rm_assignments: [],
-      rm_views: [],
-    },
+    tables: Object.fromEntries(TABLES.map((t) => [t, []])) as unknown as Record<TableName, DbRecord[]>,
     clock: 0,
   }
 }
@@ -302,6 +407,11 @@ function project(row: DbRecord, columns: string): DbRecord {
 export interface FakeSupabaseOptions {
   storage: StorageLike
   key?: string
+  /**
+   * Act as the service role (the planning server): row-level security and the user-facing grants are
+   * bypassed, `auth.admin.getUserById` works, and nothing defaults to the signed-in user.
+   */
+  serviceRole?: boolean
 }
 
 type AuthEvent = 'INITIAL_SESSION' | 'SIGNED_IN' | 'SIGNED_OUT'
@@ -320,7 +430,9 @@ export interface FakeSession {
  * Creates the fake client. Typed loosely: the app casts it to `SupabaseClient`, and only the
  * methods implemented here may be used.
  */
-export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupabaseOptions) {
+export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRole = false }: FakeSupabaseOptions) {
+  /** What `uid` is while acting as the service role: it owns nothing and defaults nothing. */
+  const SERVICE_UID = ''
   function read(): FakeState {
     const raw = storage.getItem(key)
     if (!raw) return emptyState()
@@ -424,6 +536,29 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         return { data: { user: session.user, session }, error: null }
       },
 
+      /** A new anonymous user, signed in at once (as with anonymous sign-ins enabled in Supabase). */
+      async signInAnonymously() {
+        await tick()
+        const state = read()
+        const user = addUser(state, '', '')
+        state.sessionUserId = user.id
+        write(state)
+        const session = sessionFor(user)
+        emit('SIGNED_IN', session)
+        return { data: { user: session.user, session }, error: null }
+      },
+
+      /** Service role only (the Auth admin API). */
+      admin: {
+        async getUserById(id: string) {
+          await tick()
+          if (!serviceRole) return { data: { user: null }, error: { message: 'User not allowed', status: 403 } }
+          const u = read().users.find((x) => x.id === id)
+          if (!u) return { data: { user: null }, error: { message: 'User not found', status: 404 } }
+          return { data: { user: { id: u.id, email: u.email || undefined, is_anonymous: u.email === '' } }, error: null }
+        },
+      },
+
       async signOut() {
         await tick()
         const state = read()
@@ -509,6 +644,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     update(patch: DbRecord, options?: unknown): this {
       if (options !== undefined) unsupported(`${this.table}.update(..., options)`)
+      if (this.table === 'baseline_rows') unsupported('baseline_rows.update() (baselines are read-only snapshots)')
       return this.setOp({ kind: 'update', patch })
     }
 
@@ -524,6 +660,26 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     eq(col: string, value: unknown): this {
       this.needFilterable('eq')
       this.filters.push((r) => r[col] === value)
+      return this
+    }
+
+    lte(col: string, value: unknown): this {
+      this.needFilterable('lte')
+      this.filters.push((r) => r[col] != null && compare(r[col], value) <= 0)
+      return this
+    }
+
+    gte(col: string, value: unknown): this {
+      this.needFilterable('gte')
+      this.filters.push((r) => r[col] != null && compare(r[col], value) >= 0)
+      return this
+    }
+
+    /** `is(col, null)`: the column is NULL. */
+    is(col: string, value: null): this {
+      this.needFilterable('is')
+      if (value !== null) unsupported(`${this.table}.is(${col}, non-null)`)
+      this.filters.push((r) => r[col] == null)
       return this
     }
 
@@ -580,11 +736,22 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       if (!this.op) unsupported(`${this.table}: awaited without select/insert/update/delete`)
       await tick()
       const state = read()
-      const uid = state.sessionUserId
-      if (!uid || !state.users.some((u) => u.id === uid)) {
+      const uid = serviceRole ? SERVICE_UID : (state.sessionUserId ?? '')
+      if (!serviceRole && (!uid || !state.users.some((u) => u.id === uid))) {
         // The anon role has no grants on these tables.
         return { data: null, error: pgError(`permission denied for table ${this.table}`, '42501') }
       }
+      const accessError = serviceRole ? null : automationAccessError(
+        this.table,
+        this.op.kind,
+        this.op.kind === 'select' ? this.op.columns : undefined,
+        this.op.kind === 'update' ? this.op.patch : undefined,
+      )
+      if (accessError) return { data: null, error: accessError }
+      const waError = serviceRole
+        ? null
+        : whatsappAccessError(this.table, this.op.kind, this.op.kind === 'update' ? this.op.patch : undefined, this.op.kind === 'insert' || this.op.kind === 'upsert' ? this.op.rows : undefined)
+      if (waError) return { data: null, error: waError }
       let result: FakeResult
       switch (this.op.kind) {
         case 'select':
@@ -632,21 +799,26 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     /** Rows of this table the user may see (RLS select policies), after filters. */
     private visible(state: FakeState, uid: string): DbRecord[] {
       const may = (r: DbRecord): boolean => {
+        if (serviceRole) return true
         if (this.table === 'sheets') return sheetRole(state, uid, r.id) !== null
         if (this.table === 'sheet_members') return r.user_id === uid || sheetRole(state, uid, r.sheet_id) === 'owner'
-        if (this.table.startsWith('rm_')) return r.owner_id === uid
-        return sheetRole(state, uid, r.sheet_id) !== null
+        if (SHARED_TABLES.has(this.table)) return sheetRole(state, uid, r.sheet_id) !== null
+        // rm_* and every table added after sharing are owner-only.
+        return r.owner_id === uid
       }
       return state.tables[this.table].filter((r) => may(r) && this.filters.every((f) => f(r)))
     }
 
     /** Whether the user may update or delete this existing row (RLS `using`). */
     private canWrite(state: FakeState, uid: string, r: DbRecord): boolean {
+      if (serviceRole) return true
       if (this.table === 'sheets') return r.owner_id === uid
       if (this.table === 'sheet_members') return r.user_id === uid || sheetRole(state, uid, r.sheet_id) === 'owner'
-      if (this.table.startsWith('rm_')) return r.owner_id === uid
-      const role = sheetRole(state, uid, r.sheet_id)
-      return role === 'owner' || role === 'editor'
+      if (SHARED_TABLES.has(this.table)) {
+        const role = sheetRole(state, uid, r.sheet_id)
+        return role === 'owner' || role === 'editor'
+      }
+      return r.owner_id === uid
     }
 
     private runSelect(state: FakeState, uid: string, columns: string): FakeResult {
@@ -681,20 +853,33 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
           return pgError(`null value in column "${col}" of relation "${this.table}" violates not-null constraint`, '23502')
         }
       }
-      if (this.table === 'sheet_members') return rlsError(this.table) // only share_sheet() adds members
+      if (this.table === 'sheet_members' && !serviceRole) return rlsError(this.table) // only share_sheet() adds members
       if (this.table.startsWith('rm_')) {
-        // 0004: owner-only, like the sheets row itself.
-        if (row.owner_id !== uid || row.workspace_id !== uid) return rlsError(this.table)
+        // 0016: owner-only, like the sheets row itself.
+        if (!serviceRole && (row.owner_id !== uid || row.workspace_id !== uid)) return rlsError(this.table)
         return checkRmRow(state, uid, this.table, row)
       }
       if (this.table === 'sheets') {
-        if (row.owner_id !== uid || row.workspace_id !== uid) return rlsError(this.table)
-      } else {
+        if (!serviceRole && (row.owner_id !== uid || row.workspace_id !== uid)) return rlsError(this.table)
+      } else if (SHARED_TABLES.has(this.table)) {
+        // 0017_sharing: owners and editors write, stamping the SHEET owner's id.
         const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
         if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
         const role = sheetRole(state, uid, row.sheet_id)
-        if (role !== 'owner' && role !== 'editor') return rlsError(this.table)
+        if (!serviceRole && role !== 'owner' && role !== 'editor') return rlsError(this.table)
         if (row.owner_id !== sheet.owner_id || row.workspace_id !== sheet.owner_id) return rlsError(this.table)
+      } else {
+        if (!serviceRole && row.owner_id !== uid) return rlsError(this.table)
+        if (isAssetTable(this.table)) return assetRowError(this.table, state, uid, row) // 0008_assets.sql
+        if (this.table === 'resources' || this.table === 'resource_time_off') {
+          const bad = resourceError(state, this.table, row)
+          if (bad) return bad
+        }
+        if (this.table !== 'resources' && this.table !== 'resource_time_off' && !(row.sheet_id == null && this.table === 'notifications') && !sheetless(this.table, row)) {
+          const sheet = state.tables.sheets.find((s) => s.id === row.sheet_id)
+          if (!sheet) return pgError(`insert or update on table "${this.table}" violates foreign key constraint`, '23503')
+          if (!serviceRole && sheet.owner_id !== uid) return rlsError(this.table)
+        }
       }
       // 0002_hardening.sql: parents and dependency endpoints must be rows of the SAME sheet.
       const rowExists = (id: unknown) =>
@@ -718,6 +903,24 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
           return pgError('new row violates check constraint "dependencies_check"', '23514')
         }
       }
+      if (this.table === 'assignments') {
+        const bad = assignmentError(state, uid, row)
+        if (bad) return bad
+      }
+      if (this.table === 'baselines') {
+        const bad = baselineFieldError(row.slot, row.name)
+        if (bad) return bad
+      }
+      const autoError = automationRowError(this.table, row, state)
+      if (autoError) return autoError
+      if (this.table === 'baseline_rows') {
+        // The rows belong to a baseline of the same sheet; row_id has no foreign key (it outlives its row).
+        if (!state.tables.baselines.some((b) => b.id === row.baseline_id && b.sheet_id === row.sheet_id)) {
+          return pgError('insert or update on table "baseline_rows" violates foreign key constraint', '23503')
+        }
+        const bad = baselineRowError(row)
+        if (bad) return bad
+      }
       return null
     }
 
@@ -731,11 +934,31 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
       for (const [col, s] of Object.entries(SCHEMA[this.table])) {
         if (row[col] === undefined && s.default) row[col] = s.default({ uid, now })
       }
+      computeGenerated(this.table, row)
       return row
     }
 
     /** Primary key and (dependencies) the one-per-pair unique key. Null when `row` is unique among `others`. */
     private uniqueError(row: DbRecord, others: DbRecord[]): FakeError | null {
+      const autoDup = automationUniqueError(this.table, row, others) ?? whatsappUniqueError(this.table, row, others)
+      if (autoDup) return autoDup
+      if (isAssetTable(this.table)) {
+        const dup = assetUniqueError(this.table, row, others)
+        if (dup) return dup
+      }
+      if (this.table === 'baseline_rows') {
+        const dup = others.some((r) => r !== row && r.baseline_id === row.baseline_id && r.row_id === row.row_id)
+        return dup ? pgError('duplicate key value violates unique constraint "baseline_rows_pkey"', '23505') : null
+      }
+      if (
+        this.table === 'assignments' &&
+        others.some((r) => r !== row && r.sheet_id === row.sheet_id && r.row_id === row.row_id && r.resource_id === row.resource_id)
+      ) {
+        return pgError('duplicate key value violates unique constraint "assignments_sheet_id_row_id_resource_id_key"', '23505')
+      }
+      if (this.table === 'baselines' && others.some((r) => r !== row && r.sheet_id === row.sheet_id && r.slot === row.slot)) {
+        return pgError('duplicate key value violates unique constraint "baselines_sheet_id_slot_key"', '23505')
+      }
       if (others.some((r) => r !== row && r.id === row.id)) {
         return pgError(`duplicate key value violates unique constraint "${this.table}_pkey"`, '23505')
       }
@@ -793,8 +1016,18 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
     }
 
     private runUpdate(state: FakeState, uid: string, patch: DbRecord): FakeResult {
-      const targets = this.visible(state, uid).filter((r) => this.canWrite(state, uid, r))
+      const targets = this.visible(state, uid).filter((r) => this.canWrite(state, uid, r) && (serviceRole || automationUpdatable(this.table, r, patch)))
       const updated = targets.map((r) => ({ ...r, ...structuredClone(patch) }))
+      if (isAssetTable(this.table)) {
+        const now = () => {
+          state.clock = Math.max(Date.now(), state.clock + 1)
+          return new Date(state.clock).toISOString()
+        }
+        for (let i = 0; i < updated.length; i++) {
+          const err = beforeAssetUpdate(this.table, targets[i], updated[i], now)
+          if (err) return { data: null, error: err }
+        }
+      }
       for (const row of updated) {
         const err = this.checkRow(state, uid, row)
         if (err) return { data: null, error: err }
@@ -806,7 +1039,13 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
     private runDelete(state: FakeState, uid: string): FakeResult {
       const targets = this.visible(state, uid).filter((r) => this.canWrite(state, uid, r))
-      removeWithCascade(state, this.table, new Set(targets.map((r) => r.id)))
+      if (this.table === 'baseline_rows' || this.table === 'row_locks') {
+        // No id column: remove the matched records themselves.
+        const gone = new Set(targets)
+        state.tables[this.table] = state.tables[this.table].filter((r) => !gone.has(r))
+      } else {
+        removeWithCascade(state, this.table, new Set(targets.map((r) => r.id)))
+      }
       return { data: this.returned(targets), error: null }
     }
   }
@@ -816,15 +1055,16 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
    * DEFINER, owner only), and delete_column / set_column_cells (0003_columns.sql, SECURITY INVOKER:
    * they act on the sheets the caller may write, i.e. as owner or editor).
    */
-  async function rpc(fn: string, args: Record<string, unknown> = {}): Promise<FakeResult<null>> {
+  async function rpc(fn: string, args: Record<string, unknown> = {}): Promise<FakeResult<string | null>> {
     await tick()
     const state = read()
-    const uid = state.sessionUserId
-    if (!uid || !state.users.some((u) => u.id === uid)) {
+    const uid = serviceRole ? SERVICE_UID : (state.sessionUserId ?? '')
+    if (!serviceRole && (!uid || !state.users.some((u) => u.id === uid))) {
       return { data: null, error: pgError(`permission denied for function ${fn}`, '42501') }
     }
     const fail = (message: string, code = 'P0001') => ({ data: null, error: pgError(message, code) })
     const canWrite = (sheetId: unknown) => {
+      if (serviceRole) return state.tables.sheets.some((s) => s.id === sheetId)
       const role = sheetRole(state, uid, sheetId)
       return role === 'owner' || role === 'editor'
     }
@@ -870,6 +1110,16 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
         if (value === null) delete cells[key]
         else cells[key] = structuredClone(value)
       }
+    } else if (fn === 'copy_row_to_sheet') {
+      const res = copyRowToSheet(state, serviceRole ? null : uid, args)
+      if (res.error) return res
+      write(state)
+      return res
+    } else if (fn === 'save_baseline') {
+      const res = saveBaseline(state, uid, args)
+      if (res.error) return res
+      write(state)
+      return res
     } else {
       unsupported(`rpc(${JSON.stringify(fn)})`)
     }
@@ -883,12 +1133,159 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY }: FakeSupa
 
 export type FakeSupabaseClient = ReturnType<typeof createFakeSupabase>
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** The checks of `baselines` (slot 1-5, name 1-100 chars and not blank). Null when fine. */
+function baselineFieldError(slot: unknown, name: unknown): FakeError | null {
+  if (typeof slot !== 'number' || !Number.isInteger(slot) || slot < 1 || slot > 5) {
+    return pgError('new row for relation "baselines" violates check constraint "baselines_slot_check"', '23514')
+  }
+  if (typeof name !== 'string' || name.trim().length === 0 || name.length > 100) {
+    return pgError('new row for relation "baselines" violates check constraint "baselines_name_check"', '23514')
+  }
+  return null
+}
+
+/** The column types and checks of `baseline_rows` (dates, end >= start, duration >= 0). Null when fine. */
+function baselineRowError(row: DbRecord): FakeError | null {
+  if (typeof row.row_id !== 'string' || !UUID_RE.test(row.row_id)) {
+    return pgError(`invalid input syntax for type uuid: "${String(row.row_id)}"`, '22P02')
+  }
+  for (const col of ['start_date', 'end_date'] as const) {
+    const v = row[col]
+    if (typeof v !== 'string' || !DATE_RE.test(v) || Number.isNaN(Date.parse(v))) {
+      return pgError(`invalid input syntax for type date: "${String(v)}"`, '22007')
+    }
+  }
+  if (typeof row.duration_days !== 'number' || !Number.isInteger(row.duration_days)) {
+    return pgError(`invalid input syntax for type integer: "${String(row.duration_days)}"`, '22P02')
+  }
+  if (row.duration_days < 0 || String(row.end_date) < String(row.start_date)) {
+    return pgError('new row for relation "baseline_rows" violates check constraint', '23514')
+  }
+  return null
+}
+
+/**
+ * `save_baseline(p_sheet_id, p_slot, p_name, p_rows)` of 0006_baselines.sql: replaces the slot's
+ * baseline and stores the rows, all or nothing, and returns the new baseline's id. `state` is only
+ * changed when the whole call succeeds (the caller writes it back). The caller must own the sheet
+ * (otherwise the baseline insert fails row-level security, as in the database).
+ */
+function saveBaseline(state: FakeState, uid: string, args: Record<string, unknown>): FakeResult<string | null> {
+  const fail = (error: FakeError): FakeResult<string | null> => ({ data: null, error })
+  const sheet = state.tables.sheets.find((s) => s.id === args.p_sheet_id && s.owner_id === uid)
+  const slot = args.p_slot
+  if (!sheet) return fail(rlsError('baselines'))
+  const bad = baselineFieldError(slot, args.p_name)
+  if (bad) return fail(bad)
+  if (!Array.isArray(args.p_rows)) return fail(pgError('cannot extract elements from a non-array', '22023'))
+  const baselineId = crypto.randomUUID()
+  const rows: DbRecord[] = []
+  const seen = new Set<string>()
+  for (const raw of args.p_rows as Record<string, unknown>[]) {
+    const row: DbRecord = {
+      baseline_id: baselineId,
+      sheet_id: sheet.id,
+      owner_id: uid,
+      workspace_id: uid,
+      row_id: raw?.rowId ?? null,
+      start_date: raw?.start ?? null,
+      end_date: raw?.end ?? null,
+      duration_days: raw?.durationDays ?? null,
+    }
+    if (row.row_id == null || row.start_date == null || row.end_date == null || row.duration_days == null) {
+      return fail(pgError('null value in column of relation "baseline_rows" violates not-null constraint', '23502'))
+    }
+    const err = baselineRowError(row)
+    if (err) return fail(err)
+    const key = String(row.row_id).toLowerCase()
+    if (seen.has(key)) return fail(pgError('duplicate key value violates unique constraint "baseline_rows_pkey"', '23505'))
+    seen.add(key)
+    rows.push(row)
+  }
+  state.clock = Math.max(Date.now(), state.clock + 1)
+  const old = new Set(state.tables.baselines.filter((b) => b.sheet_id === sheet.id && b.slot === slot).map((b) => b.id))
+  state.tables.baselines = state.tables.baselines.filter((b) => !old.has(b.id))
+  state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !old.has(r.baseline_id))
+  state.tables.baselines.push({
+    id: baselineId,
+    sheet_id: sheet.id,
+    owner_id: uid,
+    workspace_id: uid,
+    slot,
+    name: args.p_name,
+    created_at: new Date(state.clock).toISOString(),
+  })
+  state.tables.baseline_rows.push(...rows)
+  return { data: baselineId, error: null }
+}
+
+const RESOURCE_KINDS = ['person', 'role', 'equipment']
+const ALLOCATION_MAX: Record<string, number> = { percent: 1000, hours_per_day: 24, hours_per_week: 168, total_hours: 100000 }
+
+const checkFail = (table: string): FakeError => pgError(`new row for relation "${table}" violates check constraint`, '23514')
+
+/** The checks of `resources` and `resource_time_off` (0010_resources.sql), plus time off's (resource, owner) key. */
+function resourceError(state: FakeState, table: 'resources' | 'resource_time_off', row: DbRecord): FakeError | null {
+  if (table === 'resources') {
+    const name = row.name
+    if (typeof name !== 'string' || name.trim().length === 0 || name.length > 100) return checkFail(table)
+    if (!RESOURCE_KINDS.includes(String(row.kind))) return checkFail(table)
+    const dep = row.department
+    if (dep != null && (typeof dep !== 'string' || dep.trim().length === 0 || dep.length > 100)) return checkFail(table)
+    const rate = row.cost_rate
+    if (typeof rate !== 'number' || !(rate >= 0 && rate <= 1_000_000)) return checkFail(table)
+    const skills = row.skills
+    if (!Array.isArray(skills) || skills.length > 30 || skills.some((x) => typeof x !== 'string')) return checkFail(table)
+    const h = row.hours_by_weekday
+    if (!Array.isArray(h) || h.length !== 7 || h.some((x) => typeof x !== 'number' || !(x >= 0 && x <= 24))) return checkFail(table)
+    return null
+  }
+  if (!state.tables.resources.some((r) => r.id === row.resource_id && r.owner_id === row.owner_id)) {
+    return pgError('insert or update on table "resource_time_off" violates foreign key constraint', '23503')
+  }
+  for (const col of ['start_date', 'end_date'] as const) {
+    const v = row[col]
+    if (typeof v !== 'string' || !DATE_RE.test(v) || Number.isNaN(Date.parse(v))) {
+      return pgError(`invalid input syntax for type date: "${String(v)}"`, '22007')
+    }
+  }
+  const span = (Date.parse(String(row.end_date)) - Date.parse(String(row.start_date))) / 86_400_000
+  if (!(span >= 0 && span <= 3660)) return checkFail(table)
+  if (typeof row.hours !== 'number' || !(row.hours >= 0 && row.hours <= 24)) return checkFail(table)
+  if (row.note != null && (typeof row.note !== 'string' || row.note.length > 200)) return checkFail(table)
+  return null
+}
+
+/** The checks of `assignments` (0010_resources.sql): own resource, allocation ceilings, ordered dates. */
+function assignmentError(state: FakeState, uid: string, row: DbRecord): FakeError | null {
+  if (typeof row.row_id !== 'string' || !UUID_RE.test(row.row_id)) {
+    return pgError(`invalid input syntax for type uuid: "${String(row.row_id)}"`, '22P02')
+  }
+  if (!state.tables.resources.some((r) => r.id === row.resource_id && r.owner_id === row.owner_id && r.owner_id === uid)) {
+    return pgError('insert or update on table "assignments" violates foreign key constraint', '23503')
+  }
+  const max = ALLOCATION_MAX[String(row.allocation_kind)]
+  const v = row.allocation_value
+  if (max === undefined || typeof v !== 'number' || !(v > 0 && v <= max)) return checkFail('assignments')
+  for (const col of ['start_date', 'end_date'] as const) {
+    const d = row[col]
+    if (d != null && (typeof d !== 'string' || !DATE_RE.test(d) || Number.isNaN(Date.parse(d)))) {
+      return pgError(`invalid input syntax for type date: "${String(d)}"`, '22007')
+    }
+  }
+  if (row.start_date != null && row.end_date != null && String(row.end_date) < String(row.start_date)) return checkFail('assignments')
+  return null
+}
+
 /** The dependencies table's one-per-pair unique key (0002_hardening.sql). */
 const PAIR_KEY = ['sheet_id', 'predecessor_row_id', 'successor_row_id'] as const
 
 const samePair = (a: DbRecord, b: DbRecord) => PAIR_KEY.every((c) => a[c] === b[c])
 
-/** 0005_sharing.sql sheet_role(): 'owner', 'editor', 'viewer' or null. */
+/** 0017_sharing.sql sheet_role(): 'owner', 'editor', 'viewer' or null. */
 function sheetRole(state: FakeState, uid: string, sheetId: unknown): 'owner' | 'editor' | 'viewer' | null {
   const sheet = state.tables.sheets.find((s) => s.id === sheetId)
   if (!sheet) return null
@@ -911,14 +1308,33 @@ function compare(a: unknown, b: unknown): number {
 /** Deletes rows of `table` and everything that cascades from them (the schema's `on delete cascade`). */
 function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>): void {
   if (ids.size === 0) return
+  if (isAssetTable(table)) return cascadeAssets(state, table, ids)
+  cascadeAutomation(state, table, ids)
   if (table === 'sheets') {
+    cascadeAssets(state, 'sheets', ids) // placements and stars of the sheets
     // rm_projects.sheet_id: on delete set null
     for (const p of state.tables.rm_projects) if (ids.has(p.sheet_id)) p.sheet_id = null
     state.tables.sheets = state.tables.sheets.filter((r) => !ids.has(r.id))
     state.tables.columns = state.tables.columns.filter((r) => !ids.has(r.sheet_id))
     state.tables.dependencies = state.tables.dependencies.filter((r) => !ids.has(r.sheet_id))
     state.tables.rows = state.tables.rows.filter((r) => !ids.has(r.sheet_id))
+    state.tables.baselines = state.tables.baselines.filter((r) => !ids.has(r.sheet_id))
+    state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !ids.has(r.sheet_id))
+    // Unlike rows, a deleted sheet takes its assignments with it (on delete cascade).
+    state.tables.assignments = state.tables.assignments.filter((r) => !ids.has(r.sheet_id))
     state.tables.sheet_members = state.tables.sheet_members.filter((r) => !ids.has(r.sheet_id))
+    state.tables.whatsapp_sheet_settings = state.tables.whatsapp_sheet_settings.filter((r) => !ids.has(r.sheet_id))
+    return
+  }
+  if (table === 'resources') {
+    state.tables.resources = state.tables.resources.filter((r) => !ids.has(r.id))
+    state.tables.resource_time_off = state.tables.resource_time_off.filter((r) => !ids.has(r.resource_id))
+    state.tables.assignments = state.tables.assignments.filter((r) => !ids.has(r.resource_id))
+    return
+  }
+  if (table === 'baselines') {
+    state.tables.baselines = state.tables.baselines.filter((r) => !ids.has(r.id))
+    state.tables.baseline_rows = state.tables.baseline_rows.filter((r) => !ids.has(r.baseline_id))
     return
   }
   if (table === 'rows') {
@@ -934,6 +1350,8 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
         }
       }
     }
+    cascadeAutomation(state, 'rows', all) // update / approval requests and locks of the deleted rows
+    // baseline_rows.row_id and assignments.row_id deliberately have no foreign key: they survive a deleted row.
     state.tables.rows = state.tables.rows.filter((r) => !all.has(r.id))
     state.tables.dependencies = state.tables.dependencies.filter(
       (d) => !all.has(d.predecessor_row_id) && !all.has(d.successor_row_id),
@@ -952,7 +1370,7 @@ function removeWithCascade(state: FakeState, table: TableName, ids: Set<unknown>
 
 const oneOf = (v: unknown, allowed: readonly unknown[]) => allowed.includes(v)
 
-/** 0004_resource_management.sql: checks, same-owner references and the projects policy. */
+/** 0016_resource_management.sql: checks, same-owner references and the projects policy. */
 function checkRmRow(state: FakeState, uid: string, table: TableName, row: DbRecord): FakeError | null {
   const check = (name: string) => pgError(`new row violates check constraint "${table}_${name}_check"`, '23514')
   const fk = () => pgError(`insert or update on table "${table}" violates foreign key constraint`, '23503')

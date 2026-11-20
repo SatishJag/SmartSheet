@@ -1,4 +1,5 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
+import type { BaselineRow } from '../engine/baseline'
 import { findCycle } from '../engine/cycles'
 import { schedule, type SchedDep, type ScheduleResult } from '../engine/schedule'
 import {
@@ -11,6 +12,8 @@ import {
   type RowNode,
 } from '../model/hierarchy'
 import { validateCell, type ColumnRole } from '../model/validate'
+import { isRowLocked, LOCKED_MESSAGE } from '../automation/locks'
+import { createBaselineActions, type BaselineActions } from './baselineActions'
 import { createColumnActions, type ColumnActions } from './columnActions'
 import type { Persistence, RowRecord, SheetData } from './persistence'
 import { parsePredecessorInput, rowNumbers } from './predecessors'
@@ -28,7 +31,7 @@ export interface CellError {
 
 export type ActionResult = { ok: true } | { ok: false; error: string }
 
-export interface SheetState extends ColumnActions {
+export interface SheetState extends ColumnActions, BaselineActions {
   data: SheetData | null
   scheduled: ScheduleResult
   saveStatus: SaveStatus
@@ -38,6 +41,8 @@ export interface SheetState extends ColumnActions {
   errors: CellError[]
   notices: string[]
   loadError: string | null
+  /** Rows of the baselines loaded so far, by baseline id (headers are in `data.baselines`). */
+  baselineRows: Record<string, BaselineRow[]>
   /** True for a viewer: every edit is refused (the database refuses their writes too). */
   readOnly: boolean
 
@@ -110,6 +115,7 @@ function refuseWhenReadOnly(actions: ColumnActions, readOnly: () => boolean): Co
     deleteColumn: (...a) => (readOnly() ? refused : actions.deleteColumn(...a)),
     setColumnOptions: (...a) => (readOnly() ? refused : actions.setColumnOptions(...a)),
     changeColumnType: (...a) => (readOnly() ? refused : actions.changeColumnType(...a)),
+    setColumnFormula: (...a) => (readOnly() ? refused : actions.setColumnFormula(...a)),
   }
 }
 
@@ -491,6 +497,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       errors: [],
       notices: [],
       loadError: null,
+      baselineRows: {},
       readOnly: false,
 
       setReadOnly(readOnly) {
@@ -501,7 +508,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         set({ loadError: null })
         try {
           const data = await p.loadSheet(id)
-          commit(data, { errors: [], notices: [], loadError: null })
+          commit(data, { errors: [], notices: [], loadError: null, baselineRows: {} })
         } catch (e) {
           set({ loadError: errorMessage(e) })
         }
@@ -515,6 +522,10 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (!row) return { ok: false, error: `Unknown row ${rowId}` }
         const col = data.columns.find((c) => c.id === colId)
         if (!col) return { ok: false, error: `Unknown column ${colId}` }
+        if (isRowLocked(data.sheet.id, rowId)) {
+          set({ errors: cellErrors(rowId, colId, LOCKED_MESSAGE) })
+          return { ok: false, error: LOCKED_MESSAGE }
+        }
         // Predecessors are not stored in cells: the text is derived from the dependencies.
         if (col.role === 'predecessor') return get().setPredecessors(rowId, raw)
         if (col.role && ROLLUP_ROLES.includes(col.role) && isParent(data, rowId)) {
@@ -588,6 +599,10 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         if (get().readOnly) return
         const data = get().data
         if (!data) return
+        if (isRowLocked(data.sheet.id, id)) {
+          set({ notices: [...get().notices, LOCKED_MESSAGE] })
+          return
+        }
         const { rows, removedIds } = deleteWithChildren(data.rows, id)
         if (removedIds.length === 0) return
         const removed = new Set(removedIds)
@@ -756,6 +771,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         return { ok: true }
       },
       ...refuseWhenReadOnly(createColumnActions({ p, get, commit, enqueue, failedKeys, unpersisted, retryers }), () => get().readOnly),
+      // Baselines are the owner's (the database allows only the owner to write them).
+      ...createBaselineActions({ p, get, set }),
 
       batch(fn) {
         batchDepth++

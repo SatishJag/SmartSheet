@@ -80,6 +80,29 @@ describe('SheetView', () => {
     expect(screen.queryByRole('region', { name: 'Gantt chart' })).not.toBeInTheDocument()
   })
 
+  it('is compact by default; Comfortable raises the grid row height and is remembered', async () => {
+    localStorage.clear()
+    vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+    const { unmount } = render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} />)
+    await screen.findByRole('grid')
+    const group = screen.getByRole('group', { name: 'Row density' })
+    expect(within(group).getByRole('button', { name: 'Compact' })).toHaveAttribute('aria-pressed', 'true')
+    expect(document.querySelector('.sheet-view')).toHaveAttribute('data-density', 'compact')
+    expect((document.querySelector('.grid-header') as HTMLElement).style.height).toBe('32px')
+
+    await userEvent.setup().click(within(group).getByRole('button', { name: 'Comfortable' }))
+    expect(document.querySelector('.sheet-view')).toHaveAttribute('data-density', 'comfortable')
+    expect((document.querySelector('.grid-header') as HTMLElement).style.height).toBe('40px')
+    unmount()
+
+    // A new visit starts in the remembered density.
+    vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+    render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} />)
+    await screen.findByRole('grid')
+    expect(document.querySelector('.sheet-view')).toHaveAttribute('data-density', 'comfortable')
+    localStorage.clear()
+  })
+
   it('switches tabs with the arrow keys and moves focus', async () => {
     vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
     render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} />)

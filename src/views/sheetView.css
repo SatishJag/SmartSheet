@@ -1,0 +1,199 @@
+/* The open sheet: breadcrumb header, toolbar (view switch, tools, density), save status. */
+
+.sheet-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Fills the window under the app header; the views scroll inside their own panes. */
+  height: calc(100vh - var(--header-h) - 32px);
+  height: calc(100dvh - var(--header-h) - 32px);
+  min-height: 520px;
+}
+
+.sheet-view-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+}
+.sheet-view-header .spacer,
+.sheet-toolbar .spacer { flex: 1; }
+
+.breadcrumb { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.crumb-link {
+  min-height: 32px;
+  padding: 2px 10px 2px 6px;
+  gap: 2px;
+  font-weight: 600;
+  color: var(--ink-3);
+  background: transparent;
+  border-color: transparent;
+}
+.crumb-link:hover:not(:disabled) { color: var(--ink); background: rgb(22 24 29 / 0.06); border-color: transparent; }
+.crumb-sep { flex: none; color: var(--ink-3); }
+.sheet-title {
+  min-width: 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.breadcrumb .btn-icon { width: 32px; min-height: 32px; flex: none; }
+.breadcrumb .inline-rename input { min-width: 220px; font-weight: 700; }
+
+/* ---- toolbar ---- */
+.sheet-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.toolbar-sep { width: 1px; height: 24px; background: var(--line-2); }
+
+.sheet-tab { display: inline-flex; align-items: center; gap: 6px; }
+.segmented-sm button { min-height: 30px; padding: 2px 12px; font-size: 0.8125rem; }
+.segmented-sm { padding: 3px; }
+
+/* Critical path switch: still a native checkbox (role checkbox), drawn as a toggle. */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--control-h);
+  padding: 0 4px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.switch input {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch-track {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  background: var(--line-strong);
+  border-radius: var(--r-pill);
+  transition: background-color 0.18s ease;
+}
+.switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgb(22 24 29 / 0.3);
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track::after { transform: translateX(16px); }
+.switch input:focus-visible + .switch-track { outline: 3px solid rgb(var(--b700)); outline-offset: 2px; }
+.switch:has(input:disabled) { opacity: 0.55; cursor: not-allowed; }
+.switch:has(input:disabled) input { cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) {
+  .switch-track,
+  .switch-track::after { transition: none; }
+}
+
+/* ---- save status ---- */
+.save-status { position: relative; display: flex; align-items: center; gap: 8px; }
+.save-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 4px 10px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ok);
+  background: var(--ok-soft);
+  border: 1px solid #abefc6;
+  border-radius: var(--r-pill);
+}
+.save-badge.is-saving { color: var(--ink-2); background: var(--surface-2); border-color: var(--line-2); }
+.save-badge.is-unsaved { color: var(--warn); background: var(--warn-soft); border-color: #fedf89; }
+.save-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgb(var(--b200));
+  border-top-color: rgb(var(--b700));
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .save-spinner { animation-duration: 3s; } }
+
+.save-failed { display: flex; align-items: center; gap: 8px; }
+.save-failed-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid #fda29b;
+  border-radius: var(--r-pill);
+}
+
+/* Notices (e.g. "start date set by predecessors") float under the status instead of pushing the layout. */
+.sheet-notices { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: max-content; max-width: min(380px, calc(100vw - 32px)); }
+.sheet-notices ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sheet-notices li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #1849a9;
+  background: var(--info-soft);
+  border: 1px solid #b2ddff;
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-card);
+}
+.sheet-notices li span { flex: 1; }
+.notice-dismiss { flex: none; width: 28px; min-height: 28px; padding: 0; color: #1849a9; background: transparent; border-color: transparent; }
+.notice-dismiss:hover:not(:disabled) { background: rgb(23 92 211 / 0.12); border-color: transparent; }
+.x-icon { transform: rotate(45deg); }
+
+.sheet-tabpanel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+/* ---- loading ---- */
+.sheet-loading { padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
+.sheet-loading .skeleton { margin-bottom: 12px; height: 20px; }
+.sheet-loading .skeleton-bar { width: 220px; height: 34px; border-radius: var(--r-pill); }
+
+@media (max-width: 640px) {
+  .hide-sm { display: none; }
+  .density-toggle button { padding: 2px 14px; }
+  .sheet-view { height: auto; min-height: calc(100dvh - var(--header-h) - 32px); }
+  .sheet-tabpanel { min-height: 420px; height: calc(100dvh - var(--header-h) - 240px); }
+  .sheet-toolbar { gap: 8px; }
+  .sheet-toolbar .spacer { display: none; }
+  .toolbar-sep { display: none; }
+  .sheet-title { font-size: 1.0625rem; }
+  .breadcrumb .inline-rename input { min-width: 0; width: 100%; }
+}

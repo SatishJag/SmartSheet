@@ -1,4 +1,4 @@
-/** Resource management records, as stored in the rm_* tables (0004_resource_management.sql). */
+/** Resource management records, as stored in the rm_* tables (0016_resource_management.sql). */
 
 export type OfficeStatus = 'in_office' | 'remote' | 'out_of_office'
 export type MemberType = 'employee' | 'contractor' | 'placeholder'

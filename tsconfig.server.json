@@ -1,0 +1,23 @@
+{
+  // Builds the planning server (server/main.ts and what it imports from src/planner and
+  // src/engine) to dist-server/ as CommonJS, so extensionless imports shared with the browser
+  // code resolve under Node. scripts/build-server.mjs marks dist-server as CommonJS.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "module": "CommonJS",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "rootDir": ".",
+    "outDir": "dist-server",
+    "sourceMap": true,
+    "noEmitOnError": true
+  },
+  "files": ["server/main.ts"]
+}

@@ -1,6 +1,8 @@
+import { checkFormula } from '../formula/evaluate'
 import { isFormula } from '../formula/sheetFormulas'
 import {
   COLUMN_TYPE_LABELS,
+  columnFormulaLock,
   columnLock,
   isPicklistType,
   normalizeOptions,
@@ -33,6 +35,12 @@ export interface ColumnActions {
    * new type: values that fit are kept (normalized), the others are cleared and a notice says how many.
    */
   changeColumnType(colId: string, type: ColumnType, options?: string[]): ActionResult
+  /**
+   * Sets a column formula (with or without its leading `=`), which applies to every row whose own cell
+   * is empty; an empty string or null clears it. Refused when the formula cannot be read, in the primary
+   * column, and in schedule columns while dependencies are on.
+   */
+  setColumnFormula(colId: string, formula: string | null): ActionResult
 }
 
 /** A queued persistence job, as the store's queue runs it (see `Job` in sheetStore.ts). */
@@ -66,6 +74,9 @@ function asTyped(value: unknown): string {
 const isEmptyValue = (v: unknown) => v === null || v === '' || v === false || (Array.isArray(v) && v.length === 0)
 
 const sameValue = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b)
+
+/** Matches the check constraint of 0007_column_formula.sql. */
+const MAX_FORMULA_LENGTH = 2000
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
@@ -222,8 +233,19 @@ export function createColumnActions(ctx: ColumnActionContext): ColumnActions {
         }
         return next ? { ...r, cells: next } : r
       })
-      commit({ ...withColumn(data, { ...col, title: valid.title }), rows: touched.size > 0 ? rows : data.rows })
+      // Column formulas name columns by title too.
+      const reformatted = new Set<string>()
+      const columns = data.columns.map((c) => {
+        const renamed = c.id === colId ? { ...c, title: valid.title } : c
+        if (!c.formula) return renamed
+        const f = renameFormulaReferences(c.formula, col.title, valid.title)
+        if (f === c.formula) return renamed
+        reformatted.add(c.id)
+        return { ...renamed, formula: f }
+      })
+      commit({ ...data, columns, rows: touched.size > 0 ? rows : data.rows })
       saveColumn(colId)
+      for (const id of reformatted) if (id !== colId) saveColumn(id)
       for (const [cid, ids] of touched) saveColumnCells(cid, ids)
       return { ok: true }
     },
@@ -284,6 +306,7 @@ export function createColumnActions(ctx: ColumnActionContext): ColumnActions {
       // The role went with the old type (a status dropdown, a % complete number, ...).
       const next: Column = { id: col.id, title: col.title, type }
       if (col.systemType !== undefined) next.systemType = col.systemType
+      if (col.formula !== undefined) next.formula = col.formula // the column formula belongs to the column, not its type
       if (isPicklistType(type)) {
         const opts = normalizeOptions(options ?? col.options ?? [])
         if (!opts.ok) return opts
@@ -326,6 +349,32 @@ export function createColumnActions(ctx: ColumnActionContext): ColumnActions {
       )
       saveColumn(colId)
       if (changed.length > 0) saveColumnCells(colId, changed)
+      return { ok: true }
+    },
+
+    setColumnFormula(colId, formula) {
+      const data = get().data
+      if (!data) return { ok: false, error: 'Sheet is not loaded' }
+      const index = data.columns.findIndex((c) => c.id === colId)
+      if (index < 0) return { ok: false, error: `Unknown column ${colId}` }
+      const col = data.columns[index]
+      const text = (formula ?? '').trim()
+      if (text === '' || text === '=') {
+        if (col.formula === undefined) return { ok: true }
+        const { formula: _gone, ...rest } = col
+        commit(withColumn(data, rest))
+        saveColumn(colId)
+        return { ok: true }
+      }
+      const locked = columnFormulaLock(data, colId)
+      if (locked) return { ok: false, error: locked }
+      const normalized = text.startsWith('=') ? text : `=${text}`
+      if (normalized.length > MAX_FORMULA_LENGTH) return { ok: false, error: `A formula can be at most ${MAX_FORMULA_LENGTH} characters` }
+      const syntax = checkFormula(normalized)
+      if (!syntax.ok) return { ok: false, error: `${syntax.error}: ${syntax.message}` }
+      if (col.formula === normalized) return { ok: true }
+      commit(withColumn(data, { ...col, formula: normalized }))
+      saveColumn(colId)
       return { ok: true }
     },
   }

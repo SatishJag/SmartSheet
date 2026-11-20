@@ -49,7 +49,7 @@ describe('buildApp', () => {
     const acquired = byName.get('Site acquired')!
     const preds = plan.dependencies.filter((d) => d.successorId === acquired.id).map((d) => plan.rows.find((r) => r.id === d.predecessorId)!.cells[task])
     expect(preds).toEqual(['Site selection and feasibility', 'Utility power availability study', 'Fiber route and carrier diversity'])
-    expect(acquired.cells[start]).toBe('2026-12-21') // after the 20-day power study
+    expect(acquired.cells[start]).toBe('2026-12-18') // on the 20-day power study's end date (a milestone lands on its FS predecessor's end: docs/behavior/scheduling.md)
     expect(app.ends_at > '2027-06-01').toBe(true)
     // Every row lies within the plan span
     for (const r of plan.rows) expect(String(r.cells[end]) <= app.ends_at).toBe(true)

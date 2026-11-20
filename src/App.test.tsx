@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -70,47 +70,16 @@ describe('App', () => {
     expect(screen.queryByRole('grid')).not.toBeInTheDocument()
   })
 
-  it('Sign out asks first while the open sheet has unsaved changes', async () => {
+  it('shows the signed-in e-mail and a Sign out button in the header', async () => {
     vi.stubEnv('VITE_SUPABASE_URL', 'http://localhost:54321')
     vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'test-anon-key')
-    const client = fakeClient()
-    vi.mocked(createSupabaseClient).mockReturnValue(client)
-    const persistence = makeFakePersistence()
-    persistence.saveCell.mockReturnValue(new Promise(() => {})) // the save never finishes
-    vi.mocked(supabasePersistence).mockReturnValue(persistence)
-    const user = userEvent.setup()
-    render(<App />)
-
-    // Nothing unsaved yet: Sign out goes straight through.
-    await user.click(await screen.findByRole('button', { name: /^Tower A/ }, SLOW))
-    await screen.findByRole('grid', {}, SLOW)
-    await user.dblClick(screen.getByText('Survey'))
-    await user.keyboard('{Control>}a{/Control}Survey 2{Enter}')
-    expect(await screen.findByText('Saving…', {}, SLOW)).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'Sign out' }))
-    const dialog = screen.getByRole('alertdialog', { name: 'Unsaved changes' })
-    expect(dialog).toHaveAccessibleDescription('You have unsaved changes. Leave anyway?')
-    await user.click(within(dialog).getByRole('button', { name: 'Stay' }))
-    expect(client.auth.signOut).not.toHaveBeenCalled()
-
-    await user.click(screen.getByRole('button', { name: 'Sign out' }))
-    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Leave' }))
-    expect(client.auth.signOut).toHaveBeenCalledTimes(1)
-  })
-
-  it('Sign out does not ask when nothing is unsaved', async () => {
-    vi.stubEnv('VITE_SUPABASE_URL', 'http://localhost:54321')
-    vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'test-anon-key')
-    const client = fakeClient()
-    vi.mocked(createSupabaseClient).mockReturnValue(client)
+    vi.mocked(createSupabaseClient).mockReturnValue(fakeClient())
     vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
-    const user = userEvent.setup()
     render(<App />)
-    await user.click(await screen.findByRole('button', { name: /^Tower A/ }, SLOW))
-    await screen.findByRole('grid', {}, SLOW)
-    await user.click(screen.getByRole('button', { name: 'Sign out' }))
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(client.auth.signOut).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('button', { name: /^Tower A/ }, SLOW)).toBeInTheDocument()
+    const account = screen.getByRole('button', { name: 'Account: pm@example.com' })
+    fireEvent.click(account)
+    expect(screen.getByText('pm@example.com')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 })

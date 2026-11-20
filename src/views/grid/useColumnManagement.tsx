@@ -1,10 +1,13 @@
 import { useState, type ReactNode } from 'react'
-import { columnLock, isPicklistType, validateColumnTitle } from '../../model/columns'
+import { fullOrder } from '../../model/hierarchy'
+import { columnFormulaLock, columnLock, isPicklistType, validateColumnTitle } from '../../model/columns'
+import { columnFormulaText, previewColumnFormula } from '../../formula/sheetFormulas'
 import type { Column } from '../../model/validate'
 import { useSheetStore, useSheetStoreApi } from '../../store/SheetStoreContext'
 import { ConfirmDialog } from '../ConfirmDialog'
 import { InlineRename } from '../InlineRename'
 import { ColumnDialog, type ColumnDialogMode, type ColumnDialogValues } from './ColumnDialog'
+import { ColumnFormulaDialog } from './ColumnFormulaDialog'
 import { ColumnHeaderMenu, type ColumnMenuAction, type ColumnMenuItem } from './ColumnHeaderMenu'
 import './columnMenu.css'
 
@@ -33,6 +36,7 @@ export function useColumnManagement(columns: Column[]): ColumnManagement {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Column | null>(null)
+  const [formulaFor, setFormulaFor] = useState<string | null>(null)
 
   const byId = (id: string) => columns.find((c) => c.id === id)
 
@@ -43,6 +47,12 @@ export function useColumnManagement(columns: Column[]): ColumnManagement {
       { action: 'insertRight', label: 'Insert column right' },
     ]
     if (isPicklistType(col.type)) list.push({ action: 'options', label: 'Edit dropdown options' })
+    list.push({
+      action: 'formula',
+      label: col.formula ? 'Edit column formula' : 'Set column formula',
+      disabledReason: data ? columnFormulaLock(data, col.id) : null,
+    })
+    if (col.formula) list.push({ action: 'clearFormula', label: 'Clear column formula' })
     list.push(
       { action: 'type', label: 'Change column type', disabledReason: data ? columnLock(data, col.id, 'retype') : null },
       { action: 'delete', label: 'Delete column', disabledReason: data ? columnLock(data, col.id, 'delete') : null },
@@ -65,6 +75,12 @@ export function useColumnManagement(columns: Column[]): ColumnManagement {
       case 'type':
         setDialog({ mode: action, colId: col.id })
         break
+      case 'formula':
+        setFormulaFor(col.id)
+        break
+      case 'clearFormula':
+        api.getState().setColumnFormula(col.id, null)
+        break
       case 'delete':
         setPendingDelete(col)
         break
@@ -83,6 +99,7 @@ export function useColumnManagement(columns: Column[]): ColumnManagement {
   }
 
   const dialogColumn = dialog && dialog.mode !== 'add' ? byId(dialog.colId) : undefined
+  const formulaColumn = formulaFor ? byId(formulaFor) : undefined
 
   return {
     menuButton(colId) {
@@ -146,6 +163,26 @@ export function useColumnManagement(columns: Column[]): ColumnManagement {
             initialOptions={dialogColumn?.options}
             onSubmit={(v) => submit(dialog, v)}
             onCancel={() => setDialog(null)}
+          />
+        )}
+        {formulaColumn && (
+          <ColumnFormulaDialog
+            key={formulaColumn.id}
+            columnTitle={formulaColumn.title}
+            initial={columnFormulaText(formulaColumn) ?? ''}
+            previewRowLabel="Row 1 →"
+            preview={(formula) => {
+              const d = api.getState().data
+              const first = d ? fullOrder(d.rows)[0] : undefined // only while the dialog is open
+              return d && first ? previewColumnFormula(d, formulaColumn.id, formula, first) : null
+            }}
+            onSubmit={(formula) => {
+              const res = api.getState().setColumnFormula(formulaColumn.id, formula)
+              if (!res.ok) return res.error
+              setFormulaFor(null)
+              return null
+            }}
+            onCancel={() => setFormulaFor(null)}
           />
         )}
         {pendingDelete && (

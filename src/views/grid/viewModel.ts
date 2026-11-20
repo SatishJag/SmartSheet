@@ -162,9 +162,9 @@ type SortKey = { kind: 0; n: number } | { kind: 1 | 2; s: string }
 function sortKey(col: Column, row: GridRow): SortKey | null {
   let value: unknown = col.role === 'predecessor' ? row.predecessors : row.record.cells[col.id]
   if (row.scheduled && (col.role === 'start' || col.role === 'end')) value = row.scheduled[col.role]
-  // Formula cells sort by their evaluated value (errors by their #ERROR / #CIRCULAR text).
+  // Formula cells sort by their evaluated value (errors by their error name).
   const formula = row.formulaOf?.(col.id)
-  if (formula) value = formula.ok ? (typeof formula.value === 'boolean' ? formulaDisplay(formula) : formula.value) : formula.display
+  if (formula) value = formula.ok ? (typeof formula.value === 'boolean' ? formulaDisplay(formula) : formula.value) : formula.error
   if (col.type === 'CHECKBOX') return { kind: 0, n: value === true ? 1 : 0 }
   if (typeof value === 'number') return Number.isFinite(value) ? { kind: 0, n: value } : null
   const s = toEditString(value).trim()

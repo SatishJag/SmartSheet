@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { StoreApi } from 'zustand/vanilla'
+import { AutomationRuntime } from '../automation/AutomationRuntime'
 import { supabasePersistence } from '../store/persistence'
 import { SheetStoreProvider, useSheetStore, useSheetStoreApi } from '../store/SheetStoreContext'
 import { createSheetStore, type SaveStatus, type SheetState } from '../store/sheetStore'
@@ -13,6 +14,10 @@ import { GanttView } from './gantt/GanttView'
 import { GridView } from './grid/GridView'
 import { SaveStatusBadge } from './grid/SaveStatusBadge'
 import { KanbanView } from './kanban/KanbanView'
+import { DensityProvider, readDensity, saveDensity, type Density } from './density'
+import { Icon, type IconName } from '../ui/Icon'
+import { ResourcesButton } from '../resources/AssignPanel'
+import './sheetView.css'
 
 export interface SheetViewProps {
   client: SupabaseClient
@@ -20,6 +25,8 @@ export interface SheetViewProps {
   userId: string
   sheetId: string
   onBack: () => void
+  /** Opens the "Plan with AI" wizard (it creates a new sheet); the button is hidden when absent. */
+  onPlanWithAI?: () => void
   /** Told whenever the sheet's save status changes (the app guards Sign out with it). */
   onSaveStatusChange?: (status: SaveStatus) => void
   /** A ready-made store (tests); by default one is created over Supabase persistence. */
@@ -36,7 +43,7 @@ export function SheetView(props: SheetViewProps) {
   return <SheetViewForSheet key={props.sheetId} {...props} />
 }
 
-function SheetViewForSheet({ client, userId, sheetId, onBack, onSaveStatusChange, store: given }: SheetViewProps) {
+function SheetViewForSheet({ client, userId, sheetId, onBack, onPlanWithAI, onSaveStatusChange, store: given }: SheetViewProps) {
   // Created once per mounted sheet; useState's initializer is safe under StrictMode.
   const [store] = useState(() => given ?? createSheetStore(supabasePersistence(client)))
   const loadStarted = useRef(false)
@@ -49,7 +56,8 @@ function SheetViewForSheet({ client, userId, sheetId, onBack, onSaveStatusChange
 
   return (
     <SheetStoreProvider store={store}>
-      <SheetContent client={client} userId={userId} sheetId={sheetId} onBack={onBack} onSaveStatusChange={onSaveStatusChange} />
+      <AutomationRuntime client={client} />
+      <SheetContent client={client} userId={userId} sheetId={sheetId} onBack={onBack} onPlanWithAI={onPlanWithAI} onSaveStatusChange={onSaveStatusChange} />
     </SheetStoreProvider>
   )
 }
@@ -57,17 +65,18 @@ function SheetViewForSheet({ client, userId, sheetId, onBack, onSaveStatusChange
 interface SheetTab {
   id: string
   label: string
+  icon: IconName
   render(): ReactNode
 }
 
 /** The sheet's views, in tab order. Only the active one is mounted; the store keeps the data. */
 const SHEET_TABS: readonly SheetTab[] = [
-  { id: 'grid', label: 'Grid', render: () => <GridView /> },
-  { id: 'gantt', label: 'Gantt', render: () => <GanttView /> },
-  { id: 'kanban', label: 'Kanban', render: () => <KanbanView /> },
+  { id: 'grid', label: 'Grid', icon: 'sheet', render: () => <GridView /> },
+  { id: 'gantt', label: 'Gantt', icon: 'gantt', render: () => <GanttView /> },
+  { id: 'kanban', label: 'Kanban', icon: 'rows', render: () => <KanbanView /> },
 ]
 
-function SheetTabs() {
+function SheetTabs({ tools }: { tools?: ReactNode }) {
   const [activeId, setActiveId] = useState(SHEET_TABS[0].id)
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const baseId = useId()
@@ -87,7 +96,8 @@ function SheetTabs() {
 
   return (
     <>
-      <div role="tablist" aria-label="Sheet views" className="sheet-tabs" onKeyDown={onKeyDown}>
+      <div className="sheet-toolbar">
+      <div role="tablist" aria-label="Sheet views" className="sheet-tabs segmented" onKeyDown={onKeyDown}>
         {SHEET_TABS.map((t) => (
           <button
             key={t.id}
@@ -104,9 +114,13 @@ function SheetTabs() {
             className={t.id === active.id ? 'sheet-tab is-active' : 'sheet-tab'}
             onClick={() => setActiveId(t.id)}
           >
+            <Icon name={t.icon} size={16} />
             {t.label}
           </button>
         ))}
+      </div>
+      {tools && <span className="toolbar-sep" aria-hidden="true" />}
+      {tools}
       </div>
       <div role="tabpanel" id={`${baseId}-panel`} aria-labelledby={`${baseId}-tab-${active.id}`} className="sheet-tabpanel">
         {active.render()}
@@ -210,13 +224,29 @@ function SheetName({ client, sheetId, name, canRename }: { client: SupabaseClien
     <InlineRename initial={name} onSave={save} onCancel={() => setEditing(false)} />
   ) : (
     <>
-      <h2>{name}</h2>
+      <h2 className="sheet-title">{name}</h2>
       {canRename && (
-        <button type="button" aria-label="Rename sheet" onClick={() => setEditing(true)}>
-          Rename
+        <button type="button" className="btn-icon" aria-label="Rename sheet" title="Rename sheet" onClick={() => setEditing(true)}>
+          <Icon name="pencil" size={16} />
         </button>
       )}
     </>
+  )
+}
+
+/** Row density switch: Compact (default, dense working views) or Comfortable; remembered per browser. */
+function DensityToggle({ density, onChange }: { density: Density; onChange: (d: Density) => void }) {
+  return (
+    <div role="group" aria-label="Row density" className="segmented segmented-sm density-toggle">
+      <button type="button" aria-label="Compact" aria-pressed={density === 'compact'} title="Compact rows (denser)" onClick={() => onChange('compact')}>
+        <Icon name="rowsTight" size={15} />
+        <span className="hide-sm">Compact</span>
+      </button>
+      <button type="button" aria-label="Comfortable" aria-pressed={density === 'comfortable'} title="Comfortable rows (more space)" onClick={() => onChange('comfortable')}>
+        <Icon name="rows" size={15} />
+        <span className="hide-sm">Comfortable</span>
+      </button>
+    </div>
   )
 }
 
@@ -225,12 +255,14 @@ function SheetContent({
   userId,
   sheetId,
   onBack,
+  onPlanWithAI,
   onSaveStatusChange,
 }: {
   client: SupabaseClient
   userId: string
   sheetId: string
   onBack: () => void
+  onPlanWithAI?: () => void
   onSaveStatusChange?: (status: SaveStatus) => void
 }) {
   const data = useSheetStore((s) => s.data)
@@ -241,9 +273,14 @@ function SheetContent({
   const role = useSheetRole(client, userId, sheetId)
   const [showCritical, setShowCritical] = useState(false)
   const dependenciesOn = data?.sheet.dependenciesEnabled ?? false
+  const [density, setDensity] = useState<Density>(readDensity)
+  const changeDensity = (d: Density) => {
+    setDensity(d)
+    saveDensity(d)
+  }
 
   return (
-    <section className="sheet-view">
+    <section className="sheet-view" data-density={density}>
       {confirmBack && (
         <ConfirmDialog
           title="Unsaved changes"
@@ -259,44 +296,80 @@ function SheetContent({
       )}
       {sharing && data && <ShareDialog client={client} sheetId={sheetId} sheetName={data.sheet.name} onClose={() => setSharing(false)} />}
       <header className="sheet-view-header">
-        <button type="button" onClick={() => (status === 'saved' ? onBack() : setConfirmBack(true))}>
-          Back to sheets
-        </button>
-        {data && <SheetName client={client} sheetId={sheetId} name={data.sheet.name} canRename={role === 'owner'} />}
-        {/* Sheet settings live on the sheets row, which only the owner may change. */}
-        {data && role === 'owner' && <ScheduleSettingsButton />}
+        <nav aria-label="Breadcrumb" className="breadcrumb">
+          <button
+            type="button"
+            className="crumb-link"
+            aria-label="Back to sheets"
+            onClick={() => (status === 'saved' ? onBack() : setConfirmBack(true))}
+          >
+            <Icon name="back" size={16} />
+            Sheets
+          </button>
+          {data && (
+            <>
+              <Icon name="chevron" size={14} className="crumb-sep" />
+              <SheetName client={client} sheetId={sheetId} name={data.sheet.name} canRename={role === 'owner'} />
+            </>
+          )}
+        </nav>
+        {role === 'viewer' && <span className="role-badge">View only</span>}
+        {role === 'editor' && <span className="role-badge">Shared with you · can edit</span>}
+        <span className="spacer" />
+        {data && <SaveStatusBadge />}
         {role === 'owner' && (
-          <button type="button" onClick={() => setSharing(true)}>
+          <button type="button" className="btn" onClick={() => setSharing(true)}>
             Share
           </button>
         )}
-        {role === 'viewer' && <span className="role-badge">View only</span>}
-        {role === 'editor' && <span className="role-badge">Shared with you · can edit</span>}
-                {data && (
-          <label
-            className="critical-toggle"
-            title={dependenciesOn ? undefined : 'Turn on dependencies in Schedule settings to see the critical path'}
-          >
-            <input
-              type="checkbox"
-              checked={showCritical && dependenciesOn}
-              disabled={!dependenciesOn}
-              onChange={(e) => setShowCritical(e.currentTarget.checked)}
-            />{' '}
-            Critical path
-          </label>
-        )}
-        <span className="spacer" />
-        {data && <SaveStatusBadge />}
       </header>
       {loadError ? (
         <p role="alert">Could not load the sheet: {loadError}</p>
       ) : data ? (
-        <ShowCriticalPathProvider value={showCritical && dependenciesOn}>
-          <SheetTabs />
-        </ShowCriticalPathProvider>
+        <DensityProvider value={density}>
+          <ShowCriticalPathProvider value={showCritical && dependenciesOn}>
+            <SheetTabs
+              tools={
+                <>
+                  {/* Sheet settings live on the sheets row, which only the owner may change. */}
+                  {role === 'owner' && <ScheduleSettingsButton />}
+                  {onPlanWithAI && (
+                    <button type="button" className="btn" onClick={onPlanWithAI} title="Draft a new schedule from history, worked back from your required dates">
+                      <Icon name="sparkles" size={16} />
+                      Plan with AI
+                    </button>
+                  )}
+                  <ResourcesButton client={client} sheetId={sheetId} />
+                  <label
+                    className="switch"
+                    title={dependenciesOn ? undefined : 'Turn on dependencies in Schedule settings to see the critical path'}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showCritical && dependenciesOn}
+                      disabled={!dependenciesOn}
+                      onChange={(e) => setShowCritical(e.currentTarget.checked)}
+                    />
+                    <span className="switch-track" aria-hidden="true" />
+                    Critical path
+                  </label>
+                  <span className="spacer" />
+                  <DensityToggle density={density} onChange={changeDensity} />
+                </>
+              }
+            />
+          </ShowCriticalPathProvider>
+        </DensityProvider>
       ) : (
-        <p>Loading sheet…</p>
+        <div className="sheet-loading" aria-busy="true">
+          <p className="visually-hidden">Loading sheet…</p>
+          <div aria-hidden="true">
+            <span className="skeleton skeleton-bar" />
+            {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+              <span key={i} className="skeleton skeleton-row" style={{ width: `${96 - i * 4}%` }} />
+            ))}
+          </div>
+        </div>
       )}
     </section>
   )

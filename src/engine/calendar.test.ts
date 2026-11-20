@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { addWorkingDays, defaultCalendar, isWorkingDay, nextWorkingDay, previousWorkingDay } from './calendar'
+import { addWorkingDays, defaultCalendar, isWorkingDay, nextWorkingDay, previousWorkingDay, workingDaysBetween } from './calendar'
 
 describe('calendar', () => {
   it('detects weekends as non-working', () => {
@@ -43,5 +43,17 @@ describe('previousWorkingDay', () => {
     expect(previousWorkingDay(defaultCalendar, '2026-11-15')).toBe('2026-11-13') // Sunday
     const cal = { ...defaultCalendar, nonWorkingDates: ['2026-11-13'] }
     expect(previousWorkingDay(cal, '2026-11-15')).toBe('2026-11-12')
+  })
+})
+
+describe('workingDaysBetween', () => {
+  it('counts working days in (from, to], negative backwards, zero for the same day', () => {
+    expect(workingDaysBetween(defaultCalendar, '2026-11-09', '2026-11-09')).toBe(0)
+    expect(workingDaysBetween(defaultCalendar, '2026-11-09', '2026-11-13')).toBe(4) // Mon -> Fri
+    expect(workingDaysBetween(defaultCalendar, '2026-11-13', '2026-11-16')).toBe(1) // Fri -> Mon skips the weekend
+    expect(workingDaysBetween(defaultCalendar, '2026-11-16', '2026-11-13')).toBe(-1)
+    expect(workingDaysBetween(defaultCalendar, '2026-11-14', '2026-11-15')).toBe(0) // Sat -> Sun
+    const cal = { ...defaultCalendar, nonWorkingDates: ['2026-11-12'] }
+    expect(workingDaysBetween(cal, '2026-11-11', '2026-11-13')).toBe(1)
   })
 })

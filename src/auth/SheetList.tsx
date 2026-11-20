@@ -6,6 +6,9 @@ import { insertSheetData, insertSheetFromTemplate } from '../templates/insertTem
 import { fetchAllPages } from '../store/paging'
 import { ConfirmDialog } from '../views/ConfirmDialog'
 import { InlineRename } from '../views/InlineRename'
+import { PlannerWizard } from '../planner/PlannerWizard'
+import { Icon, type IconName } from '../ui/Icon'
+import './sheetList.css'
 
 interface SheetRow {
   id: string
@@ -18,9 +21,18 @@ interface SheetListProps {
   client: SupabaseClient
   userId: string
   onOpen: (sheetId: string) => void
-  /** Opens the app-template gallery. */
+  /** Opens the app-template gallery (Construction, Data Center, Real Estate, Fit-Out). */
   onCreateApp?: () => void
 }
+
+const TEMPLATE_ICONS: Record<TemplateId, IconName> = {
+  'project-schedule': 'gantt',
+  'punch-list': 'checklist',
+  'simple-list': 'list',
+}
+
+const formatDate = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 
 const message = (err: unknown, fallback: string) => (err instanceof Error ? err.message : fallback)
 
@@ -31,9 +43,11 @@ export function SheetList({ client, userId, onOpen, onCreateApp }: SheetListProp
   const [templateId, setTemplateId] = useState<TemplateId>(DEFAULT_TEMPLATE_ID)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<SheetRow | null>(null)
+  const [planning, setPlanning] = useState(false)
   const inFlight = useRef(false)
   const active = useRef(true)
-  const templateSelectId = useId()
+  const templateGroupId = useId()
+  const aiDescId = useId()
   const importInputId = useId()
 
   /** Loads the whole list (paged: Supabase returns at most 1000 rows per request). */
@@ -119,79 +133,181 @@ export function SheetList({ client, userId, onOpen, onCreateApp }: SheetListProp
           onCancel={() => setDeleting(null)}
         />
       )}
-      <div className="sheet-list-header">
+      <div className="page-intro">
         <h2>Your sheets</h2>
-        <div className="sheet-list-new">
-          <label htmlFor={templateSelectId}>Template</label>
-          <select
-            id={templateSelectId}
-            value={templateId}
-            onChange={(e) => setTemplateId(e.target.value as TemplateId)}
-            disabled={creating}
-          >
-            {TEMPLATES.map((t) => (
-              <option key={t.id} value={t.id} title={t.description}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-          <button type="button" onClick={createSheet} disabled={creating}>
-            New sheet
-          </button>
-          <label htmlFor={importInputId}>Import CSV</label>
-          <input
-            id={importInputId}
-            type="file"
-            accept=".csv,text/csv"
-            disabled={creating}
-            onChange={(e) => {
-              void importCsv(e.target.files?.[0])
-              e.target.value = '' // lets the same file be chosen again after a failure
-            }}
-          />
-          {onCreateApp && (
-            <button type="button" className="sheet-list-create-app" onClick={onCreateApp} disabled={creating}>
-              Create app from template
-            </button>
-          )}
-        </div>
+        <p>Schedules, punch lists and trackers for your projects, all in one place.</p>
       </div>
-      {error && <p role="alert">{error}</p>}
-      {sheets === null && !error && <p>Loading sheets...</p>}
-      {sheets !== null && sheets.length === 0 && <p>No sheets yet</p>}
-      {sheets !== null && sheets.length > 0 && (
-        <ul>
-          {sheets.map((sheet) => (
-            <li key={sheet.id} className="sheet-list-row">
-              {renamingId === sheet.id ? (
-                <InlineRename
-                  initial={sheet.name}
-                  onSave={(name) => rename(sheet.id, name)}
-                  onCancel={() => setRenamingId(null)}
+
+      <div className="create-panel">
+        <div className="create-templates">
+          <h3 id={templateGroupId}>Template</h3>
+          <div role="radiogroup" aria-labelledby={templateGroupId} className="template-grid">
+            {TEMPLATES.map((t) => (
+              <label key={t.id} className={`template-card lift${t.id === templateId ? ' is-selected' : ''}`}>
+                <input
+                  type="radio"
+                  name="sheet-template"
+                  value={t.id}
+                  checked={t.id === templateId}
+                  disabled={creating}
+                  aria-labelledby={`${templateGroupId}-${t.id}-name`}
+                  aria-describedby={`${templateGroupId}-${t.id}-desc`}
+                  onChange={() => setTemplateId(t.id)}
                 />
-              ) : (
-                <button type="button" className="sheet-item" onClick={() => onOpen(sheet.id)}>
-                  <span>{sheet.name}</span>
-                  <small>
-                    {sheet.owner_id !== userId && 'Shared with you · '}
-                    {new Date(sheet.created_at).toLocaleDateString()}
-                  </small>
-                </button>
-              )}
-              {/* Only the owner can rename or delete a sheet. */}
-              {sheet.owner_id === userId && (
-                <>
-                  <button type="button" aria-label={`Rename ${sheet.name}`} onClick={() => setRenamingId(sheet.id)}>
-                    Rename
-                  </button>
-                  <button type="button" aria-label={`Delete ${sheet.name}`} onClick={() => setDeleting(sheet)}>
-                    Delete
-                  </button>
-                </>
-              )}
-            </li>
+                <span className="template-icon pop-icon">
+                  <Icon name={TEMPLATE_ICONS[t.id]} size={22} />
+                </span>
+                <span className="template-text">
+                  <span id={`${templateGroupId}-${t.id}-name`} className="template-name">
+                    {t.name}
+                  </span>
+                  <span id={`${templateGroupId}-${t.id}-desc`} className="template-desc">
+                    {t.description}
+                  </span>
+                </span>
+                <span className="template-check" aria-hidden="true">
+                  <Icon name="check" size={14} strokeWidth={3} />
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="create-actions">
+            <button type="button" className="btn btn-primary" onClick={createSheet} disabled={creating}>
+              <Icon name="plus" size={18} />
+              New sheet
+            </button>
+            <label htmlFor={importInputId} className={`btn btn-ghost${creating ? ' is-disabled' : ''}`}>
+              Import CSV
+            </label>
+            <input
+              id={importInputId}
+              className="visually-hidden"
+              type="file"
+              accept=".csv,text/csv"
+              disabled={creating}
+              onChange={(e) => {
+                void importCsv(e.target.files?.[0])
+                e.target.value = '' // lets the same file be chosen again after a failure
+              }}
+            />
+            {onCreateApp && (
+              <button type="button" className="btn btn-ghost sheet-list-create-app" onClick={onCreateApp} disabled={creating}>
+                Create app from template
+              </button>
+            )}
+            <span className="create-hint">Creates a sheet from the selected template, or from a CSV file.</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          className="ai-card lift"
+          aria-label="Plan with AI"
+          aria-describedby={aiDescId}
+          onClick={() => setPlanning(true)}
+          disabled={creating}
+        >
+          <span className="ai-icon pop-icon">
+            <Icon name="sparkles" size={24} />
+          </span>
+          <span className="ai-title" aria-hidden="true">
+            Plan with AI
+          </span>
+          <span id={aiDescId} className="ai-desc">
+            Describe your project and get a phased, dependency-linked schedule you can edit.
+          </span>
+          <span className="ai-go" aria-hidden="true">
+            Start planning <Icon name="arrow" size={16} />
+          </span>
+        </button>
+      </div>
+
+      {planning && (
+        <PlannerWizard
+          client={client}
+          userId={userId}
+          onClose={() => setPlanning(false)}
+          onCreated={(sheetId) => {
+            setPlanning(false)
+            onOpen(sheetId)
+          }}
+        />
+      )}
+      {error && <p role="alert" className="list-error">{error}</p>}
+      {sheets === null && !error && (
+        <div className="sheet-grid" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="sheet-card skeleton-card">
+              <span className="skeleton skeleton-icon" />
+              <span className="skeleton skeleton-line" />
+              <span className="skeleton skeleton-line is-short" />
+            </div>
           ))}
-        </ul>
+        </div>
+      )}
+      {sheets === null && !error && <p className="visually-hidden">Loading sheets...</p>}
+      {sheets !== null && sheets.length === 0 && (
+        <div className="empty-state">
+          <span className="empty-icon">
+            <Icon name="sheet" size={28} />
+          </span>
+          <p className="empty-title">No sheets yet</p>
+          <p className="empty-text">Pick a template above and choose New sheet, or let AI draft a schedule for you.</p>
+        </div>
+      )}
+      {sheets !== null && sheets.length > 0 && (
+        <>
+          <h3 className="list-heading">
+            Recent <span className="chip">{sheets.length}</span>
+          </h3>
+          <ul className="sheet-grid">
+            {sheets.map((sheet) => (
+              <li key={sheet.id} className="sheet-card card lift">
+                {renamingId === sheet.id ? (
+                  <div className="sheet-card-rename">
+                    <InlineRename
+                      initial={sheet.name}
+                      onSave={(name) => rename(sheet.id, name)}
+                      onCancel={() => setRenamingId(null)}
+                    />
+                  </div>
+                ) : (
+                  <button type="button" className="sheet-item" onClick={() => onOpen(sheet.id)}>
+                    <span className="sheet-icon pop-icon">
+                      <Icon name="sheet" size={22} />
+                    </span>
+                    <span className="sheet-name">{sheet.name}</span>
+                    <small className="sheet-date">
+                      {sheet.owner_id !== userId && 'Shared with you · '}Created {formatDate(sheet.created_at)}
+                    </small>
+                  </button>
+                )}
+                {/* Only the owner can rename or delete a sheet. */}
+                {sheet.owner_id === userId && (
+                <div className="sheet-actions">
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    aria-label={`Rename ${sheet.name}`}
+                    title="Rename"
+                    onClick={() => setRenamingId(sheet.id)}
+                  >
+                    <Icon name="pencil" size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-icon is-danger"
+                    aria-label={`Delete ${sheet.name}`}
+                    title="Delete"
+                    onClick={() => setDeleting(sheet)}
+                  >
+                    <Icon name="trash" size={17} />
+                  </button>
+                </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   )
