@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { createScheduleSheet, openApp } from './support/app'
+import { createScheduleSheet, openApp, signIn, signOut, signUp, USER_A, USER_B } from './support/app'
 
 /**
  * The WhatsApp page against the fake backend. The planning server's /api/whatsapp/* endpoints are
@@ -131,4 +131,26 @@ test('turn on WhatsApp alerts for a sheet; settings persist; rules can also send
   await expect(form.getByTestId('rule-summary')).toContainText('notify me (in the app), also on WhatsApp.')
   await form.getByRole('button', { name: 'Save rule' }).click()
   await expect(page.getByRole('list', { name: 'Rules' }).getByText('also on WhatsApp')).toBeVisible()
+})
+
+test('a sheet shared with you is used from WhatsApp, but its alerts are its owner’s', async ({ page }) => {
+  await stubServer(page)
+  await signUp(page, USER_B)
+  await signOut(page)
+  await signUp(page, USER_A)
+  await createScheduleSheet(page)
+  await page.getByRole('button', { name: 'Share', exact: true }).click()
+  await page.getByRole('dialog').getByLabel('Email').fill(USER_B.email)
+  await page.getByRole('dialog').getByRole('button', { name: 'Share', exact: true }).click()
+  await expect(page.getByLabel(`Role for ${USER_B.email}`)).toHaveValue('viewer')
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Back to sheets' }).click()
+  await signOut(page)
+
+  await signIn(page, USER_B)
+  await goTo(page, 'WhatsApp')
+  await page.getByRole('tab', { name: 'Sheet alerts' }).click()
+  await expect(page.getByRole('heading', { name: 'No sheets of your own yet' })).toBeVisible()
+  await expect(page.getByText('1 sheet is shared with you: their owners set their alerts.', { exact: false })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'WhatsApp alerts for this sheet' })).toHaveCount(0)
 })

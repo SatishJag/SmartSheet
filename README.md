@@ -69,7 +69,7 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
   - *My Work*: the signed-in user's assignments (matched by email)
 - **Saving**: optimistic edits, background save with retry, unsaved-changes guard
 - **WhatsApp assistant** (WhatsApp page): link your phone with a one-time code, then on WhatsApp pick
-  a project and use the menu (delayed, due in 30 days, at risk / on track, critical path, milestones,
+  a project (your own or one shared with you: editors can update, viewers only look) and use the menu (delayed, due in 30 days, at risk / on track, critical path, milestones,
   delay reminders to task owners, summary), see a task with `#N`, update it with `N Complete`,
   `N 60%` or `N In progress - note`, get the full list by e-mail, or ask a question in your own words
   (Claude answers from the sheet's data only). Per sheet: delay alerts to task owners, progress

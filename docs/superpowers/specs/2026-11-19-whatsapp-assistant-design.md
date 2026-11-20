@@ -44,20 +44,30 @@ any account can turn on, with the planner's own data, access rules and server.
 
 ## Who is on WhatsApp
 
-1. **Planner users.** In the app (WhatsApp section) a signed-in user asks for a link code (anonymous
-   accounts too: this branch signs visitors in anonymously, and linking cannot reach strangers). The app shows a `wa.me` link with `LINK <code>` prefilled; sending it from the phone binds the
+1. **Planner users.** In the app (WhatsApp section) a signed-in user asks for a link code. The app shows a `wa.me` link with `LINK <code>` prefilled; sending it from the phone binds the
    phone to the account. Proof of ownership, opt-in and the opening of WhatsApp's 24-hour service
-   window happen in one step, and no message template is needed. Linked users get the full menu over
-   the sheets they own, alerts, summaries, and may update tasks.
+   window happen in one step, and no message template is needed. Linked users get the menu over the
+   sheets they own and the sheets shared with them, alerts and summaries for their own sheets, and
+   may update tasks where they are owner or editor.
 2. **Site contacts (no planner account)** — subcontractors, foremen. The sheet owner adds a contact
    (name, the e-mail used in the sheet's Contact columns, phone). The app gives a join link
    (`JOIN <code>`) the owner forwards; when the contact sends it the contact becomes active. An active
    contact receives delay alerts and nudges for tasks where their e-mail is in the task-owner column,
    and can list and update only those tasks, in that owner's sheets. Nothing else.
 
-Access: this branch has owner-only sheets (no sharing), so a linked user's sheets are the sheets they
-own. All access decisions go through one function (`server/whatsapp/access.ts`) so sheet sharing, when
-merged, changes one place.
+Access follows sheet sharing (0017_sharing), through `roleOf` / `canTouch` in
+`server/whatsapp/conversation.ts`:
+
+| Who | Menu, lists, details, questions | Update tasks | Send delay reminders (6) | Alerts and summary settings |
+| --- | --- | --- | --- | --- |
+| Owner | yes | yes | yes | yes (WhatsApp page) |
+| Editor | yes | yes | yes | no (owner's) |
+| Viewer | yes | only tasks whose owner column holds their e-mail | no | no |
+| Site contact | their own tasks | their own tasks | no | no |
+
+Removing someone from a sheet takes effect on their next message: the sheet leaves their picker and
+lists from it no longer open. Messages to an editor or viewer count against their own account's
+daily cap; a non-owner's update is reported to the owner in the app.
 
 ## Columns
 

@@ -467,3 +467,100 @@ describe('provider helpers', () => {
     expect(verifySignature(raw, 'sha256=zz', 's')).toBe(false)
   })
 })
+
+describe('shared sheets (0017_sharing)', () => {
+  const EDITOR = 'u-editor'
+  const VIEWER = 'u-viewer'
+  const EDITOR_PHONE = '971500000020'
+  const VIEWER_PHONE = '971500000021'
+
+  function shared() {
+    const ctx = setup()
+    ctx.store.state.accounts.set(EDITOR, { email: 'qs@builder.example', anonymous: false })
+    ctx.store.state.accounts.set(VIEWER, { email: 'client@owner.example', anonymous: false })
+    ctx.store.state.links.push({ userId: EDITOR, email: 'qs@builder.example', phone: EDITOR_PHONE }, { userId: VIEWER, email: 'client@owner.example', phone: VIEWER_PHONE })
+    ctx.store.state.members.push({ sheetId: 'sheet-wa', userId: EDITOR, role: 'editor' }, { sheetId: 'sheet-wa', userId: VIEWER, role: 'viewer' })
+    return ctx
+  }
+
+  it('an editor gets the full menu of a shared sheet and can update its tasks; the owner is told', async () => {
+    const { store, say, cell } = shared()
+    const menu = await say(EDITOR_PHONE, 'menu')
+    expect(menu).toContain('*Tower A* _(shared with you)_')
+    expect(menu).toContain('*6*')
+    expect(await say(EDITOR_PHONE, '1')).toContain('Update one: reply with its number')
+    expect(await say(EDITOR_PHONE, '1 Complete - delivered today')).toContain('Row 4 *Rebar delivery*')
+    expect(cell('r-rebar', WCOL.status)).toBe('Complete')
+    expect(store.state.inApp.at(-1)).toMatchObject({ ownerId: OWNER, title: 'qs@builder.example updated “Rebar delivery” on WhatsApp' })
+    expect(await say(EDITOR_PHONE, '6')).toContain('Delay reminders — Tower A')
+  })
+
+  it('a viewer can browse, see details and ask, but not update or send reminders', async () => {
+    const { say, cell } = shared()
+    const menu = await say(VIEWER_PHONE, 'hi')
+    expect(menu).toContain('_(shared with you · view only)_')
+    expect(menu).not.toContain('*6*')
+    const list = await say(VIEWER_PHONE, '1')
+    expect(list).toContain('*1.* Rebar delivery')
+    expect(list).not.toContain('Update one')
+    expect(await say(VIEWER_PHONE, '#2')).toContain('*Pour slab L1*')
+    expect(await say(VIEWER_PHONE, '1 Complete')).toBe('This sheet is shared with you to view only, so you cannot change its tasks.')
+    expect(cell('r-rebar', WCOL.status)).toBe('Not started')
+    expect(await say(VIEWER_PHONE, '6')).toContain('view only')
+  })
+
+  it('a viewer who owns a task (their e-mail in the owner column) may still update that task', async () => {
+    const { store, say, cell } = shared()
+    store.state.links = store.state.links.map((l) => (l.userId === VIEWER ? { ...l, email: MEENA } : l))
+    await say(VIEWER_PHONE, 'menu')
+    await say(VIEWER_PHONE, '1')
+    expect(await say(VIEWER_PHONE, '1 60%')).toContain('60% complete')
+    expect(cell('r-rebar', WCOL.percent)).toBe(60)
+    expect(await say(VIEWER_PHONE, '2 Complete')).toContain('view only') // the slab is Ravi's
+  })
+
+  it('lists own and shared sheets in the picker, and forgets a sheet whose access was removed', async () => {
+    const { store, say } = shared()
+    const own = waSheet()
+    store.state.sheets.set('sheet-own', { ...own, sheet: { ...own.sheet, id: 'sheet-own', name: 'Villa B', ownerId: EDITOR }, rows: [] })
+    const pick = await say(EDITOR_PHONE, 'menu')
+    expect(pick).toContain('*1* Villa B\n*2* Tower A _(shared)_')
+    expect(await say(EDITOR_PHONE, '2')).toContain('*Tower A* _(shared with you)_')
+    expect(await say(EDITOR_PHONE, '1')).toContain('Rebar delivery')
+    store.state.members = store.state.members.filter((m) => m.userId !== EDITOR)
+    // The list from the shared sheet no longer opens, and the sheet itself is forgotten.
+    expect(await say(EDITOR_PHONE, '#1')).toBe('That task is not one of yours.')
+    expect(await say(EDITOR_PHONE, '1 Complete')).toBe('You can only update tasks you are responsible for.')
+    expect(await say(EDITOR_PHONE, '1')).toContain('*Villa B — Delayed*') // the only sheet left opens
+  })
+})
+
+describe('the Supabase store reads roles and shared sheets like 0017_sharing', () => {
+  it('lists own then shared sheets with the role, and answers sheetRole', async () => {
+    const { createFakeSupabase } = await import('../../e2e/support/fakeSupabase')
+    const { createSupabaseWhatsAppStore } = await import('./store')
+    const data = new Map<string, string>()
+    const storage = { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) }
+    const user = createFakeSupabase({ storage })
+    const b = (await user.auth.signUp({ email: 'b@example.com', password: 'pw-b-123456' })).data.user!.id
+    await user.auth.signOut()
+    const a = (await user.auth.signUp({ email: 'a@example.com', password: 'pw-a-123456' })).data.user!.id
+    const sheet = ((await user.from('sheets').insert({ name: 'Tower A' }).select('id').single()).data as { id: string }).id
+    const other = ((await user.from('sheets').insert({ name: 'Private' }).select('id').single()).data as { id: string }).id
+    expect((await user.rpc('share_sheet', { p_sheet: sheet, p_email: 'b@example.com', p_role: 'editor' })).error).toBeNull()
+    await user.auth.signOut()
+    await user.auth.signInWithPassword({ email: 'b@example.com', password: 'pw-b-123456' })
+    const mine = ((await user.from('sheets').insert({ name: 'B own' }).select('id').single()).data as { id: string }).id
+
+    const store = createSupabaseWhatsAppStore(createFakeSupabase({ storage, serviceRole: true }) as never)
+    expect(await store.accessibleSheets(b, 10)).toEqual([
+      { id: mine, name: 'B own', role: 'owner' },
+      { id: sheet, name: 'Tower A', role: 'editor' },
+    ])
+    expect(await store.sheetRole(b, sheet)).toBe('editor')
+    expect(await store.sheetRole(b, other)).toBeNull()
+    expect(await store.sheetRole(a, sheet)).toBe('owner')
+    expect(await store.sheetRole(b, mine)).toBe('owner')
+    expect((await store.accessibleSheets(a, 10)).map((s) => s.name).sort()).toEqual(['Private', 'Tower A'])
+  })
+})

@@ -7,6 +7,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabasePersistence, type SheetData } from '../../src/store/persistence'
 
+export type SheetRole = 'owner' | 'editor' | 'viewer'
+
 export type MessageKind = 'reply' | 'alert' | 'nudge' | 'summary' | 'rule' | 'system'
 export type Priority = 'HIGH' | 'MEDIUM' | 'LOW'
 export type MessageStatus = 'pending' | 'sent' | 'simulated' | 'failed' | 'skipped'
@@ -154,6 +156,10 @@ export interface WhatsAppStore {
   outboundSince(phone: string, sinceMs: number): Promise<{ id: string; body: string; status: string; createdAt: number }[]>
 
   ownedSheets(userId: string, limit: number): Promise<{ id: string; name: string }[]>
+  /** The sheets a planner user can open: their own (newest first), then those shared with them (0017_sharing). */
+  accessibleSheets(userId: string, limit: number): Promise<{ id: string; name: string; role: SheetRole }[]>
+  /** The user's role on a sheet, as sheet_role() in 0017_sharing.sql decides it; null for no access. */
+  sheetRole(userId: string, sheetId: string): Promise<SheetRole | null>
   sheetMeta(sheetId: string): Promise<{ id: string; name: string; ownerId: string } | null>
   loadSheet(sheetId: string): Promise<SheetData | null>
   settings(sheetId: string): Promise<SheetSettings | null>
@@ -402,6 +408,29 @@ export function createSupabaseWhatsAppStore(db: SupabaseClient): WhatsAppStore {
     async ownedSheets(userId, limit) {
       const rows = must(await db.from('sheets').select('id, name').eq('owner_id', userId).order('created_at', { ascending: false }).range(0, limit - 1), 'owned sheets') as { id: string; name: string }[]
       return rows
+    },
+    async accessibleSheets(userId, limit) {
+      const mine = must(await db.from('sheets').select('id, name').eq('owner_id', userId).order('created_at', { ascending: false }).range(0, limit - 1), 'owned sheets') as { id: string; name: string }[]
+      const owned = mine.map((s) => ({ ...s, role: 'owner' as const }))
+      if (owned.length >= limit) return owned
+      const members = must(
+        await db.from('sheet_members').select('sheet_id, role').eq('user_id', userId).order('created_at', { ascending: false }).range(0, 199),
+        'memberships',
+      ) as { sheet_id: string; role: string }[]
+      if (members.length === 0) return owned
+      const names = must(await db.from('sheets').select('id, name').in('id', members.map((m) => m.sheet_id)).range(0, 199), 'shared sheets') as { id: string; name: string }[]
+      const nameOf = new Map(names.map((n) => [n.id, n.name]))
+      const shared = members
+        .filter((m) => nameOf.has(m.sheet_id))
+        .map((m) => ({ id: m.sheet_id, name: nameOf.get(m.sheet_id)!, role: (m.role === 'editor' ? 'editor' : 'viewer') as SheetRole }))
+      return [...owned, ...shared].slice(0, limit)
+    },
+    async sheetRole(userId, sheetId) {
+      const sheet = must(await db.from('sheets').select('owner_id').eq('id', sheetId).range(0, 0), 'sheet owner') as { owner_id: string }[]
+      if (sheet.length === 0) return null
+      if (sheet[0].owner_id === userId) return 'owner'
+      const m = must(await db.from('sheet_members').select('role').eq('sheet_id', sheetId).eq('user_id', userId).range(0, 0), 'membership') as { role: string }[]
+      return m.length === 0 ? null : m[0].role === 'editor' ? 'editor' : 'viewer'
     },
     async sheetMeta(sheetId) {
       const rows = must(await db.from('sheets').select('id, name, owner_id').eq('id', sheetId).range(0, 0), 'sheet') as { id: string; name: string; owner_id: string }[]

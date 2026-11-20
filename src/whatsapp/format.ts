@@ -44,9 +44,9 @@ export function listMessage(title: string, tasks: TaskFact[], opts: { canUpdate:
   return lines.join('\n')
 }
 
-export function menuMessage(sheetName: string, c: MenuCounts, opts: { canNotifyOwners: boolean }): string {
+export function menuMessage(sheetName: string, c: MenuCounts, opts: { canNotifyOwners: boolean; access?: 'editor' | 'viewer' }): string {
   const lines = [
-    `📋 *${sheetName}*`,
+    `📋 *${sheetName}*${opts.access === 'viewer' ? ' _(shared with you · view only)_' : opts.access === 'editor' ? ' _(shared with you)_' : ''}`,
     `${plural(c.total, 'task')} · ${c.complete} complete`,
     '',
     `*1* 🔴 Delayed: ${c.delayed}`,
@@ -60,9 +60,9 @@ export function menuMessage(sheetName: string, c: MenuCounts, opts: { canNotifyO
   return lines.join('\n')
 }
 
-export function sheetPickerMessage(greetingName: string | null, sheets: { name: string }[], more: boolean): string {
+export function sheetPickerMessage(greetingName: string | null, sheets: { name: string; role?: 'owner' | 'editor' | 'viewer' }[], more: boolean): string {
   if (sheets.length === 0) return `👋 Hi${greetingName ? ` ${greetingName}` : ''}! You have no sheets yet. Create one in the planner, then reply *MENU*.`
-  const lines = [`👋 Hi${greetingName ? ` *${greetingName}*` : ''}! Pick a project:`, '', ...sheets.map((s, i) => `*${i + 1}* ${s.name}`)]
+  const lines = [`👋 Hi${greetingName ? ` *${greetingName}*` : ''}! Pick a project:`, '', ...sheets.map((s, i) => `*${i + 1}* ${s.name}${s.role === 'viewer' ? ' _(shared · view only)_' : s.role === 'editor' ? ' _(shared)_' : ''}`)]
   if (more) lines.push(`(Your ${sheets.length} most recent projects are shown.)`)
   lines.push('', `Reply 1–${sheets.length}.`)
   return lines.join('\n')

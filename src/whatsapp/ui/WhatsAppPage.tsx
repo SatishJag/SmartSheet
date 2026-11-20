@@ -21,7 +21,7 @@ const when = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyl
 
 /** WhatsApp: link your phone, turn on alerts per sheet, invite site contacts, see what was sent. */
 export function WhatsAppPage() {
-  const { client } = useShell()
+  const { client, userId } = useShell()
   const api = useMemo(() => whatsappApi(client), [client])
   const [tab, setTab] = useState<Tab>('phone')
   // undefined: loading; null: the server could not be reached
@@ -77,7 +77,7 @@ export function WhatsAppPage() {
         </div>
       </div>
       {tab === 'phone' && <PhoneTab api={api} status={status} refreshStatus={refreshStatus} />}
-      {tab === 'alerts' && <AlertsTab api={api} status={status} />}
+      {tab === 'alerts' && <AlertsTab api={api} status={status} userId={userId} />}
       {tab === 'contacts' && <ContactsTab api={api} status={status} />}
       {tab === 'messages' && <MessagesTab api={api} />}
     </div>
@@ -177,7 +177,7 @@ function PhoneTab({ api, status, refreshStatus }: { api: WhatsAppApi; status: Wa
       <section className="card wa-card" aria-labelledby="wa-what-h">
         <h2 id="wa-what-h">What you can send</h2>
         <ul className="wa-help">
-          <li><b>MENU</b> pick a project, then <b>1</b> delayed · <b>2</b> due in 30 days · <b>3</b> at risk / on track · <b>4</b> critical path · <b>5</b> milestones · <b>6</b> remind task owners · <b>7</b> summary</li>
+          <li><b>MENU</b> pick a project (yours, or one shared with you), then <b>1</b> delayed · <b>2</b> due in 30 days · <b>3</b> at risk / on track · <b>4</b> critical path · <b>5</b> milestones · <b>6</b> remind task owners · <b>7</b> summary</li>
           <li><b>#3</b> details of item 3 in the last list</li>
           <li><b>3 Complete</b>, <b>3 60%</b>, <b>3 In progress - waiting for steel</b> update item 3</li>
           <li><b>EMAIL</b> the full last list to your e-mail</li>
@@ -303,26 +303,37 @@ function timeZones(current: string): string[] {
   return list.includes(current) ? list : [current, ...list]
 }
 
-function AlertsTab({ api, status }: { api: WhatsAppApi; status: WaStatus | null | undefined }) {
+function AlertsTab({ api, status, userId }: { api: WhatsAppApi; status: WaStatus | null | undefined; userId: string }) {
   const [sheets, setSheets] = useState<{ id: string; name: string }[] | null>(null)
+  const [sharedCount, setSharedCount] = useState(0)
   const [sheetId, setSheetId] = useState('')
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     api.listSheets().then(
       (list) => {
-        setSheets(list)
-        setSheetId(list[0]?.id ?? '')
+        // Alerts are the owner's to set (the database refuses anyone else); shared sheets work in WhatsApp all the same.
+        const own = list.filter((s) => s.owner_id === userId)
+        setSheets(own)
+        setSharedCount(list.length - own.length)
+        setSheetId(own[0]?.id ?? '')
       },
       (e: unknown) => setError(errorText(e, 'Could not load your sheets')),
     )
-  }, [api])
+  }, [api, userId])
+  const sharedNote =
+    sharedCount > 0 ? (
+      <p className="au-hint">
+        {sharedCount === 1 ? '1 sheet is' : `${sharedCount} sheets are`} shared with you: their owners set their alerts. You can still open them from WhatsApp (MENU), and update their tasks where you are an editor.
+      </p>
+    ) : null
   if (error) return <p role="alert">{error}</p>
   if (!sheets) return <p className="au-hint">Loading…</p>
   if (sheets.length === 0)
     return (
       <div className="card au-empty">
-        <h2>No sheets yet</h2>
-        <p>Alerts belong to a sheet. Create a sheet first, then come back.</p>
+        <h2>{sharedCount > 0 ? 'No sheets of your own yet' : 'No sheets yet'}</h2>
+        <p>Alerts belong to a sheet and are set by its owner. Create a sheet first, then come back.</p>
+        {sharedNote}
       </div>
     )
   return (
@@ -339,6 +350,7 @@ function AlertsTab({ api, status }: { api: WhatsAppApi; status: WaStatus | null 
           ))}
         </select>
       </div>
+      {sharedNote}
       <SheetAlerts key={sheetId} api={api} sheetId={sheetId} status={status} />
     </>
   )
