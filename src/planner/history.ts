@@ -41,7 +41,7 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
     async catalog(scheduleType: string): Promise<CatalogActivity[]> {
       const result = await client
         .from('activity_catalog')
-        .select('schedule_type, code, name, phase, sequence, default_links, default_days, is_target')
+        .select('schedule_type, code, name, phase, sequence, default_links, default_days, is_target, activity_id, responsibility, criteria')
         .eq('schedule_type', scheduleType)
         .order('sequence', { ascending: true })
       return rows<CatalogRow>(result).map((r) => ({
@@ -53,6 +53,9 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
         defaultLinks: toLinks(r.default_links, r.code),
         defaultDays: r.default_days,
         isTarget: r.is_target,
+        ...(r.activity_id ? { activityId: r.activity_id } : {}),
+        ...(r.responsibility ? { responsibility: r.responsibility } : {}),
+        ...(r.criteria ? { criteria: r.criteria } : {}),
       }))
     },
 
@@ -108,6 +111,9 @@ interface CatalogRow {
   default_links: unknown
   default_days: number
   is_target: boolean
+  activity_id?: string | null
+  responsibility?: string | null
+  criteria?: string | null
 }
 
 /** The rows of a Supabase result, or its error thrown with Supabase's message. */

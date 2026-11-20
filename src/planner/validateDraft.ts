@@ -154,18 +154,26 @@ export function validateDraft(input: unknown, ctx: ValidationContext): Validatio
     })
   }
 
-  // Logic: acyclic, target last, everything leads to the target.
+  // Logic: acyclic; everything leads to the target, except the activities the catalog itself places
+  // after the target (e.g. a defects period after handover), which must follow it.
   if (errors.length === 0) {
     const codes = activities.map((a) => a.code)
     const cycle = findCycle(codes, links)
     if (cycle) fail(`The logic has a cycle: ${cycle.join(' -> ')}.`)
-    const targetSuccessors = links.filter((l) => l.from === target.code).map((l) => l.to)
+    const allowedAfter = afterTargetCodes(ctx.catalog)
+    const targetSuccessors = links.filter((l) => l.from === target.code && !allowedAfter.has(l.to)).map((l) => l.to)
     if (targetSuccessors.length > 0) {
       fail(`The target ${target.code} must end the logic but has successor(s): ${targetSuccessors.join(', ')}.`)
     }
     const reaches = ancestorsOf(target.code, links)
+    const hasPredecessor = new Set(links.map((l) => l.to))
     for (const code of codes) {
-      if (code !== target.code && !reaches.has(code)) fail(`${code} does not lead to the target ${target.code}; link it into the logic.`)
+      if (code === target.code || reaches.has(code)) continue
+      if (allowedAfter.has(code)) {
+        if (!hasPredecessor.has(code)) fail(`${code} comes after the target ${target.code} in the catalog; link it to its predecessors.`)
+        continue
+      }
+      fail(`${code} does not lead to the target ${target.code}; link it into the logic.`)
     }
   }
 
@@ -248,6 +256,20 @@ function findCycle(codes: string[], links: DraftLink[]): string[] | null {
 }
 
 /** Every code with a path to `code` along the links. */
+/**
+ * The catalog activities that do not lead to the target in the catalog's own default logic: close-out
+ * work after the target date (e.g. the defects period and final completion after handover). Only these
+ * may stay outside the target's predecessors, or follow it, in a plan. Empty for catalogs where
+ * everything leads to the target.
+ */
+export function afterTargetCodes(catalog: CatalogActivity[]): Set<string> {
+  const target = catalogTarget(catalog)
+  if (!target) return new Set()
+  const links = catalog.flatMap((a) => a.defaultLinks.map((l) => ({ from: l.from, to: a.code, type: l.type, lagDays: l.lagDays })))
+  const leads = ancestorsOf(target.code, links)
+  return new Set(catalog.filter((a) => a.code !== target.code && !leads.has(a.code)).map((a) => a.code))
+}
+
 function ancestorsOf(code: string, links: DraftLink[]): Set<string> {
   const preds = new Map<string, string[]>()
   for (const l of links) preds.set(l.to, [...(preds.get(l.to) ?? []), l.from])

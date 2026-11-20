@@ -13,7 +13,12 @@ import type { DraftActivity, HistorySummary, PlanDraft } from './types'
 /** Title of the extra text column that says where each duration came from. */
 export const BASIS_COLUMN_TITLE = 'Basis'
 
-const NAME_PREFIX: Record<string, string> = { 'lle-procurement': 'LLE' }
+const NAME_PREFIX: Record<string, string> = { 'lle-procurement': 'LLE', 'property-development': 'Programme' }
+
+/** Titles of the optional columns a catalog's reference details fill (property development template). */
+export const ACTIVITY_ID_COLUMN_TITLE = 'Activity ID'
+export const RESPONSIBILITY_COLUMN_TITLE = 'Lead responsibility'
+export const CRITERIA_COLUMN_TITLE = 'Completion / release criteria'
 
 const clip = (name: string, max: number) => (name.length > max ? `${name.slice(0, max - 1)}…` : name)
 
@@ -64,8 +69,12 @@ function itemSourceText(draft: PlanDraft): string {
   return `${draft.source === 'ai' ? 'AI draft' : 'History draft'} from ${from}${sample}`
 }
 
-/** A new sheet with the Project schedule template's columns plus "Basis", and the ids of the columns the plan fills. */
-function newPlanSheet(name: string, ownerId: string, calendar: Calendar) {
+/**
+ * A new sheet with the Project schedule template's columns plus "Basis", and the ids of the columns the
+ * plan fills. When the drafts carry catalog reference details, "Activity ID" follows the task name and
+ * "Lead responsibility" and "Completion / release criteria" come before "Basis".
+ */
+function newPlanSheet(name: string, ownerId: string, calendar: Calendar, drafts: PlanDraft[] = []) {
   const base = createSheetFromTemplate('project-schedule', ownerId)
   const sheet: SheetMeta = {
     ...base.sheet,
@@ -74,7 +83,13 @@ function newPlanSheet(name: string, ownerId: string, calendar: Calendar) {
     dependenciesEnabled: true,
   }
   const basisColumn: Column = { id: crypto.randomUUID(), title: BASIS_COLUMN_TITLE, type: 'TEXT_NUMBER' }
-  const columns = [...base.columns, basisColumn]
+  const has = (pick: (a: DraftActivity) => string | undefined) => drafts.some((d) => d.activities.some((a) => Boolean(pick(a))))
+  const extra = (on: boolean, title: string): Column | null => (on ? { id: crypto.randomUUID(), title, type: 'TEXT_NUMBER' } : null)
+  const idColumn = extra(has((a) => a.activityId), ACTIVITY_ID_COLUMN_TITLE)
+  const responsibilityColumn = extra(has((a) => a.responsibility), RESPONSIBILITY_COLUMN_TITLE)
+  const criteriaColumn = extra(has((a) => a.criteria), CRITERIA_COLUMN_TITLE)
+  const [first, ...rest] = base.columns
+  const columns = [first, ...(idColumn ? [idColumn] : []), ...rest, ...(responsibilityColumn ? [responsibilityColumn] : []), ...(criteriaColumn ? [criteriaColumn] : []), basisColumn]
   const colId = (pick: (c: Column) => boolean, what: string) => {
     const col = columns.find(pick)
     if (!col) throw new Error(`The Project schedule template has no ${what} column`)
@@ -87,6 +102,9 @@ function newPlanSheet(name: string, ownerId: string, calendar: Calendar) {
     start: colId((c) => c.role === 'start', 'start'),
     status: colId((c) => c.role === 'status', 'status'),
     basis: basisColumn.id,
+    activityId: idColumn?.id,
+    responsibility: responsibilityColumn?.id,
+    criteria: criteriaColumn?.id,
   }
   return { sheet, columns, cols }
 }
@@ -114,6 +132,9 @@ function activityRows(draft: PlanDraft, plan: BackwardPlan, cols: PlanCols, cale
       [cols.status]: 'Not started',
       [cols.basis]: basisText(a, draft.history),
     }
+    if (cols.activityId && a.activityId) cells[cols.activityId] = a.activityId
+    if (cols.responsibility && a.responsibility) cells[cols.responsibility] = a.responsibility
+    if (cols.criteria && a.criteria) cells[cols.criteria] = a.criteria
     if (p?.isRoot) cells[cols.start] = p.start
     return { id, parentId, position: positions[i], cells, version: 0 }
   })
@@ -133,7 +154,7 @@ function activityRows(draft: PlanDraft, plan: BackwardPlan, cols: PlanCols, cale
  * sheet opens with the dates the preview showed. Pure apart from fresh ids.
  */
 export function buildSheetFromDraft(draft: PlanDraft, plan: BackwardPlan, ownerId: string, calendar: Calendar): SheetData {
-  const { sheet, columns, cols } = newPlanSheet(sheetNameForDraft(draft), ownerId, calendar)
+  const { sheet, columns, cols } = newPlanSheet(sheetNameForDraft(draft), ownerId, calendar, [draft])
   const { rows, dependencies } = activityRows(draft, plan, cols, calendar, null)
   return { sheet, columns, rows, dependencies }
 }
@@ -154,7 +175,7 @@ export interface PlannedDraft {
 export function buildSheetFromDrafts(items: PlannedDraft[], ownerId: string, calendar: Calendar): SheetData {
   if (items.length === 0) throw new Error('There is nothing to plan')
   if (items.length === 1) return buildSheetFromDraft(items[0].draft, items[0].plan, ownerId, calendar)
-  const { sheet, columns, cols } = newPlanSheet(sheetNameForDrafts(items.map((i) => i.draft)), ownerId, calendar)
+  const { sheet, columns, cols } = newPlanSheet(sheetNameForDrafts(items.map((i) => i.draft)), ownerId, calendar, items.map((i) => i.draft))
   const positions = generateNKeysBetween(null, null, items.length)
   const rows: RowRecord[] = []
   const dependencies: SchedDep[] = []

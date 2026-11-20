@@ -1,6 +1,6 @@
 /** Builds a PlanDraft for a request: history, then the AI, then the history-only fallback. */
 import { buildHistoryDraft } from '../src/planner/historyDraft'
-import type { HistorySource, HistorySummary, PlanDraft, PlanRequest } from '../src/planner/types'
+import type { CatalogActivity, HistorySource, HistorySummary, PlanDraft, PlanRequest } from '../src/planner/types'
 import { draftWithAi, type AiOutcome, type AnthropicLike } from './ai'
 import type { Logger } from './log'
 
@@ -71,7 +71,7 @@ export async function createDraft(source: HistorySource, request: PlanRequest, c
   if (catalog.length === 0) throw new PlannerError(422, 'This schedule type has no activity catalog yet.')
   const { history, notes } = await selectHistory(source, request)
 
-  const historyOnly = (why: string) => buildHistoryDraft({ request, catalog, history, assumptions: [why, ...notes] })
+  const historyOnly = (why: string) => withCatalogDetails(buildHistoryDraft({ request, catalog, history, assumptions: [why, ...notes] }), catalog)
   let fallback: PlanDraft
   try {
     fallback = historyOnly(FALLBACK_NOTES.unconfigured) // also proves the catalog can make a valid plan
@@ -95,11 +95,31 @@ export async function createDraft(source: HistorySource, request: PlanRequest, c
     signal: config.signal,
   })
   if (!outcome.ok) return historyOnly(FALLBACK_NOTES[outcome.reason])
+  return withCatalogDetails(
+    {
+      request,
+      ...outcome.plan,
+      assumptions: [...notes, ...outcome.plan.assumptions],
+      source: 'ai',
+      history,
+    },
+    catalog,
+  )
+}
+
+/** Copies the catalog's reference details (activity id, responsibility, criteria) onto the draft's activities. */
+export function withCatalogDetails(draft: PlanDraft, catalog: CatalogActivity[]): PlanDraft {
+  const byCode = new Map(catalog.map((a) => [a.code, a]))
   return {
-    request,
-    ...outcome.plan,
-    assumptions: [...notes, ...outcome.plan.assumptions],
-    source: 'ai',
-    history,
+    ...draft,
+    activities: draft.activities.map((a) => {
+      const c = byCode.get(a.code)
+      return {
+        ...a,
+        ...(c?.activityId ? { activityId: c.activityId } : {}),
+        ...(c?.responsibility ? { responsibility: c.responsibility } : {}),
+        ...(c?.criteria ? { criteria: c.criteria } : {}),
+      }
+    }),
   }
 }

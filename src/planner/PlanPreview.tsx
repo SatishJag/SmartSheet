@@ -70,7 +70,7 @@ export function ItemPreview({ entry, showSampleWarning, noun = 'equipment' }: { 
         <p className="planner-sample" role="note">
           <PIcon name="alertCircle" size={18} />
           <span>
-            <strong>No history for this {noun}; durations are defaults.</strong> Check them against vendor quotes.
+            <strong>No history for this {noun}; durations are defaults.</strong> {noun === 'development' ? 'Check them against your benchmarks and the consultants’ programme.' : 'Check them against vendor quotes.'}
           </span>
         </p>
       )}
@@ -326,7 +326,7 @@ export function PlanPreview(props: PlanPreviewProps) {
             rows={2}
             value={instruction}
             onChange={(e) => onInstruction(e.target.value)}
-            placeholder="e.g. Use p80 for fabrication; the vendor quotes 16 weeks"
+            placeholder={noun === 'development' ? 'e.g. 40-storey tower: allow 7 working days per typical floor; authority approvals take 4 months' : 'e.g. Use p80 for fabrication; the vendor quotes 16 weeks'}
             disabled={busy}
           />
           <small>Not quite right? Describe what to change and use Regenerate; your other settings stay as they are.</small>

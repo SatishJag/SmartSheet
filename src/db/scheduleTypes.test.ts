@@ -43,26 +43,35 @@ async function offered(projectType: string): Promise<string[]> {
 describe('0013_more_schedule_types', () => {
   it('offers different schedule types under Data centre and Properties, each opening on its main one', async () => {
     expect(await offered('data-centre')).toEqual(['lle-procurement', 'other-equipment-procurement', 'subcontract-procurement', 'consultant-appointment'])
-    expect(await offered('properties')).toEqual(['materials-procurement', 'lle-procurement', 'subcontract-procurement', 'consultant-appointment'])
+    // 0018 puts the property development master schedule first under Properties.
+    expect(await offered('properties')).toEqual(['property-development', 'materials-procurement', 'lle-procurement', 'subcontract-procurement', 'consultant-appointment'])
   })
 
   it('lists only project types that exist, and every type says that its durations are placeholders', async () => {
     const unknown = await db.query(`select s.id, p from schedule_types s, unnest(s.project_types) p where p not in (select id from project_types)`)
     expect(unknown.rows).toEqual([])
     const r = await db.query<{ id: string; description: string }>(`select id, description from schedule_types where id <> 'lle-procurement' order by id`)
-    expect(r.rows).toHaveLength(4)
+    expect(r.rows).toHaveLength(5)
     for (const t of r.rows) expect(t.description, t.id).toMatch(/placeholders/)
   })
 
-  it('gives every schedule type a coherent catalog: sequence 1..n, one target last, links to real codes, no loops', async () => {
+  it('gives every schedule type a coherent catalog: sequence 1..n, one target, links to real codes, no loops', async () => {
     const types = (await db.query<{ id: string }>(`select id from schedule_types order by id`)).rows.map((x) => x.id)
-    expect(types).toHaveLength(5)
+    expect(types).toHaveLength(6)
     for (const type of types) {
       const rows = await catalog(type)
       expect(rows.length, type).toBeGreaterThanOrEqual(7)
       expect(rows.map((r) => r.sequence), type).toEqual(rows.map((_, i) => i + 1))
       expect(rows.filter((r) => r.is_target), type).toHaveLength(1)
-      expect(rows[rows.length - 1].is_target, `${type}: the target is last`).toBe(true)
+      // The target is last, or followed only by close-out work that does not lead to it (0018: defects
+      // period and final completion after handover).
+      const targetIndex = rows.findIndex((r) => r.is_target)
+      const feeds = new Set<string>([rows[targetIndex].code])
+      for (let grew = true; grew; ) {
+        grew = false
+        for (const r of rows) if (feeds.has(r.code)) for (const l of r.default_links) if (!feeds.has(l.from)) (feeds.add(l.from), (grew = true))
+      }
+      for (const r of rows.slice(targetIndex + 1)) expect(feeds.has(r.code), `${type}: ${r.code} after the target leads to it`).toBe(false)
       const codes = new Set(rows.map((r) => r.code))
       for (const r of rows) {
         for (const l of r.default_links) {
@@ -70,7 +79,7 @@ describe('0013_more_schedule_types', () => {
           expect(l.from).not.toBe(r.code)
           expect(['FS', 'SS', 'FF', 'SF']).toContain(l.type)
         }
-        if (!r.is_target || r.default_days > 0) expect(r.default_days, `${type}: ${r.code}`).toBeGreaterThan(0)
+        if (!r.is_target || r.default_days > 0) expect(r.default_days, `${type}: ${r.code}`).toBeGreaterThanOrEqual(type === 'property-development' ? 0 : 1)
       }
       // Kahn's algorithm: every activity is reachable in topological order.
       const done = new Set<string>()

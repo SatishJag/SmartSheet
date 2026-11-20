@@ -31,6 +31,15 @@ are original. Design: [`docs/superpowers/specs/`](docs/superpowers/specs/). Buil
   historical projects, the plan is worked backward to each date, and you approve it into one
   editable sheet (a summary row per item). A batch has a 3.5-minute overall time limit; items that
   run out of time are drafted from history alone
+- **Property development master schedule** (Plan with AI → Properties, the first schedule type
+  there): the Property department's reference template (44 activities and control gates in 15
+  stages, from feasibility to close-out, with lead responsibility, completion / release criteria and
+  the reference FS / SS logic) is the catalog the AI drafts from, with the template's *Basis of Plan*
+  rules as guidance. Give the development and its planned handover date; the plan is worked back
+  from handover (the defects period and close-out follow it), and the sheet gets *Activity ID*,
+  *Lead responsibility* and *Completion / release criteria* columns. Default durations are
+  placeholders until history is loaded. Source: `src/planner/catalogs/propertyDevelopment.ts`
+  (seeded by `0018_property_development.sql`)
 - **Gantt**: bars, milestones, parent summary bars, dependency arrows, drag to move or resize
 - **Critical path and float**: the "Critical path" switch in the sheet header highlights critical
   rows and links on the Gantt and in the grid and shows each row's total and free float in

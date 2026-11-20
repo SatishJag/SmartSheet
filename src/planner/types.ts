@@ -13,6 +13,12 @@ export interface ItemLabels {
   typeExample: string
   /** An example name, shown as the placeholder of the name field. */
   nameExample: string
+  /** The wizard's question on the request step. Default: "What do you need on site?" */
+  heading?: string
+  /** The sentence under it. Default: "Choose the <noun> and the date it must be on site. ..." */
+  intro?: string
+  /** The label of the date field. Default: "Required on site". */
+  dateLabel?: string
 }
 
 /** Used when a schedule type gives none. */
@@ -55,6 +61,12 @@ export interface CatalogActivity {
   defaultDays: number
   /** Marks the activity whose finish is the date the user asks for (e.g. 'On site'). */
   isTarget: boolean
+  /** Optional reference details a template carries (shown as columns of the created sheet). */
+  activityId?: string
+  /** Lead responsibility, e.g. "Design / Consultant". */
+  responsibility?: string
+  /** Completion / release criteria of the activity or gate. */
+  criteria?: string
 }
 
 /** Duration statistics for one activity, from completed historical projects. Working days. */
@@ -103,6 +115,10 @@ export interface DraftActivity {
   basis: DurationBasis
   /** One short sentence: why this duration (cites the statistic used). */
   reason: string
+  /** Copied from the catalog by the server when the catalog has them (see CatalogActivity). */
+  activityId?: string
+  responsibility?: string
+  criteria?: string
 }
 
 export interface DraftLink {

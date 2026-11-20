@@ -458,9 +458,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
             <div className="planner-body">
               <div className="planner-intro">
                 <h3 ref={headingRef} tabIndex={-1}>
-                  What do you need on site?
+                  {labels.heading ?? 'What do you need on site?'}
                 </h3>
-                <p>Choose the {noun} and the date it must be on site. The plan is built backward from that date.</p>
+                <p>{labels.intro ?? `Choose the ${noun} and the date it must be on site. The plan is built backward from that date.`}</p>
               </div>
               {!options && !optionsError && (
                 <div className="planner-card card" aria-hidden="true">
@@ -521,7 +521,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                     {equipmentTypes.length > 0 && (
                       <fieldset className="planner-types">
                         <legend>{Noun} with history</legend>
-                        <p className="planner-hint">Tick what you need on site; each tick adds an item to the plan (up to {MAX_ITEMS}).</p>
+                        <p className="planner-hint">Tick what you need{labels.dateLabel ? '' : ' on site'}; each tick adds an item to the plan (up to {MAX_ITEMS}).</p>
                         <div className="planner-type-cards">
                           {equipmentTypes.map((type) => {
                             const checked = items.some((i) => i.fromCard === type)
@@ -570,7 +570,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                           {sameDate && (
                             <div className="planner-field planner-shared-field">
                               <label htmlFor={ids.sharedDate} className="planner-label">
-                                Required on site (all items)
+                                {labels.dateLabel ?? 'Required on site'} (all items)
                               </label>
                               <input
                                 id={ids.sharedDate}
@@ -585,7 +585,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                         </div>
                       )}
                     </div>
-                    {many && sameDate && <p className="planner-hint">An item can have its own date instead: fill in its Required on site below.</p>}
+                    {many && sameDate && <p className="planner-hint">An item can have its own date instead: fill in its {labels.dateLabel ?? 'Required on site'} below.</p>}
 
                     <ol className="planner-items" aria-label={`${Noun} items`}>
                       {items.map((item, index) => (
@@ -812,7 +812,7 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, e
       </div>
       <div className="planner-field planner-f-date">
         <label htmlFor={dateId} className="planner-label">
-          Required on site
+          {labels.dateLabel ?? 'Required on site'}
         </label>
         <input
           id={dateId}
