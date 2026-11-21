@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Calendar } from '../engine/types'
 import { MAX_DATE, MIN_DATE } from '../model/validate'
@@ -28,13 +28,15 @@ import {
   removeCardItem,
   removeItem,
   setCostCode,
+  setDeliverySite,
   syncCostCodes,
+  syncDeliverySites,
   validateItems,
   type FormValues,
   type ItemForm,
 } from './plannerItems'
 import { codeForType, costCodeOption, optionForCode } from './costCodes'
-import { optionForProject, projectOption } from './procoreProjects'
+import { defaultDeliverySite, optionForProject, projectOption, siteProjects } from './procoreProjects'
 import { insertSheetFromDrafts } from './sheetFromDraft'
 import { DEFAULT_ITEM_LABELS, type CostCode, type ItemLabels, type PlannerOptions, type ProcoreProject } from './types'
 import './plannerWizard.css'
@@ -191,6 +193,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const defaultChoice = equipmentTypes[0] ?? OTHER
   const costCodes = options?.costCodes ?? NO_COST_CODES
   const procoreProjects = options?.procoreProjects ?? NO_PROJECTS
+  const sites = useMemo(() => siteProjects(procoreProjects), [procoreProjects])
   // Items whose type is not on offer for the schedule type (or not chosen yet) get the first type with history.
   useEffect(() => {
     if (!options) return
@@ -207,6 +210,12 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     if (costCodes.length === 0) return
     setItems((prev) => syncCostCodes(prev, (type) => codeForType(costCodes, type)))
   }, [items, costCodes])
+
+  // Each item's delivery site follows the plan's project when that is a site, until the user picks or clears one.
+  useEffect(() => {
+    if (sites.length === 0) return
+    setItems((prev) => syncDeliverySites(prev, defaultDeliverySite(sites, procoreProject)))
+  }, [items, sites, procoreProject])
 
   // Each step's heading takes focus, so keyboard and screen-reader users land on the new content.
   useEffect(() => {
@@ -363,7 +372,14 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
           : undefined
       const project =
         procoreProjects.length > 0 ? { options: procoreProjects.map(projectOption), value: optionForProject(procoreProjects, procoreProject) } : undefined
-      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today, costCodes: sheetCostCodes, project })
+      const deliverySites =
+        sites.length > 0
+          ? {
+              options: sites.map(projectOption),
+              values: entries.map((e) => optionForProject(sites, items.find((i) => i.key === e.key)?.deliverySite ?? '')),
+            }
+          : undefined
+      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today, costCodes: sheetCostCodes, project, deliverySites })
       if (mounted.current) onCreated(sheetId)
     } catch (err) {
       if (!mounted.current) return
@@ -656,6 +672,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                           onChange={(patch) => updateItem(item.key, patch)}
                           costCodes={costCodes}
                           onCostCode={(code) => setItems((all) => all.map((i) => (i.key === item.key ? setCostCode(i, code) : i)))}
+                          sites={sites}
+                          onDeliverySite={(code) => setItems((all) => all.map((i) => (i.key === item.key ? setDeliverySite(i, code) : i)))}
                           onRemove={() => dropItem(item.key)}
                         />
                       ))}
@@ -791,6 +809,9 @@ interface ItemFieldsProps {
   /** The Procore cost codes on offer; none: no Cost code field. */
   costCodes: readonly CostCode[]
   onCostCode: (code: string) => void
+  /** The Procore site projects an item can be delivered to; none: no Delivery site field. */
+  sites: readonly ProcoreProject[]
+  onDeliverySite: (code: string) => void
 }
 
 const NO_COST_CODES: CostCode[] = []
@@ -804,13 +825,16 @@ const FieldError = ({ id, children }: { id: string; children: string }) => (
 )
 
 /** One item of the request form (equipment, material, ...), as a compact row: type, name, its own required date (and Remove). */
-function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, errors, onChange, onRemove, costCodes, onCostCode }: ItemFieldsProps) {
+function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, errors, onChange, onRemove, costCodes, onCostCode, sites, onDeliverySite }: ItemFieldsProps) {
   const typeId = `${idBase}-type`
   const otherId = `${idBase}-other`
   const nameId = `${idBase}-name`
   const dateId = `${idBase}-date`
   const costCodeId = `${idBase}-cost-code`
   const hasCostCode = costCodes.length > 0
+  const siteId = `${idBase}-site`
+  const hasSites = sites.length > 0
+  const hasTags = hasCostCode || hasSites
   const typeError = errors?.type
   const nameError = errors?.name
   const dateError = errors?.date
@@ -818,7 +842,7 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, e
   const effective = effectiveDate(item, form)
   const showOther = equipmentTypes.length === 0 || item.choice === OTHER
   const hasSelect = equipmentTypes.length > 0
-  const classes = ['planner-item-row', many ? 'has-index' : 'is-single', showOther ? 'has-other' : '', hasSelect ? '' : 'no-select', hasCostCode ? 'has-code' : ''].filter(Boolean).join(' ')
+  const classes = ['planner-item-row', many ? 'has-index' : 'is-single', showOther ? 'has-other' : '', hasSelect ? '' : 'no-select', hasTags ? 'has-tags' : ''].filter(Boolean).join(' ')
   const body = (
     <>
       {many && (
@@ -893,19 +917,39 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, e
         )}
         {dateError && <FieldError id={`${dateId}-error`}>{dateError}</FieldError>}
       </div>
-      {hasCostCode && (
-        <div className="planner-field planner-f-code">
-          <label htmlFor={costCodeId} className="planner-label">
-            Cost code
-          </label>
-          <select id={costCodeId} value={item.costCode} onChange={(e) => onCostCode(e.target.value)}>
-            <option value="">None</option>
-            {costCodes.map((c) => (
-              <option key={c.code} value={c.code}>
-                {costCodeOption(c)}
-              </option>
-            ))}
-          </select>
+      {hasTags && (
+        // Line 2 of the item: the budget line and where it goes.
+        <div className="planner-item-tags">
+          {hasCostCode && (
+            <div className="planner-field planner-f-code">
+              <label htmlFor={costCodeId} className="planner-label">
+                Cost code
+              </label>
+              <select id={costCodeId} value={item.costCode} onChange={(e) => onCostCode(e.target.value)}>
+                <option value="">None</option>
+                {costCodes.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {costCodeOption(c)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {hasSites && (
+            <div className="planner-field planner-f-site">
+              <label htmlFor={siteId} className="planner-label">
+                Delivery site
+              </label>
+              <select id={siteId} value={item.deliverySite} onChange={(e) => onDeliverySite(e.target.value)}>
+                <option value="">None</option>
+                {sites.map((p) => (
+                  <option key={p.code} value={p.code}>
+                    {projectOption(p)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
       {many && (
