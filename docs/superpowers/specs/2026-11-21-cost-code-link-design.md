@@ -195,3 +195,55 @@ Seed: `('BKK-03', 'Bangkok 3', false, true)`.
 ## Not in scope
 Delivery site per item (where program-bought equipment ends up), allocating a batch to sites,
 per-project cost code lists, a project admin screen, any Procore sync.
+
+---
+
+# Addendum: Delivery site per item
+
+Date: 2026-11-21. Status: design agreed with the owner in conversation; awaiting approval of this text.
+
+## Why
+With program-level buying (`PRG-DC-01`), one batch buys equipment that ends up at different sites.
+The **site team** needs to see and track what is coming to their site. The delivery site is a
+**label only**: it does not change durations, dates or the plan.
+
+## Goals / non-goals / anti-goals
+- Goal: each item says which site it is delivered to; a site engineer filters the sheet by their
+  site and sees each delivered item's whole schedule.
+- Non-goals: per-site durations or logistics, delivery tracking or status, addresses, warehouses or
+  laydown yards, Procore sync.
+- Anti-goal: free-text site names (typos split one site into several and the filter misses items).
+
+## Approaches
+1. **Reuse the Procore project list (chosen).** Delivery sites are the `procore_projects` rows that are
+   not programs. One list to keep; a site added for the project dropdown is also a delivery site.
+   Trade-off: a delivery site must be a Procore project.
+2. A separate delivery sites table: allows non-project places, but two lists to keep in step.
+3. Free text: no list, but inconsistent names break filtering. Rejected.
+
+## Decisions (owner's answers)
+1. A label, for the site team to track deliveries.
+2. **On every row of the item**: summary row and all its activities (one item: every row), because the
+   sheet filter keeps matching rows and their ancestors, not their children.
+3. **The item row goes onto two lines**: Equipment type, Equipment name, Required on site (and Remove) on
+   the first; Cost code and Delivery site on the second.
+4. **Approach 1**: the site list is the non-program Procore projects.
+
+## Proposals the owner did not correct (taken as agreed)
+- The field is optional and starts empty.
+- When the plan's Procore project is a site (e.g. `BKK-03`), each item's delivery site starts as that
+  site and follows the plan's project until the user picks or clears a site on that item (the same
+  "follows until edited" rule as the cost code). A program project or None gives no default.
+- Sheet column **`Delivery site`**: PICKLIST, options = the sites as `CODE — Name`, placed after
+  `Cost code` (order: Procore project, Cost code, Delivery site, Basis).
+
+## Calls left to the builder (coordinator's)
+- No database change: sites come from `PlannerOptions.procoreProjects` filtered on `!isProgram`.
+- The Delivery site field and column appear only when at least one site is on offer; otherwise
+  nothing changes. Not sent to the AI, like the other two.
+- A value not among the column's options is left empty (same rule as the other columns).
+- Phones: the two lines stack into one column, as today. The second line is shown only when it has a
+  field (cost codes or sites on offer); with neither, the row looks as it does today.
+- The earlier "wrap rows with a cost code below 1100px" rule becomes unnecessary once the tags always
+  sit on their own line; replace it, keeping the e2e check that the Equipment name stays at least
+  150px wide.
