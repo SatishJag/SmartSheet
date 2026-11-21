@@ -12,6 +12,7 @@ import {
   basisText,
   buildSheetFromDraft,
   buildSheetFromDrafts,
+  type CostCodeColumn,
   insertSheetFromDraft,
   insertSheetFromDrafts,
   itemRowName,
@@ -410,5 +411,57 @@ describe('insertSheetFromDrafts (several items)', () => {
   it('a failing cleanup still reports the original error', async () => {
     const { client } = scriptedClient({ fail: 'rows', deleteThrows: true })
     await expect(insertSheetFromDrafts(client, threeDrafts(), 'u', cal, { today: TODAY })).rejects.toThrow('rows boom')
+  })
+})
+
+describe('Cost code column', () => {
+  const CC: CostCodeColumn = { options: ['CHL — Chiller', 'GEN — Generator'], values: ['GEN — Generator', undefined, 'CHL — Chiller'] }
+  const plannedOf = (drafts: ReturnType<typeof threeDrafts>) => drafts.map((draft) => ({ draft, plan: planBackward(draft, cal, TODAY) }))
+  const twoOrMore = plannedOf(threeDrafts())
+  const oneItem = plannedOf([lleDraft('2027-06-30')])
+  const costCol = (columns: { id: string; title: string }[]) => columns.find((c) => c.title === 'Cost code')?.id
+
+  it('adds a strict Cost code dropdown just before Basis', () => {
+    const { columns } = buildSheetFromDrafts(twoOrMore, 'u', cal, CC)
+    const i = columns.findIndex((c) => c.title === 'Cost code')
+    expect(columns[i]).toMatchObject({ type: 'PICKLIST', options: ['CHL — Chiller', 'GEN — Generator'] })
+    expect(columns[i + 1].title).toBe('Basis')
+  })
+
+  it('puts each item’s code on its summary row only', () => {
+    const { columns, rows } = buildSheetFromDrafts(twoOrMore, 'u', cal, CC)
+    const col = costCol(columns)!
+    const parents = rows.filter((r) => r.parentId === null)
+    expect(parents.map((r) => r.cells[col])).toEqual(['GEN — Generator', undefined, 'CHL — Chiller'])
+    expect(rows.filter((r) => r.parentId !== null).every((r) => r.cells[col] === undefined)).toBe(true)
+  })
+
+  it('puts a single item’s code on every row', () => {
+    const { columns, rows } = buildSheetFromDrafts(oneItem, 'u', cal, { options: CC.options, values: ['CHL — Chiller'] })
+    const col = costCol(columns)!
+    expect(rows.length).toBeGreaterThan(1)
+    expect(rows.every((r) => r.cells[col] === 'CHL — Chiller')).toBe(true)
+  })
+
+  it('ignores a value that is not one of the options', () => {
+    const { columns, rows } = buildSheetFromDrafts(oneItem, 'u', cal, { options: CC.options, values: ['UPS — UPS & Battery System'] })
+    const col = costCol(columns)!
+    expect(rows.every((r) => r.cells[col] === undefined)).toBe(true)
+  })
+
+  it('adds no column without cost codes or with no options', () => {
+    expect(costCol(buildSheetFromDrafts(twoOrMore, 'u', cal).columns)).toBeUndefined()
+    expect(costCol(buildSheetFromDrafts(twoOrMore, 'u', cal, { options: [], values: [] }).columns)).toBeUndefined()
+    expect(costCol(buildSheetFromDraft(oneItem[0].draft, oneItem[0].plan, 'u', cal).columns)).toBeUndefined()
+  })
+
+  it('saves the column and the codes, and they load back', async () => {
+    const { client, userId } = fakeClient()
+    const sheetId = await insertSheetFromDrafts(client, threeDrafts(), userId, cal, { today: TODAY, costCodes: CC })
+    const loaded = await supabasePersistence(client).loadSheet(sheetId)
+    const column = loaded.columns.find((c) => c.title === 'Cost code')!
+    expect(column).toMatchObject({ type: 'PICKLIST', options: CC.options })
+    const parents = loaded.rows.filter((r) => r.parentId === null).sort((a, b) => (a.position < b.position ? -1 : 1))
+    expect(parents.map((r) => r.cells[column.id])).toEqual(['GEN — Generator', undefined, 'CHL — Chiller'])
   })
 })
