@@ -95,7 +95,14 @@ export function syncDeliverySites(items: ItemForm[], defaultSite: string): ItemF
 export const setDeliverySite = (item: ItemForm, code: string): ItemForm => ({ ...item, deliverySite: code, deliverySiteEdited: true })
 
 /** True for an item the user has not touched: nothing typed or picked beyond the default type. */
-export const isPristine = (item: ItemForm) => item.fromCard === null && item.name.trim() === '' && item.date === '' && item.other.trim() === ''
+export const isPristine = (item: ItemForm) =>
+  item.fromCard === null &&
+  item.name.trim() === '' &&
+  item.date === '' &&
+  item.other.trim() === '' &&
+  // A cost code or delivery site picked (or cleared) by hand is the user's choice: keep the item.
+  !item.costCodeEdited &&
+  !item.deliverySiteEdited
 
 export const itemType = (item: ItemForm) => (item.choice === OTHER ? item.other : item.choice).trim()
 

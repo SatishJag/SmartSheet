@@ -250,3 +250,19 @@ describe('delivery sites', () => {
     expect(job.items[0]).not.toHaveProperty('deliverySite')
   })
 })
+
+describe('a hand-picked site or cost code counts as touching the item', () => {
+  it('is no longer pristine', () => {
+    expect(isPristine(setDeliverySite(newItem('Chiller'), 'SIN-01'))).toBe(false)
+    expect(isPristine(setDeliverySite(newItem('Chiller'), ''))).toBe(false)
+    expect(isPristine(setCostCode(newItem('Chiller'), 'GEN'))).toBe(false)
+    expect(isPristine(syncDeliverySites(syncCostCodes([newItem('Chiller')], () => 'CHL'), 'BKK-03')[0])).toBe(true)
+  })
+
+  it('is kept when a card is ticked, instead of being replaced', () => {
+    const picked = setDeliverySite(newItem('Chiller'), 'SIN-01')
+    const items = addCardItem([picked], 'Switchgear')
+    expect(items).toHaveLength(2)
+    expect(items[0]).toBe(picked)
+  })
+})
