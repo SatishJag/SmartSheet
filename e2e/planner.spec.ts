@@ -273,3 +273,26 @@ test('Plan with AI on a phone: item rows with a Cost code field do not scroll si
   const body = await dialog.locator('.planner-body').evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
   expect(body.scrollWidth, 'wizard body content width vs body width').toBeLessThanOrEqual(body.clientWidth + 1)
 })
+
+test('Plan with AI: the Procore project sits beside the schedule type, and below it on a phone', async ({ page }) => {
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({ json: { ...OPTIONS, procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }] } satisfies PlannerOptions }),
+  )
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  const schedule = dialog.getByLabel('Schedule type')
+  const project = dialog.getByLabel('Procore project')
+  await expect(project).toBeVisible()
+  const s = (await schedule.boundingBox())!
+  const p = (await project.boundingBox())!
+  expect(Math.abs(p.y - s.y), 'same row as the schedule type').toBeLessThan(2)
+  expect(p.x, 'to the right of the schedule type').toBeGreaterThan(s.x + s.width)
+
+  await page.setViewportSize({ width: 375, height: 800 })
+  const s2 = (await schedule.boundingBox())!
+  const p2 = (await project.boundingBox())!
+  expect(p2.y, 'below the schedule type on a phone').toBeGreaterThan(s2.y + s2.height)
+  const body = await dialog.locator('.planner-body').evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
+  expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth + 1)
+})

@@ -529,35 +529,37 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                         <small>{options.projectTypes.find((t) => t.id === projectType)?.description}</small>
                       </div>
                     )}
-                    <div className="planner-field planner-schedule-type">
-                      <label htmlFor={ids.type} className="planner-label">
-                        Schedule type
-                      </label>
-                      <select id={ids.type} value={scheduleType} onChange={(e) => setScheduleType(e.target.value)}>
-                        {visibleSchedules.map((t) => (
-                          <option key={t.id} value={t.id} title={t.description}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </select>
-                      {scheduleDescription && <small>{scheduleDescription}</small>}
-                    </div>
-                    {procoreProjects.length > 0 && (
-                      <div className="planner-field planner-schedule-type planner-procore-project">
-                        <label htmlFor={ids.procoreProject} className="planner-label">
-                          Procore project
+                    <div className="planner-field-pair">
+                      <div className="planner-field planner-schedule-type">
+                        <label htmlFor={ids.type} className="planner-label">
+                          Schedule type
                         </label>
-                        <select id={ids.procoreProject} value={procoreProject} onChange={(e) => setProcoreProject(e.target.value)}>
-                          <option value="">None</option>
-                          {procoreProjects.map((p) => (
-                            <option key={p.code} value={p.code}>
-                              {projectOption(p)}
+                        <select id={ids.type} value={scheduleType} onChange={(e) => setScheduleType(e.target.value)}>
+                          {visibleSchedules.map((t) => (
+                            <option key={t.id} value={t.id} title={t.description}>
+                              {t.name}
                             </option>
                           ))}
                         </select>
-                        <small>The Procore project this plan is bought against: a program project for batch buying, or a site.</small>
+                        {scheduleDescription && <small>{scheduleDescription}</small>}
                       </div>
-                    )}
+                      {procoreProjects.length > 0 && (
+                        <div className="planner-field planner-schedule-type planner-procore-project">
+                          <label htmlFor={ids.procoreProject} className="planner-label">
+                            Procore project
+                          </label>
+                          <select id={ids.procoreProject} value={procoreProject} onChange={(e) => setProcoreProject(e.target.value)}>
+                            <option value="">None</option>
+                            {procoreProjects.map((p) => (
+                              <option key={p.code} value={p.code}>
+                                {projectOption(p)}
+                              </option>
+                            ))}
+                          </select>
+                          <small>What the plan is bought against: a program project for batch buying, or a site.</small>
+                        </div>
+                      )}
+                    </div>
 
                     {equipmentTypes.length > 0 && (
                       <fieldset className="planner-types">
