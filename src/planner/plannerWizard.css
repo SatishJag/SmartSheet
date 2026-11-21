@@ -246,8 +246,9 @@
 /* ---------- step 1: request ---------- */
 .planner-schedule-type { max-width: 460px; }
 /* Schedule type and Procore project share one row; they stack on phones. */
-.planner-field-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 460px)); gap: 0 16px; align-items: start; }
+.planner-field-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 460px)); gap: 16px; align-items: start; }
 .planner-field-pair .planner-schedule-type { max-width: none; }
+.planner-project-type + .planner-field-pair { margin-top: 16px; }
 
 .planner-types { min-width: 0; margin: 20px 0 0; padding: 0; border: 0; }
 .planner-types legend { padding: 0; margin: 0 0 2px; font-size: 0.875rem; font-weight: 800; }

@@ -296,3 +296,27 @@ test('Plan with AI: the Procore project sits beside the schedule type, and below
   const body = await dialog.locator('.planner-body').evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
   expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth + 1)
 })
+
+test('Plan with AI: the top fields have room between them', async ({ page }) => {
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        projectTypes: [{ id: 'data-centre', name: 'Data centre', description: 'Power, cooling and white-space fit-out for data halls.' }],
+        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
+      } satisfies PlannerOptions,
+    }),
+  )
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  const hint = (await dialog.getByText('Power, cooling and white-space fit-out for data halls.').boundingBox())!
+  const label = (await dialog.locator('label', { hasText: 'Schedule type' }).boundingBox())!
+  expect(label.y - (hint.y + hint.height), 'space between the project type hint and the schedule type label').toBeGreaterThanOrEqual(12)
+
+  // On a phone the Procore project stacks under the schedule type, with room between them too.
+  await page.setViewportSize({ width: 375, height: 800 })
+  const scheduleHint = (await dialog.locator('.planner-schedule-type small').first().boundingBox())!
+  const projectLabel = (await dialog.locator('label', { hasText: 'Procore project' }).boundingBox())!
+  expect(projectLabel.y - (scheduleHint.y + scheduleHint.height), 'space between the schedule type hint and the Procore project label').toBeGreaterThanOrEqual(12)
+})
