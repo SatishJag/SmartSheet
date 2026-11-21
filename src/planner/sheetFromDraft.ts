@@ -27,6 +27,18 @@ export interface CostCodeColumn {
   values: (string | undefined)[]
 }
 
+/** Title of the Procore project dropdown column (one project per plan). */
+export const PROJECT_COLUMN_TITLE = 'Procore project'
+
+/**
+ * The Procore project column a plan sheet gets: its dropdown options ("BKK-03 — Bangkok 3") and the
+ * plan's project (undefined: none chosen). A value not among the options is left out.
+ */
+export interface ProjectColumn {
+  options: string[]
+  value?: string
+}
+
 /** Titles of the optional columns a catalog's reference details fill (property development template). */
 export const ACTIVITY_ID_COLUMN_TITLE = 'Activity ID'
 export const RESPONSIBILITY_COLUMN_TITLE = 'Lead responsibility'
@@ -86,7 +98,14 @@ function itemSourceText(draft: PlanDraft): string {
  * plan fills. When the drafts carry catalog reference details, "Activity ID" follows the task name and
  * "Lead responsibility" and "Completion / release criteria" come before "Basis".
  */
-function newPlanSheet(name: string, ownerId: string, calendar: Calendar, drafts: PlanDraft[] = [], costCodeOptions: string[] = []) {
+function newPlanSheet(
+  name: string,
+  ownerId: string,
+  calendar: Calendar,
+  drafts: PlanDraft[] = [],
+  costCodeOptions: string[] = [],
+  projectOptions: string[] = [],
+) {
   const base = createSheetFromTemplate('project-schedule', ownerId)
   const sheet: SheetMeta = {
     ...base.sheet,
@@ -100,10 +119,12 @@ function newPlanSheet(name: string, ownerId: string, calendar: Calendar, drafts:
   const idColumn = extra(has((a) => a.activityId), ACTIVITY_ID_COLUMN_TITLE)
   const responsibilityColumn = extra(has((a) => a.responsibility), RESPONSIBILITY_COLUMN_TITLE)
   const criteriaColumn = extra(has((a) => a.criteria), CRITERIA_COLUMN_TITLE)
+  const projectColumn: Column | null =
+    projectOptions.length > 0 ? { id: crypto.randomUUID(), title: PROJECT_COLUMN_TITLE, type: 'PICKLIST', options: [...projectOptions] } : null
   const costCodeColumn: Column | null =
     costCodeOptions.length > 0 ? { id: crypto.randomUUID(), title: COST_CODE_COLUMN_TITLE, type: 'PICKLIST', options: [...costCodeOptions] } : null
   const [first, ...rest] = base.columns
-  const columns = [first, ...(idColumn ? [idColumn] : []), ...rest, ...(responsibilityColumn ? [responsibilityColumn] : []), ...(criteriaColumn ? [criteriaColumn] : []), ...(costCodeColumn ? [costCodeColumn] : []), basisColumn]
+  const columns = [first, ...(idColumn ? [idColumn] : []), ...rest, ...(responsibilityColumn ? [responsibilityColumn] : []), ...(criteriaColumn ? [criteriaColumn] : []), ...(projectColumn ? [projectColumn] : []), ...(costCodeColumn ? [costCodeColumn] : []), basisColumn]
   const colId = (pick: (c: Column) => boolean, what: string) => {
     const col = columns.find(pick)
     if (!col) throw new Error(`The Project schedule template has no ${what} column`)
@@ -120,6 +141,7 @@ function newPlanSheet(name: string, ownerId: string, calendar: Calendar, drafts:
     responsibility: responsibilityColumn?.id,
     criteria: criteriaColumn?.id,
     costCode: costCodeColumn?.id,
+    project: projectColumn?.id,
   }
   return { sheet, columns, cols }
 }
@@ -132,13 +154,34 @@ function costCodeValue(costCodes: CostCodeColumn | undefined, i: number): string
   return value && costCodes.options.includes(value) ? value : undefined
 }
 
+/** The plan's project option, only if it is one of the column's options (the dropdown is strict). */
+function projectValue(project: ProjectColumn | undefined): string | undefined {
+  const value = project?.value
+  return value && project.options.includes(value) ? value : undefined
+}
+
+/** The budget-line cells an item's rows carry (Procore project and cost code), where they have a value. */
+function tagCells(cols: PlanCols, project?: string, costCode?: string): Record<string, unknown> {
+  return {
+    ...(cols.project && project ? { [cols.project]: project } : {}),
+    ...(cols.costCode && costCode ? { [cols.costCode]: costCode } : {}),
+  }
+}
+
 /**
  * One draft's activity rows (draft order, children of `parentId`, or top-level when null) and the
  * dependencies between them. Dependencies are keyed by this draft's activity codes only, so two
  * drafts that use the same codes never link to each other. Only rows without predecessors carry a
  * Start (the backward-planned one).
  */
-function activityRows(draft: PlanDraft, plan: BackwardPlan, cols: PlanCols, calendar: Calendar, parentId: string | null, costCode?: string) {
+function activityRows(
+  draft: PlanDraft,
+  plan: BackwardPlan,
+  cols: PlanCols,
+  calendar: Calendar,
+  parentId: string | null,
+  tags: Record<string, unknown> = {},
+) {
   const planned = new Map(plan.activities.map((a) => [a.code, a]))
   const positions = generateNKeysBetween(null, null, draft.activities.length)
   const rowIdByCode = new Map<string, string>()
@@ -156,7 +199,7 @@ function activityRows(draft: PlanDraft, plan: BackwardPlan, cols: PlanCols, cale
     if (cols.activityId && a.activityId) cells[cols.activityId] = a.activityId
     if (cols.responsibility && a.responsibility) cells[cols.responsibility] = a.responsibility
     if (cols.criteria && a.criteria) cells[cols.criteria] = a.criteria
-    if (cols.costCode && costCode) cells[cols.costCode] = costCode
+    Object.assign(cells, tags)
     if (p?.isRoot) cells[cols.start] = p.start
     return { id, parentId, position: positions[i], cells, version: 0 }
   })
@@ -175,10 +218,18 @@ function activityRows(draft: PlanDraft, plan: BackwardPlan, cols: PlanCols, cale
  * Start (the backward-planned one); the engine derives every other date from the links, so the
  * sheet opens with the dates the preview showed. Pure apart from fresh ids.
  */
-export function buildSheetFromDraft(draft: PlanDraft, plan: BackwardPlan, ownerId: string, calendar: Calendar, costCodes?: CostCodeColumn): SheetData {
-  const { sheet, columns, cols } = newPlanSheet(sheetNameForDraft(draft), ownerId, calendar, [draft], costCodes?.options)
-  // One item: every row belongs to it, so every row carries its cost code.
-  const { rows, dependencies } = activityRows(draft, plan, cols, calendar, null, costCodeValue(costCodes, 0))
+export function buildSheetFromDraft(
+  draft: PlanDraft,
+  plan: BackwardPlan,
+  ownerId: string,
+  calendar: Calendar,
+  costCodes?: CostCodeColumn,
+  project?: ProjectColumn,
+): SheetData {
+  const { sheet, columns, cols } = newPlanSheet(sheetNameForDraft(draft), ownerId, calendar, [draft], costCodes?.options, project?.options)
+  // One item: every row belongs to it, so every row carries its project and cost code.
+  const tags = tagCells(cols, projectValue(project), costCodeValue(costCodes, 0))
+  const { rows, dependencies } = activityRows(draft, plan, cols, calendar, null, tags)
   return { sheet, columns, rows, dependencies }
 }
 
@@ -195,22 +246,28 @@ export interface PlannedDraft {
  * predecessors (the engine rolls their dates up from the children), so the sheet opens with the
  * dates of every item's preview. Pure apart from fresh ids.
  */
-export function buildSheetFromDrafts(items: PlannedDraft[], ownerId: string, calendar: Calendar, costCodes?: CostCodeColumn): SheetData {
+export function buildSheetFromDrafts(
+  items: PlannedDraft[],
+  ownerId: string,
+  calendar: Calendar,
+  costCodes?: CostCodeColumn,
+  project?: ProjectColumn,
+): SheetData {
   if (items.length === 0) throw new Error('There is nothing to plan')
-  if (items.length === 1) return buildSheetFromDraft(items[0].draft, items[0].plan, ownerId, calendar, costCodes)
+  if (items.length === 1) return buildSheetFromDraft(items[0].draft, items[0].plan, ownerId, calendar, costCodes, project)
   const { sheet, columns, cols } = newPlanSheet(
     sheetNameForDrafts(items.map((i) => i.draft)),
     ownerId,
     calendar,
     items.map((i) => i.draft),
     costCodes?.options,
+    project?.options,
   )
   const positions = generateNKeysBetween(null, null, items.length)
   const rows: RowRecord[] = []
   const dependencies: SchedDep[] = []
   items.forEach(({ draft, plan }, i) => {
     const parentId = crypto.randomUUID()
-    const code = costCodeValue(costCodes, i)
     rows.push({
       id: parentId,
       parentId: null,
@@ -219,8 +276,8 @@ export function buildSheetFromDrafts(items: PlannedDraft[], ownerId: string, cal
         [cols.task]: clip(itemRowName(draft), 200),
         [cols.status]: 'Not started',
         [cols.basis]: itemSourceText(draft),
-        // Several items: the cost code belongs to the item, so only its summary row carries it.
-        ...(cols.costCode && code ? { [cols.costCode]: code } : {}),
+        // Several items: project and cost code belong to the item, so only its summary row carries them.
+        ...tagCells(cols, projectValue(project), costCodeValue(costCodes, i)),
       },
       version: 0,
     })
@@ -298,9 +355,9 @@ export async function insertSheetFromDrafts(
   drafts: PlanDraft[],
   userId: string,
   calendar: Calendar,
-  options: { today?: string; costCodes?: CostCodeColumn } = {},
+  options: { today?: string; costCodes?: CostCodeColumn; project?: ProjectColumn } = {},
 ): Promise<string> {
   const today = options.today ?? todayIso()
   const items = drafts.map((draft) => ({ draft, plan: planBackward(draft, calendar, today) }))
-  return insertSheetData(client, buildSheetFromDrafts(items, userId, calendar, options.costCodes))
+  return insertSheetData(client, buildSheetFromDrafts(items, userId, calendar, options.costCodes, options.project))
 }

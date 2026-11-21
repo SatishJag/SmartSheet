@@ -13,6 +13,7 @@ import {
   buildSheetFromDraft,
   buildSheetFromDrafts,
   type CostCodeColumn,
+  type ProjectColumn,
   insertSheetFromDraft,
   insertSheetFromDrafts,
   itemRowName,
@@ -463,5 +464,66 @@ describe('Cost code column', () => {
     expect(column).toMatchObject({ type: 'PICKLIST', options: CC.options })
     const parents = loaded.rows.filter((r) => r.parentId === null).sort((a, b) => (a.position < b.position ? -1 : 1))
     expect(parents.map((r) => r.cells[column.id])).toEqual(['GEN — Generator', undefined, 'CHL — Chiller'])
+  })
+})
+
+describe('Procore project column', () => {
+  const CC: CostCodeColumn = { options: ['CHL — Chiller', 'GEN — Generator'], values: ['GEN — Generator', undefined, 'CHL — Chiller'] }
+  const P: ProjectColumn = { options: ['BKK-03 — Bangkok 3'], value: 'BKK-03 — Bangkok 3' }
+  const plannedOf = (drafts: ReturnType<typeof threeDrafts>) => drafts.map((draft) => ({ draft, plan: planBackward(draft, cal, TODAY) }))
+  const three = plannedOf(threeDrafts())
+  const one = plannedOf([lleDraft('2027-06-30')])
+  const titles = (columns: { title: string }[]) => columns.map((c) => c.title)
+  const projectCol = (columns: { id: string; title: string }[]) => columns.find((c) => c.title === 'Procore project')?.id
+
+  it('adds a strict Procore project dropdown just before Cost code', () => {
+    const { columns } = buildSheetFromDrafts(three, 'u', cal, CC, P)
+    expect(titles(columns).slice(-3)).toEqual(['Procore project', 'Cost code', 'Basis'])
+    expect(columns.find((c) => c.title === 'Procore project')).toMatchObject({ type: 'PICKLIST', options: P.options })
+  })
+
+  it('goes just before Basis when there is no Cost code column', () => {
+    const { columns } = buildSheetFromDrafts(three, 'u', cal, undefined, P)
+    expect(titles(columns).slice(-2)).toEqual(['Procore project', 'Basis'])
+  })
+
+  it('puts the project on every summary row only', () => {
+    const { columns, rows } = buildSheetFromDrafts(three, 'u', cal, CC, P)
+    const col = projectCol(columns)!
+    expect(rows.filter((r) => r.parentId === null).map((r) => r.cells[col])).toEqual(Array(3).fill('BKK-03 — Bangkok 3'))
+    expect(rows.filter((r) => r.parentId !== null).every((r) => r.cells[col] === undefined)).toBe(true)
+  })
+
+  it('puts a single item’s project on every row', () => {
+    const { columns, rows } = buildSheetFromDrafts(one, 'u', cal, undefined, P)
+    const col = projectCol(columns)!
+    expect(rows.length).toBeGreaterThan(1)
+    expect(rows.every((r) => r.cells[col] === 'BKK-03 — Bangkok 3')).toBe(true)
+  })
+
+  it('adds the column with empty cells when no project was chosen', () => {
+    const { columns, rows } = buildSheetFromDrafts(three, 'u', cal, CC, { options: P.options })
+    const col = projectCol(columns)!
+    expect(rows.every((r) => r.cells[col] === undefined)).toBe(true)
+  })
+
+  it('ignores a value that is not one of the options', () => {
+    const { columns, rows } = buildSheetFromDrafts(one, 'u', cal, undefined, { options: P.options, value: 'XYZ — Nowhere' })
+    const col = projectCol(columns)!
+    expect(rows.every((r) => r.cells[col] === undefined)).toBe(true)
+  })
+
+  it('adds no column without projects', () => {
+    expect(projectCol(buildSheetFromDrafts(three, 'u', cal, CC).columns)).toBeUndefined()
+    expect(projectCol(buildSheetFromDrafts(three, 'u', cal, CC, { options: [] }).columns)).toBeUndefined()
+  })
+
+  it('saves the column and the project, and they load back', async () => {
+    const { client, userId } = fakeClient()
+    const sheetId = await insertSheetFromDrafts(client, threeDrafts(), userId, cal, { today: TODAY, costCodes: CC, project: P })
+    const loaded = await supabasePersistence(client).loadSheet(sheetId)
+    const column = loaded.columns.find((c) => c.title === 'Procore project')!
+    expect(column).toMatchObject({ type: 'PICKLIST', options: P.options })
+    expect(loaded.rows.filter((r) => r.parentId === null).map((r) => r.cells[column.id])).toEqual(Array(3).fill('BKK-03 — Bangkok 3'))
   })
 })
