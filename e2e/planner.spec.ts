@@ -320,3 +320,25 @@ test('Plan with AI: the top fields have room between them', async ({ page }) => 
   const projectLabel = (await dialog.locator('label', { hasText: 'Procore project' }).boundingBox())!
   expect(projectLabel.y - (scheduleHint.y + scheduleHint.height), 'space between the schedule type hint and the Procore project label').toBeGreaterThanOrEqual(12)
 })
+
+test('Plan with AI: the equipment name stays wide enough to read beside the cost code, at any window width', async ({ page }) => {
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        costCodes: [{ code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' }],
+      } satisfies PlannerOptions,
+    }),
+  )
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  await dialog.getByRole('checkbox', { name: /^Power transformer/ }).check()
+  await dialog.getByRole('checkbox', { name: /^Switchgear/ }).check()
+  const name = dialog.getByRole('group', { name: 'Item 1' }).getByLabel('Equipment name')
+  for (const width of [861, 900, 960, 1000, 1040, 1100, 1280]) {
+    await page.setViewportSize({ width, height: 800 })
+    const box = (await name.boundingBox())!
+    expect(box.width, `equipment name width at a ${width}px window`).toBeGreaterThanOrEqual(150)
+  }
+})

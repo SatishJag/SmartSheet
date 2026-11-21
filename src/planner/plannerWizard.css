@@ -684,6 +684,16 @@
 .planner-regenerate small { font-size: 0.78125rem; color: var(--ink-3); }
 
 /* ---------- small screens: a full-height sheet, no horizontal scroll, 44px targets ---------- */
+/* A row with a Cost code has one more field: it goes onto two lines sooner, so the name keeps room. */
+@media (max-width: 1100px) {
+  .planner-item-row.has-code { grid-template-columns: minmax(130px, 200px) minmax(0, 1fr); grid-template-areas: 'type date' 'name code'; }
+  .planner-item-row.has-code.has-index { grid-template-columns: 28px minmax(130px, 1fr) 200px 40px; grid-template-areas: 'idx type date rm' 'name name code code'; }
+  .planner-item-row.has-code.has-other { grid-template-areas: 'type date' 'other other' 'name code'; }
+  .planner-item-row.has-code.has-index.has-other { grid-template-areas: 'idx type date rm' '. other other other' 'name name code code'; }
+  .planner-item-row.has-code.no-select { grid-template-areas: 'type date' 'name code'; }
+  .planner-item-row.has-code.no-select.has-index { grid-template-areas: 'idx type date rm' 'name name code code'; }
+}
+
 @media (max-width: 860px) {
   .planner-item-row { grid-template-columns: minmax(130px, 200px) minmax(0, 1fr); grid-template-areas: 'type date' 'name name'; }
   .planner-item-row.has-index { grid-template-columns: 28px minmax(130px, 1fr) 200px 40px; grid-template-areas: 'idx type date rm' 'name name name name'; }
@@ -691,12 +701,6 @@
   .planner-item-row.has-index.has-other { grid-template-areas: 'idx type date rm' '. other other other' 'name name name name'; }
   .planner-item-row.no-select { grid-template-areas: 'type date' 'name name'; }
   .planner-item-row.no-select.has-index { grid-template-areas: 'idx type date rm' 'name name name name'; }
-  .planner-item-row.has-code { grid-template-columns: minmax(130px, 200px) minmax(0, 1fr); grid-template-areas: 'type date' 'name code'; }
-  .planner-item-row.has-code.has-index { grid-template-columns: 28px minmax(130px, 1fr) 200px 40px; grid-template-areas: 'idx type date rm' 'name name code code'; }
-  .planner-item-row.has-code.has-other { grid-template-areas: 'type date' 'other other' 'name code'; }
-  .planner-item-row.has-code.has-index.has-other { grid-template-areas: 'idx type date rm' '. other other other' 'name name code code'; }
-  .planner-item-row.has-code.no-select { grid-template-areas: 'type date' 'name code'; }
-  .planner-item-row.has-code.no-select.has-index { grid-template-areas: 'idx type date rm' 'name name code code'; }
 }
 
 @media (max-width: 640px) {

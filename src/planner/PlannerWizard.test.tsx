@@ -981,3 +981,38 @@ describe('PlannerWizard: Procore project', () => {
     expect(titles).not.toContain('Procore project')
   })
 })
+
+describe('PlannerWizard: Retry after a refused request', () => {
+  it('drafts the form as it is now, so each draft keeps the cost code of its own equipment type', async () => {
+    let calls = 0
+    const { batches } = mockServer({
+      options: () =>
+        json(200, {
+          ...OPTIONS,
+          costCodes: [
+            { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
+            { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
+          ],
+        }),
+      batch: (r) => (++calls === 1 ? json(429, { ok: false, error: 'You have 0 drafts left of your 10 per hour.' }) : batchReply(r)),
+    })
+    const { client, user, onCreated } = setup()
+    await requestTwo(user)
+    expect(await screen.findByRole('alert')).toHaveTextContent('0 drafts left')
+    // While the request is refused, item 1 changes from a power transformer to switchgear.
+    await user.selectOptions(within(itemGroup(1)).getByLabelText('Equipment type'), 'Switchgear')
+    expect(within(itemGroup(1)).getByLabelText('Cost code')).toHaveValue('HVS')
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await screen.findByText(/2 items · earliest required start/)
+    expect(batches[1].items.map((i) => i.equipmentType)).toEqual(['Switchgear', 'Switchgear'])
+
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const columns = (await client.from('columns').select('id,title')).data as { id: string; title: string }[]
+    const task = columns.find((c) => c.title === 'Task')!.id
+    const code = columns.find((c) => c.title === 'Cost code')!.id
+    const rows = (await client.from('rows').select('parent_id,cells')).data as { parent_id: string | null; cells: Record<string, unknown> }[]
+    const first = rows.find((r) => r.parent_id === null && String(r.cells[task]).startsWith('Switchgear — 400 MVA transformer'))!
+    expect(first.cells[code]).toBe('HVS — HV SiwtchGear')
+  })
+})
