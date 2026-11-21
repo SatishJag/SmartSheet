@@ -34,8 +34,9 @@ import {
   type ItemForm,
 } from './plannerItems'
 import { codeForType, costCodeOption, optionForCode } from './costCodes'
+import { optionForProject, projectOption } from './procoreProjects'
 import { insertSheetFromDrafts } from './sheetFromDraft'
-import { DEFAULT_ITEM_LABELS, type CostCode, type ItemLabels, type PlannerOptions } from './types'
+import { DEFAULT_ITEM_LABELS, type CostCode, type ItemLabels, type PlannerOptions, type ProcoreProject } from './types'
 import './plannerWizard.css'
 
 export { BASIS_LABELS, sourceLabel } from './PlanPreview'
@@ -95,6 +96,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     sharedDate: useId(),
     notes: useId(),
     project: useId(),
+    procoreProject: useId(),
     instruction: useId(),
     error: useId(),
     item: useId(),
@@ -115,6 +117,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
 
   const [projectType, setProjectType] = useState('')
   const [scheduleType, setScheduleType] = useState('')
+  /** The Procore project the plan is bought against (a code), or '' for none. Kept across type changes. */
+  const [procoreProject, setProcoreProject] = useState('')
   const [items, setItems] = useState<ItemForm[]>(() => [newItem('')])
   const [sameDate, setSameDate] = useState(true)
   const [sharedDate, setSharedDate] = useState('')
@@ -180,6 +184,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const projectCounts = options?.projectCounts?.[scheduleType] ?? {}
   const defaultChoice = equipmentTypes[0] ?? OTHER
   const costCodes = options?.costCodes ?? NO_COST_CODES
+  const procoreProjects = options?.procoreProjects ?? NO_PROJECTS
   // Items whose type is not on offer for the schedule type (or not chosen yet) get the first type with history.
   useEffect(() => {
     if (!options) return
@@ -350,7 +355,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               values: entries.map((e) => optionForCode(costCodes, items.find((i) => i.key === e.key)?.costCode ?? '')),
             }
           : undefined
-      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today, costCodes: sheetCostCodes })
+      const project =
+        procoreProjects.length > 0 ? { options: procoreProjects.map(projectOption), value: optionForProject(procoreProjects, procoreProject) } : undefined
+      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today, costCodes: sheetCostCodes, project })
       if (mounted.current) onCreated(sheetId)
     } catch (err) {
       if (!mounted.current) return
@@ -535,6 +542,22 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                       </select>
                       {scheduleDescription && <small>{scheduleDescription}</small>}
                     </div>
+                    {procoreProjects.length > 0 && (
+                      <div className="planner-field planner-schedule-type planner-procore-project">
+                        <label htmlFor={ids.procoreProject} className="planner-label">
+                          Procore project
+                        </label>
+                        <select id={ids.procoreProject} value={procoreProject} onChange={(e) => setProcoreProject(e.target.value)}>
+                          <option value="">None</option>
+                          {procoreProjects.map((p) => (
+                            <option key={p.code} value={p.code}>
+                              {projectOption(p)}
+                            </option>
+                          ))}
+                        </select>
+                        <small>The Procore project this plan is bought against: a program project for batch buying, or a site.</small>
+                      </div>
+                    )}
 
                     {equipmentTypes.length > 0 && (
                       <fieldset className="planner-types">
@@ -758,6 +781,7 @@ interface ItemFieldsProps {
 }
 
 const NO_COST_CODES: CostCode[] = []
+const NO_PROJECTS: ProcoreProject[] = []
 
 const FieldError = ({ id, children }: { id: string; children: string }) => (
   <small id={id} className="planner-error">

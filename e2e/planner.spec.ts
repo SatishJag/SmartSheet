@@ -108,6 +108,7 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
       json: {
         ...OPTIONS,
         projectCounts: { 'lle-procurement': { 'Power transformer': 8, Switchgear: 5 } },
+        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
         costCodes: [
           { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
           { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
@@ -137,6 +138,9 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
   await expect(dialog.getByLabel('Schedule type')).toHaveValue('lle-procurement')
+  // The plan is bought against one Procore project: none until the user picks one.
+  await expect(dialog.getByLabel('Procore project')).toHaveValue('')
+  await dialog.getByLabel('Procore project').selectOption('BKK-03')
 
   // Tick two equipment types: each adds an item.
   await dialog.getByRole('checkbox', { name: 'Power transformer · 8 projects' }).check()
@@ -205,6 +209,8 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   await expect(await gridCell(page, 9, 'Task')).toContainText('Manufacturing')
   await expect(await gridCell(page, 9, 'Start')).toHaveText(mfg.start)
   // The cost code sits on each item's summary row, not on its activities.
+  await expect(await gridCell(page, 1, 'Procore project')).toHaveText('BKK-03 — Bangkok 3')
+  await expect(await gridCell(page, 2, 'Procore project')).toHaveText('')
   await expect(await gridCell(page, 1, 'Cost code')).toHaveText('TRF — Transformer')
   await expect(await gridCell(page, 2, 'Cost code')).toHaveText('')
   await expect(await gridCell(page, 9, 'Basis')).toHaveText('adjusted: p80 is 110 days; raised 10 days because the vendor is at capacity.')
@@ -212,6 +218,7 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   await expect(await gridCell(page, 16, 'Task')).toContainText('Switchgear — 132 kV GIS')
   await expect(rowAt(16)).toHaveAttribute('aria-level', '1')
   await expect(await gridCell(page, 16, 'Cost code')).toHaveText('HVS — HV SiwtchGear')
+  await expect(await gridCell(page, 16, 'Procore project')).toHaveText('BKK-03 — Bangkok 3')
   await expect(await gridCell(page, 16, 'Start')).toHaveText(switchgear.mustStartBy)
   await expect(await gridCell(page, 16, 'End')).toHaveText(switchgear.projectEnd)
   await expect(await gridCell(page, 17, 'Task')).toContainText('Technical specification') // the same activity code as item 1
@@ -243,6 +250,7 @@ test('Plan with AI on a phone: item rows with a Cost code field do not scroll si
     route.fulfill({
       json: {
         ...OPTIONS,
+        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
         costCodes: [
           { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
           { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
@@ -253,6 +261,7 @@ test('Plan with AI on a phone: item rows with a Cost code field do not scroll si
   await openApp(page)
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  await expect(dialog.getByLabel('Procore project')).toBeVisible()
   await dialog.getByRole('checkbox', { name: /^Power transformer/ }).check()
   await dialog.getByRole('checkbox', { name: /^Switchgear/ }).check()
   const first = dialog.getByRole('group', { name: 'Item 1' })
