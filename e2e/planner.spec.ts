@@ -236,3 +236,31 @@ test('Plan with AI can be started from inside a sheet', async ({ page }) => {
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   await expect(page.getByRole('dialog', { name: 'Plan with AI' }).getByLabel('Project type')).toBeVisible()
 })
+
+test('Plan with AI on a phone: item rows with a Cost code field do not scroll sideways', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 800 })
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        costCodes: [
+          { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
+          { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
+        ],
+      } satisfies PlannerOptions,
+    }),
+  )
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  await dialog.getByRole('checkbox', { name: /^Power transformer/ }).check()
+  await dialog.getByRole('checkbox', { name: /^Switchgear/ }).check()
+  const first = dialog.getByRole('group', { name: 'Item 1' })
+  await expect(first.getByLabel('Cost code')).toHaveValue('TRF')
+  for (const group of [first, dialog.getByRole('group', { name: 'Item 2' })]) {
+    const { scrollWidth, clientWidth } = await group.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
+    expect(scrollWidth, 'item row content width vs row width').toBeLessThanOrEqual(clientWidth + 1)
+  }
+  const body = await dialog.locator('.planner-body').evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
+  expect(body.scrollWidth, 'wizard body content width vs body width').toBeLessThanOrEqual(body.clientWidth + 1)
+})

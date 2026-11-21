@@ -735,6 +735,12 @@
   .planner-item-row.has-index.has-other { grid-template-areas: 'idx type rm' 'other other other' 'name name name' 'date date date'; }
   .planner-item-row.no-select { grid-template-areas: 'type' 'name' 'date'; }
   .planner-item-row.no-select.has-index { grid-template-areas: 'idx type rm' 'name name name' 'date date date'; }
+  .planner-item-row.has-code { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'type' 'name' 'date' 'code'; }
+  .planner-item-row.has-code.has-index { grid-template-columns: 28px minmax(0, 1fr) 44px; grid-template-areas: 'idx type rm' 'name name name' 'date date date' 'code code code'; }
+  .planner-item-row.has-code.has-other { grid-template-areas: 'type' 'other' 'name' 'date' 'code'; }
+  .planner-item-row.has-code.has-index.has-other { grid-template-areas: 'idx type rm' 'other other other' 'name name name' 'date date date' 'code code code'; }
+  .planner-item-row.has-code.no-select { grid-template-areas: 'type' 'name' 'date' 'code'; }
+  .planner-item-row.has-code.no-select.has-index { grid-template-areas: 'idx type rm' 'name name name' 'date date date' 'code code code'; }
   .planner-remove { width: 44px; margin-top: 26px; }
 
   .planner-accordion-button { padding: 14px 48px 14px 16px; }
