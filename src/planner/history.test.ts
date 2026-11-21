@@ -53,6 +53,14 @@ describe('createSupabaseHistorySource', () => {
           { schedule_type: 'lle-procurement', equipment_type: 'Power transformer' },
           { schedule_type: 'orphan', equipment_type: 'Crane' },
         ]),
+        cost_codes: ok([
+          { code: 'CHL', description: 'Chiller', equipment_type: 'Chiller' },
+          { code: 'GEN', description: 'Generator', equipment_type: 'Diesel generator' },
+        ]),
+        procore_projects: ok([
+          { code: 'PRG-1', name: 'Programme', is_program: true },
+          { code: 'BKK-03', name: 'Bangkok 3', is_program: false },
+        ]),
       })
       const options = await createSupabaseHistorySource(client).options()
       expect(options).toEqual({
@@ -67,8 +75,62 @@ describe('createSupabaseHistorySource', () => {
         ],
         // Every schedule type gets an entry, even without history; unknown types are ignored.
         equipmentTypes: { 'lle-procurement': ['Chiller', 'Power transformer'], civil: [] },
+        // Only the codes offered to the planner (in_planner), by code.
+        costCodes: [
+          { code: 'CHL', description: 'Chiller', equipmentType: 'Chiller' },
+          { code: 'GEN', description: 'Generator', equipmentType: 'Diesel generator' },
+        ],
+        // Program projects first, then by code (the query's order).
+        procoreProjects: [
+          { code: 'PRG-1', name: 'Programme', isProgram: true },
+          { code: 'BKK-03', name: 'Bangkok 3', isProgram: false },
+        ],
       })
-      expect(calls.filter((c) => c.method === 'select').map((c) => c.target).sort()).toEqual(['planner_equipment_types', 'project_types', 'schedule_types'])
+      expect(calls.filter((c) => c.method === 'select').map((c) => c.target).sort()).toEqual([
+        'cost_codes',
+        'planner_equipment_types',
+        'procore_projects',
+        'project_types',
+        'schedule_types',
+      ])
+      expect(calls).toContainEqual({ target: 'procore_projects', method: 'eq', args: ['in_planner', true] })
+      const projectOrders = calls.filter((c) => c.target === 'procore_projects' && c.method === 'order').map((c) => c.args)
+      expect(projectOrders).toEqual([
+        ['is_program', { ascending: false }],
+        ['code', { ascending: true }],
+      ])
+      expect(calls).toContainEqual({ target: 'cost_codes', method: 'eq', args: ['in_planner', true] })
+    })
+
+    it('leaves costCodes out when the cost code query fails, and still returns the options', async () => {
+      const base = {
+        schedule_types: ok([{ id: 'lle-procurement', name: 'LLE', description: '', project_types: [] }]),
+        project_types: ok([]),
+        planner_equipment_types: ok([]),
+      }
+      const failed = fakeClient({ ...base, cost_codes: { data: null, error: { message: 'permission denied for table cost_codes' } } })
+      const options = await createSupabaseHistorySource(failed.client).options()
+      expect(options.costCodes).toBeUndefined()
+      expect(options.scheduleTypes.map((t) => t.id)).toEqual(['lle-procurement'])
+
+      const empty = fakeClient({ ...base, cost_codes: ok([]) })
+      expect((await createSupabaseHistorySource(empty.client).options()).costCodes).toBeUndefined()
+    })
+
+    it('leaves procoreProjects out when the project query fails or is empty, and still returns the options', async () => {
+      const base = {
+        schedule_types: ok([{ id: 'lle-procurement', name: 'LLE', description: '', project_types: [] }]),
+        project_types: ok([]),
+        planner_equipment_types: ok([]),
+        cost_codes: ok([{ code: 'CHL', description: 'Chiller', equipment_type: 'Chiller' }]),
+      }
+      const failed = fakeClient({ ...base, procore_projects: { data: null, error: { message: 'permission denied for table procore_projects' } } })
+      const options = await createSupabaseHistorySource(failed.client).options()
+      expect(options.procoreProjects).toBeUndefined()
+      expect(options.costCodes).toHaveLength(1)
+
+      const empty = fakeClient({ ...base, procore_projects: ok([]) })
+      expect((await createSupabaseHistorySource(empty.client).options()).procoreProjects).toBeUndefined()
     })
 
     it('passes the schedule type’s own words for what it plans, and ignores malformed ones', async () => {

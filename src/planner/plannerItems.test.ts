@@ -10,6 +10,8 @@ import {
   OTHER,
   removeCardItem,
   removeItem,
+  setCostCode,
+  syncCostCodes,
   validateItems,
   type FormValues,
   type ItemForm,
@@ -158,5 +160,55 @@ describe('equipment cards', () => {
     const b = item()
     expect(removeItem([a, b], a.key, 'x')).toEqual([b])
     expect(removeItem([a], a.key, 'Chiller')[0]).toMatchObject({ choice: 'Chiller', name: '' })
+  })
+})
+
+describe('cost codes', () => {
+  const codeFor = (t: string) => ({ Chiller: 'CHL', 'Diesel generator': 'GEN' })[t] ?? ''
+
+  it('starts a new item with no code, unedited', () => {
+    expect(newItem('Chiller')).toMatchObject({ costCode: '', costCodeEdited: false })
+  })
+
+  it('fills an unedited item’s code from its type', () => {
+    const [a] = syncCostCodes([newItem('Chiller')], codeFor)
+    expect(a.costCode).toBe('CHL')
+  })
+
+  it('follows a type change while the code is unedited', () => {
+    const items = syncCostCodes([newItem('Chiller')], codeFor)
+    const [b] = syncCostCodes([{ ...items[0], choice: 'Diesel generator' }], codeFor)
+    expect(b.costCode).toBe('GEN')
+  })
+
+  it('clears the code when the new type has none', () => {
+    const items = syncCostCodes([newItem('Chiller')], codeFor)
+    expect(syncCostCodes([{ ...items[0], choice: 'Crane' }], codeFor)[0].costCode).toBe('')
+  })
+
+  it('keeps a hand-picked code when the type changes', () => {
+    const edited = setCostCode(newItem('Chiller'), 'GEN')
+    expect(syncCostCodes([{ ...edited, choice: 'Chiller' }], codeFor)[0].costCode).toBe('GEN')
+  })
+
+  it('keeps a hand-cleared code empty when the type changes', () => {
+    const cleared = setCostCode(syncCostCodes([newItem('Chiller')], codeFor)[0], '')
+    expect(syncCostCodes([{ ...cleared, choice: 'Diesel generator' }], codeFor)[0].costCode).toBe('')
+  })
+
+  it('leaves a typed-in type blank even when the text matches a mapped type', () => {
+    const other = { ...newItem(OTHER), other: 'Chiller' }
+    expect(syncCostCodes([other], codeFor)[0].costCode).toBe('')
+  })
+
+  it('returns the same array when nothing changes', () => {
+    const items = syncCostCodes([newItem('Chiller')], codeFor)
+    expect(syncCostCodes(items, codeFor)).toBe(items)
+  })
+
+  it('does not put the cost code in the job', () => {
+    const item = { ...setCostCode(newItem('Chiller'), 'CHL'), name: 'Chiller 1', date: '2027-11-17' }
+    const job = jobFromForm({ scheduleType: 'lle-procurement', items: [item], sameDate: false, sharedDate: '', notes: '' })
+    expect(job.items[0]).not.toHaveProperty('costCode')
   })
 })

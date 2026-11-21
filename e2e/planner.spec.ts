@@ -105,7 +105,15 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   const singles: PlanRequest[] = []
   await page.route('**/api/planner/options', (route) =>
     route.fulfill({
-      json: { ...OPTIONS, projectCounts: { 'lle-procurement': { 'Power transformer': 8, Switchgear: 5 } } } satisfies PlannerOptions,
+      json: {
+        ...OPTIONS,
+        projectCounts: { 'lle-procurement': { 'Power transformer': 8, Switchgear: 5 } },
+        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
+        costCodes: [
+          { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
+          { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
+        ],
+      } satisfies PlannerOptions,
     }),
   )
   // The server answers each item with the catalog draft (the second one domestic: no customs step).
@@ -130,6 +138,9 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
   await expect(dialog.getByLabel('Schedule type')).toHaveValue('lle-procurement')
+  // The plan is bought against one Procore project: none until the user picks one.
+  await expect(dialog.getByLabel('Procore project')).toHaveValue('')
+  await dialog.getByLabel('Procore project').selectOption('BKK-03')
 
   // Tick two equipment types: each adds an item.
   await dialog.getByRole('checkbox', { name: 'Power transformer · 8 projects' }).check()
@@ -138,6 +149,9 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   const second = dialog.getByRole('group', { name: 'Item 2' })
   await expect(first.getByLabel('Equipment type')).toHaveValue('Power transformer')
   await expect(second.getByLabel('Equipment type')).toHaveValue('Switchgear')
+  // Each item's Procore cost code is filled in from its type.
+  await expect(first.getByLabel('Cost code')).toHaveValue('TRF')
+  await expect(second.getByLabel('Cost code')).toHaveValue('HVS')
   await first.getByLabel('Equipment name').fill('400 MVA transformer')
   await second.getByLabel('Equipment name').fill('132 kV GIS')
   // One shared date, and the switchgear needed earlier on its own date.
@@ -194,10 +208,17 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   const mfg = transformer.activities.find((a) => a.code === 'MFG')!
   await expect(await gridCell(page, 9, 'Task')).toContainText('Manufacturing')
   await expect(await gridCell(page, 9, 'Start')).toHaveText(mfg.start)
+  // The cost code sits on each item's summary row, not on its activities.
+  await expect(await gridCell(page, 1, 'Procore project')).toHaveText('BKK-03 — Bangkok 3')
+  await expect(await gridCell(page, 2, 'Procore project')).toHaveText('')
+  await expect(await gridCell(page, 1, 'Cost code')).toHaveText('TRF — Transformer')
+  await expect(await gridCell(page, 2, 'Cost code')).toHaveText('')
   await expect(await gridCell(page, 9, 'Basis')).toHaveText('adjusted: p80 is 110 days; raised 10 days because the vendor is at capacity.')
   // Item 1 has 14 activities: rows 2 to 15; item 2's summary row is row 16 and its activities follow.
   await expect(await gridCell(page, 16, 'Task')).toContainText('Switchgear — 132 kV GIS')
   await expect(rowAt(16)).toHaveAttribute('aria-level', '1')
+  await expect(await gridCell(page, 16, 'Cost code')).toHaveText('HVS — HV SiwtchGear')
+  await expect(await gridCell(page, 16, 'Procore project')).toHaveText('BKK-03 — Bangkok 3')
   await expect(await gridCell(page, 16, 'Start')).toHaveText(switchgear.mustStartBy)
   await expect(await gridCell(page, 16, 'End')).toHaveText(switchgear.projectEnd)
   await expect(await gridCell(page, 17, 'Task')).toContainText('Technical specification') // the same activity code as item 1
@@ -221,4 +242,81 @@ test('Plan with AI can be started from inside a sheet', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Schedule settings' })).toBeVisible()
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   await expect(page.getByRole('dialog', { name: 'Plan with AI' }).getByLabel('Project type')).toBeVisible()
+})
+
+test('Plan with AI on a phone: item rows with a Cost code field do not scroll sideways', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 800 })
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
+        costCodes: [
+          { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
+          { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
+        ],
+      } satisfies PlannerOptions,
+    }),
+  )
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  await expect(dialog.getByLabel('Procore project')).toBeVisible()
+  await dialog.getByRole('checkbox', { name: /^Power transformer/ }).check()
+  await dialog.getByRole('checkbox', { name: /^Switchgear/ }).check()
+  const first = dialog.getByRole('group', { name: 'Item 1' })
+  await expect(first.getByLabel('Cost code')).toHaveValue('TRF')
+  for (const group of [first, dialog.getByRole('group', { name: 'Item 2' })]) {
+    const { scrollWidth, clientWidth } = await group.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
+    expect(scrollWidth, 'item row content width vs row width').toBeLessThanOrEqual(clientWidth + 1)
+  }
+  const body = await dialog.locator('.planner-body').evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
+  expect(body.scrollWidth, 'wizard body content width vs body width').toBeLessThanOrEqual(body.clientWidth + 1)
+})
+
+test('Plan with AI: the Procore project sits beside the schedule type, and below it on a phone', async ({ page }) => {
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({ json: { ...OPTIONS, procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }] } satisfies PlannerOptions }),
+  )
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  const schedule = dialog.getByLabel('Schedule type')
+  const project = dialog.getByLabel('Procore project')
+  await expect(project).toBeVisible()
+  const s = (await schedule.boundingBox())!
+  const p = (await project.boundingBox())!
+  expect(Math.abs(p.y - s.y), 'same row as the schedule type').toBeLessThan(2)
+  expect(p.x, 'to the right of the schedule type').toBeGreaterThan(s.x + s.width)
+
+  await page.setViewportSize({ width: 375, height: 800 })
+  const s2 = (await schedule.boundingBox())!
+  const p2 = (await project.boundingBox())!
+  expect(p2.y, 'below the schedule type on a phone').toBeGreaterThan(s2.y + s2.height)
+  const body = await dialog.locator('.planner-body').evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
+  expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth + 1)
+})
+
+test('Plan with AI: the top fields have room between them', async ({ page }) => {
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        projectTypes: [{ id: 'data-centre', name: 'Data centre', description: 'Power, cooling and white-space fit-out for data halls.' }],
+        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
+      } satisfies PlannerOptions,
+    }),
+  )
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  const hint = (await dialog.getByText('Power, cooling and white-space fit-out for data halls.').boundingBox())!
+  const label = (await dialog.locator('label', { hasText: 'Schedule type' }).boundingBox())!
+  expect(label.y - (hint.y + hint.height), 'space between the project type hint and the schedule type label').toBeGreaterThanOrEqual(12)
+
+  // On a phone the Procore project stacks under the schedule type, with room between them too.
+  await page.setViewportSize({ width: 375, height: 800 })
+  const scheduleHint = (await dialog.locator('.planner-schedule-type small').first().boundingBox())!
+  const projectLabel = (await dialog.locator('label', { hasText: 'Procore project' }).boundingBox())!
+  expect(projectLabel.y - (scheduleHint.y + scheduleHint.height), 'space between the schedule type hint and the Procore project label').toBeGreaterThanOrEqual(12)
 })
