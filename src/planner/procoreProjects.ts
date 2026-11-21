@@ -12,3 +12,11 @@ export function optionForProject(projects: readonly ProcoreProject[], code: stri
   const found = code ? projects.find((p) => p.code === code) : undefined
   return found ? projectOption(found) : undefined
 }
+
+/** The projects equipment can be delivered to: the sites, not the programs, in the order given. */
+export const siteProjects = (projects: readonly ProcoreProject[]): ProcoreProject[] => projects.filter((p) => !p.isProgram)
+
+/** An item's default delivery site: the plan's Procore project when it is a site on offer, else ''. */
+export function defaultDeliverySite(projects: readonly ProcoreProject[], planProject: string): string {
+  return planProject && siteProjects(projects).some((p) => p.code === planProject) ? planProject : ''
+}
