@@ -193,6 +193,16 @@ export interface CostCode {
   equipmentType: string | null
 }
 
+/**
+ * A Procore project a plan can be bought against (procore_projects with in_planner; see
+ * supabase/migrations/0020_procore_projects.sql). Program (dummy) projects come first.
+ */
+export interface ProcoreProject {
+  code: string
+  name: string
+  isProgram: boolean
+}
+
 export interface PlannerOptions {
   /** Optional: when present the wizard asks for the project type first. */
   projectTypes?: ProjectType[]
@@ -210,6 +220,11 @@ export interface PlannerOptions {
    * could not be read; the wizard then hides the Cost code field and the sheet gets no such column.
    */
   costCodes?: CostCode[]
+  /**
+   * Optional: the Procore projects a plan can be bought against, program projects first. Absent when
+   * there are none or they could not be read; the wizard then hides the field and the sheet gets no column.
+   */
+  procoreProjects?: ProcoreProject[]
 }
 
 /**

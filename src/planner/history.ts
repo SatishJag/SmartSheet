@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { DepType } from '../engine/types'
-import type { ActivityStats, CatalogActivity, CostCode, HistorySource, HistorySummary, ItemLabels, PlannerOptions, ProjectType, ScheduleType } from './types'
+import type { ActivityStats, CatalogActivity, CostCode, HistorySource, HistorySummary, ItemLabels, PlannerOptions, ProcoreProject, ProjectType, ScheduleType } from './types'
 
 /**
  * The planner's history read from Supabase (supabase/migrations/0004_planner_history.sql).
@@ -11,7 +11,7 @@ import type { ActivityStats, CatalogActivity, CostCode, HistorySource, HistorySu
 export function createSupabaseHistorySource(client: SupabaseClient): HistorySource {
   return {
     async options(): Promise<PlannerOptions> {
-      const [types, equipment, projects, codes] = await Promise.all([
+      const [types, equipment, projects, codes, procore] = await Promise.all([
         // By position, so a project type opens on its main schedule type; name breaks ties.
         client.from('schedule_types').select('id, name, description, project_types, item_labels').order('position', { ascending: true }).order('name', { ascending: true }),
         client
@@ -21,6 +21,12 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
           .order('equipment_type', { ascending: true }),
         client.from('project_types').select('id, name, description').order('position', { ascending: true }),
         client.from('cost_codes').select('code, description, equipment_type').eq('in_planner', true).order('code', { ascending: true }),
+        client
+          .from('procore_projects')
+          .select('code, name, is_program')
+          .eq('in_planner', true)
+          .order('is_program', { ascending: false })
+          .order('code', { ascending: true }),
       ])
       const scheduleTypes = rows<ScheduleTypeRow>(types).map(
         (r): ScheduleType => ({
@@ -40,7 +46,17 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
       const costCodes = codes.error
         ? []
         : ((codes.data ?? []) as CostCodeRow[]).map((r): CostCode => ({ code: r.code, description: r.description, equipmentType: r.equipment_type ?? null }))
-      return { ...(projectTypes.length ? { projectTypes } : {}), scheduleTypes, equipmentTypes, ...(costCodes.length ? { costCodes } : {}) }
+      // Procore projects are optional too.
+      const procoreProjects = procore.error
+        ? []
+        : ((procore.data ?? []) as ProcoreProjectRow[]).map((r): ProcoreProject => ({ code: r.code, name: r.name, isProgram: r.is_program === true }))
+      return {
+        ...(projectTypes.length ? { projectTypes } : {}),
+        scheduleTypes,
+        equipmentTypes,
+        ...(costCodes.length ? { costCodes } : {}),
+        ...(procoreProjects.length ? { procoreProjects } : {}),
+      }
     },
 
     async catalog(scheduleType: string): Promise<CatalogActivity[]> {
@@ -105,6 +121,12 @@ interface ProjectTypeRow {
 interface EquipmentRow {
   schedule_type: string
   equipment_type: string
+}
+
+interface ProcoreProjectRow {
+  code: string
+  name: string
+  is_program: boolean
 }
 
 interface CostCodeRow {
