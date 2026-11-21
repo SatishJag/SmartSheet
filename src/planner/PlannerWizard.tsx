@@ -61,6 +61,12 @@ type Step = 'request' | 'drafting' | 'preview' | 'creating'
 interface Failure {
   message: string
   retry: (() => void) | null
+  /**
+   * Retry sends the request form as it is now, like Generate, instead of `retry`: the form stays
+   * editable after a refused request, and a retry of the old request would draft equipment the form no
+   * longer shows (with the form's cost codes saved on it).
+   */
+  retryForm?: boolean
 }
 
 /** The schedule types offered under a project type: those that list it, or list none. */
@@ -293,7 +299,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
       setStep('preview')
     } catch (err) {
       if (isAbort(err) || !mounted.current) return
-      setFailure({ message: describe(err, 'Could not draft the plan'), retry: () => void generate(next, returnTo) })
+      setFailure({ message: describe(err, 'Could not draft the plan'), retry: () => void generate(next, returnTo), retryForm: returnTo === 'request' })
       setStep(returnTo === 'preview' && entries.length > 0 ? 'preview' : 'request')
     }
   }
@@ -377,6 +383,11 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
 
   function submitRequest(e: FormEvent) {
     e.preventDefault()
+    sendForm()
+  }
+
+  /** Validates the request form and drafts it (Generate, and Retry after a refused request). */
+  function sendForm() {
     setSubmitted(true)
     if (problem) return
     // The AI is told what kind of project this is, so a data centre and a building are not planned alike.
@@ -433,7 +444,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
         {failure.message}
       </p>
       {failure.retry && (
-        <button type="button" className="btn btn-sm" onClick={failure.retry}>
+        <button type="button" className="btn btn-sm" onClick={failure.retryForm ? sendForm : failure.retry}>
           <PIcon name="refresh" size={15} />
           Retry
         </button>
