@@ -25,6 +25,10 @@ export interface ItemForm {
   date: string
   /** The equipment card that added this item (unticking the card removes it); null for any other item. */
   fromCard: string | null
+  /** The Procore cost code ('GEN'), or ''. Client-side only: never sent to the planning server. */
+  costCode: string
+  /** True once the user picked or cleared the code; until then it follows the item's type. */
+  costCodeEdited: boolean
 }
 
 export interface ItemErrors {
@@ -46,8 +50,28 @@ let counter = 0
 export const newKey = () => `item-${++counter}`
 
 export function newItem(choice: string, fromCard: string | null = null): ItemForm {
-  return { key: newKey(), choice, other: '', name: '', date: '', fromCard }
+  return { key: newKey(), choice, other: '', name: '', date: '', fromCard, costCode: '', costCodeEdited: false }
 }
+
+/**
+ * Keeps each unedited item's cost code in step with its type: the code `codeFor` gives for the chosen
+ * type, '' for a typed-in type. Codes the user picked or cleared stay. Returns the same array when
+ * nothing changes.
+ */
+export function syncCostCodes(items: ItemForm[], codeFor: (equipmentType: string) => string): ItemForm[] {
+  let changed = false
+  const next = items.map((item) => {
+    if (item.costCodeEdited) return item
+    const code = item.choice === OTHER ? '' : codeFor(item.choice)
+    if (code === item.costCode) return item
+    changed = true
+    return { ...item, costCode: code }
+  })
+  return changed ? next : items
+}
+
+/** The user's own choice of cost code ('' clears it); it no longer follows the type. */
+export const setCostCode = (item: ItemForm, code: string): ItemForm => ({ ...item, costCode: code, costCodeEdited: true })
 
 /** True for an item the user has not touched: nothing typed or picked beyond the default type. */
 export const isPristine = (item: ItemForm) => item.fromCard === null && item.name.trim() === '' && item.date === '' && item.other.trim() === ''
