@@ -108,7 +108,10 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
       json: {
         ...OPTIONS,
         projectCounts: { 'lle-procurement': { 'Power transformer': 8, Switchgear: 5 } },
-        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
+        procoreProjects: [
+          { code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true },
+          { code: 'BKK-03', name: 'Bangkok 3', isProgram: false },
+        ],
         costCodes: [
           { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
           { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
@@ -152,6 +155,9 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   // Each item's Procore cost code is filled in from its type.
   await expect(first.getByLabel('Cost code')).toHaveValue('TRF')
   await expect(second.getByLabel('Cost code')).toHaveValue('HVS')
+  // Bought against the site BKK-03, so both items are delivered there unless changed.
+  await expect(first.getByLabel('Delivery site')).toHaveValue('BKK-03')
+  await expect(second.getByLabel('Delivery site')).toHaveValue('BKK-03')
   await first.getByLabel('Equipment name').fill('400 MVA transformer')
   await second.getByLabel('Equipment name').fill('132 kV GIS')
   // One shared date, and the switchgear needed earlier on its own date.
@@ -219,6 +225,8 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   await expect(rowAt(16)).toHaveAttribute('aria-level', '1')
   await expect(await gridCell(page, 16, 'Cost code')).toHaveText('HVS — HV SiwtchGear')
   await expect(await gridCell(page, 16, 'Procore project')).toHaveText('BKK-03 — Bangkok 3')
+  // The delivery site is on every row of each item, so the site team's filter keeps whole items.
+  for (const row of [1, 2, 16, 17]) await expect(await gridCell(page, row, 'Delivery site')).toHaveText('BKK-03 — Bangkok 3')
   await expect(await gridCell(page, 16, 'Start')).toHaveText(switchgear.mustStartBy)
   await expect(await gridCell(page, 16, 'End')).toHaveText(switchgear.projectEnd)
   await expect(await gridCell(page, 17, 'Task')).toContainText('Technical specification') // the same activity code as item 1
@@ -262,6 +270,7 @@ test('Plan with AI on a phone: item rows with a Cost code field do not scroll si
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
   await expect(dialog.getByLabel('Procore project')).toBeVisible()
+  await expect(dialog.getByLabel('Delivery site').first()).toBeVisible()
   await dialog.getByRole('checkbox', { name: /^Power transformer/ }).check()
   await dialog.getByRole('checkbox', { name: /^Switchgear/ }).check()
   const first = dialog.getByRole('group', { name: 'Item 1' })
@@ -327,6 +336,7 @@ test('Plan with AI: the equipment name stays wide enough to read beside the cost
       json: {
         ...OPTIONS,
         costCodes: [{ code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' }],
+        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
       } satisfies PlannerOptions,
     }),
   )
@@ -340,5 +350,23 @@ test('Plan with AI: the equipment name stays wide enough to read beside the cost
     await page.setViewportSize({ width, height: 800 })
     const box = (await name.boundingBox())!
     expect(box.width, `equipment name width at a ${width}px window`).toBeGreaterThanOrEqual(150)
+    // Cost code and Delivery site sit on the item's second line.
+    const site = (await dialog.getByRole('group', { name: 'Item 1' }).getByLabel('Delivery site').boundingBox())!
+    expect(site.y, `delivery site below the name at a ${width}px window`).toBeGreaterThan(box.y + box.height)
   }
+})
+
+test('Plan with AI: an item row without cost codes or sites stays on one line', async ({ page }) => {
+  await page.route('**/api/planner/options', (route) => route.fulfill({ json: OPTIONS }))
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  await dialog.getByRole('checkbox', { name: /^Power transformer/ }).check()
+  await dialog.getByRole('checkbox', { name: /^Switchgear/ }).check()
+  const group = dialog.getByRole('group', { name: 'Item 1' })
+  const row = (await group.boundingBox())!
+  const date = (await group.getByLabel('Required on site').boundingBox())!
+  // Below the date there is only its hint and the row's padding: no second line.
+  expect(row.y + row.height - (date.y + date.height), 'row space below the date field').toBeLessThan(45)
+  await expect(group.locator('.planner-item-tags')).toHaveCount(0)
 })

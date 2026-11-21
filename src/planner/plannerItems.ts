@@ -29,6 +29,10 @@ export interface ItemForm {
   costCode: string
   /** True once the user picked or cleared the code; until then it follows the item's type. */
   costCodeEdited: boolean
+  /** The Procore site project it is delivered to ('BKK-03'), or ''. Client-side only, like the cost code. */
+  deliverySite: string
+  /** True once the user picked or cleared the site; until then it follows the plan's default site. */
+  deliverySiteEdited: boolean
 }
 
 export interface ItemErrors {
@@ -50,7 +54,7 @@ let counter = 0
 export const newKey = () => `item-${++counter}`
 
 export function newItem(choice: string, fromCard: string | null = null): ItemForm {
-  return { key: newKey(), choice, other: '', name: '', date: '', fromCard, costCode: '', costCodeEdited: false }
+  return { key: newKey(), choice, other: '', name: '', date: '', fromCard, costCode: '', costCodeEdited: false, deliverySite: '', deliverySiteEdited: false }
 }
 
 /**
@@ -73,8 +77,32 @@ export function syncCostCodes(items: ItemForm[], codeFor: (equipmentType: string
 /** The user's own choice of cost code ('' clears it); it no longer follows the type. */
 export const setCostCode = (item: ItemForm, code: string): ItemForm => ({ ...item, costCode: code, costCodeEdited: true })
 
+/**
+ * Gives each item whose site was not picked or cleared by hand the plan's default site (the plan's
+ * Procore project when that is a site, else ''). Returns the same array when nothing changes.
+ */
+export function syncDeliverySites(items: ItemForm[], defaultSite: string): ItemForm[] {
+  let changed = false
+  const next = items.map((item) => {
+    if (item.deliverySiteEdited || item.deliverySite === defaultSite) return item
+    changed = true
+    return { ...item, deliverySite: defaultSite }
+  })
+  return changed ? next : items
+}
+
+/** The user's own choice of delivery site ('' clears it); it no longer follows the plan's project. */
+export const setDeliverySite = (item: ItemForm, code: string): ItemForm => ({ ...item, deliverySite: code, deliverySiteEdited: true })
+
 /** True for an item the user has not touched: nothing typed or picked beyond the default type. */
-export const isPristine = (item: ItemForm) => item.fromCard === null && item.name.trim() === '' && item.date === '' && item.other.trim() === ''
+export const isPristine = (item: ItemForm) =>
+  item.fromCard === null &&
+  item.name.trim() === '' &&
+  item.date === '' &&
+  item.other.trim() === '' &&
+  // A cost code or delivery site picked (or cleared) by hand is the user's choice: keep the item.
+  !item.costCodeEdited &&
+  !item.deliverySiteEdited
 
 export const itemType = (item: ItemForm) => (item.choice === OTHER ? item.other : item.choice).trim()
 

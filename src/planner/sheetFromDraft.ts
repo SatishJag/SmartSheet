@@ -39,6 +39,18 @@ export interface ProjectColumn {
   value?: string
 }
 
+/** Title of the delivery site dropdown column (every row of an item; for the site team). */
+export const DELIVERY_SITE_COLUMN_TITLE = 'Delivery site'
+
+/**
+ * The Delivery site column a plan sheet gets: its dropdown options ("BKK-03 — Bangkok 3") and, per
+ * draft in draft order, the option to fill in (undefined: none). A value not among the options is left out.
+ */
+export interface DeliverySiteColumn {
+  options: string[]
+  values: (string | undefined)[]
+}
+
 /** Titles of the optional columns a catalog's reference details fill (property development template). */
 export const ACTIVITY_ID_COLUMN_TITLE = 'Activity ID'
 export const RESPONSIBILITY_COLUMN_TITLE = 'Lead responsibility'
@@ -105,6 +117,7 @@ function newPlanSheet(
   drafts: PlanDraft[] = [],
   costCodeOptions: string[] = [],
   projectOptions: string[] = [],
+  siteOptions: string[] = [],
 ) {
   const base = createSheetFromTemplate('project-schedule', ownerId)
   const sheet: SheetMeta = {
@@ -121,10 +134,12 @@ function newPlanSheet(
   const criteriaColumn = extra(has((a) => a.criteria), CRITERIA_COLUMN_TITLE)
   const projectColumn: Column | null =
     projectOptions.length > 0 ? { id: crypto.randomUUID(), title: PROJECT_COLUMN_TITLE, type: 'PICKLIST', options: [...projectOptions] } : null
+  const siteColumn: Column | null =
+    siteOptions.length > 0 ? { id: crypto.randomUUID(), title: DELIVERY_SITE_COLUMN_TITLE, type: 'PICKLIST', options: [...siteOptions] } : null
   const costCodeColumn: Column | null =
     costCodeOptions.length > 0 ? { id: crypto.randomUUID(), title: COST_CODE_COLUMN_TITLE, type: 'PICKLIST', options: [...costCodeOptions] } : null
   const [first, ...rest] = base.columns
-  const columns = [first, ...(idColumn ? [idColumn] : []), ...rest, ...(responsibilityColumn ? [responsibilityColumn] : []), ...(criteriaColumn ? [criteriaColumn] : []), ...(projectColumn ? [projectColumn] : []), ...(costCodeColumn ? [costCodeColumn] : []), basisColumn]
+  const columns = [first, ...(idColumn ? [idColumn] : []), ...rest, ...(responsibilityColumn ? [responsibilityColumn] : []), ...(criteriaColumn ? [criteriaColumn] : []), ...(projectColumn ? [projectColumn] : []), ...(costCodeColumn ? [costCodeColumn] : []), ...(siteColumn ? [siteColumn] : []), basisColumn]
   const colId = (pick: (c: Column) => boolean, what: string) => {
     const col = columns.find(pick)
     if (!col) throw new Error(`The Project schedule template has no ${what} column`)
@@ -141,6 +156,7 @@ function newPlanSheet(
     responsibility: responsibilityColumn?.id,
     criteria: criteriaColumn?.id,
     costCode: costCodeColumn?.id,
+    deliverySite: siteColumn?.id,
     project: projectColumn?.id,
   }
   return { sheet, columns, cols }
@@ -152,6 +168,17 @@ type PlanCols = ReturnType<typeof newPlanSheet>['cols']
 function costCodeValue(costCodes: CostCodeColumn | undefined, i: number): string | undefined {
   const value = costCodes?.values[i]
   return value && costCodes.options.includes(value) ? value : undefined
+}
+
+/** Draft i's delivery site option, only if it is one of the column's options (the dropdown is strict). */
+function deliverySiteValue(deliverySites: DeliverySiteColumn | undefined, i: number): string | undefined {
+  const value = deliverySites?.values[i]
+  return value && deliverySites.options.includes(value) ? value : undefined
+}
+
+/** The delivery site cell an item's rows carry (every row of the item), when it has a value. */
+function siteCells(cols: PlanCols, site?: string): Record<string, unknown> {
+  return cols.deliverySite && site ? { [cols.deliverySite]: site } : {}
 }
 
 /** The plan's project option, only if it is one of the column's options (the dropdown is strict). */
@@ -225,10 +252,19 @@ export function buildSheetFromDraft(
   calendar: Calendar,
   costCodes?: CostCodeColumn,
   project?: ProjectColumn,
+  deliverySites?: DeliverySiteColumn,
 ): SheetData {
-  const { sheet, columns, cols } = newPlanSheet(sheetNameForDraft(draft), ownerId, calendar, [draft], costCodes?.options, project?.options)
-  // One item: every row belongs to it, so every row carries its project and cost code.
-  const tags = tagCells(cols, projectValue(project), costCodeValue(costCodes, 0))
+  const { sheet, columns, cols } = newPlanSheet(
+    sheetNameForDraft(draft),
+    ownerId,
+    calendar,
+    [draft],
+    costCodes?.options,
+    project?.options,
+    deliverySites?.options,
+  )
+  // One item: every row belongs to it, so every row carries its project, cost code and delivery site.
+  const tags = { ...tagCells(cols, projectValue(project), costCodeValue(costCodes, 0)), ...siteCells(cols, deliverySiteValue(deliverySites, 0)) }
   const { rows, dependencies } = activityRows(draft, plan, cols, calendar, null, tags)
   return { sheet, columns, rows, dependencies }
 }
@@ -252,9 +288,10 @@ export function buildSheetFromDrafts(
   calendar: Calendar,
   costCodes?: CostCodeColumn,
   project?: ProjectColumn,
+  deliverySites?: DeliverySiteColumn,
 ): SheetData {
   if (items.length === 0) throw new Error('There is nothing to plan')
-  if (items.length === 1) return buildSheetFromDraft(items[0].draft, items[0].plan, ownerId, calendar, costCodes, project)
+  if (items.length === 1) return buildSheetFromDraft(items[0].draft, items[0].plan, ownerId, calendar, costCodes, project, deliverySites)
   const { sheet, columns, cols } = newPlanSheet(
     sheetNameForDrafts(items.map((i) => i.draft)),
     ownerId,
@@ -262,6 +299,7 @@ export function buildSheetFromDrafts(
     items.map((i) => i.draft),
     costCodes?.options,
     project?.options,
+    deliverySites?.options,
   )
   const positions = generateNKeysBetween(null, null, items.length)
   const rows: RowRecord[] = []
@@ -278,10 +316,12 @@ export function buildSheetFromDrafts(
         [cols.basis]: itemSourceText(draft),
         // Several items: project and cost code belong to the item, so only its summary row carries them.
         ...tagCells(cols, projectValue(project), costCodeValue(costCodes, i)),
+        ...siteCells(cols, deliverySiteValue(deliverySites, i)),
       },
       version: 0,
     })
-    const children = activityRows(draft, plan, cols, calendar, parentId)
+    // The delivery site goes on every activity too, so filtering by site keeps the item's whole schedule.
+    const children = activityRows(draft, plan, cols, calendar, parentId, siteCells(cols, deliverySiteValue(deliverySites, i)))
     rows.push(...children.rows)
     dependencies.push(...children.dependencies)
   })
@@ -355,9 +395,9 @@ export async function insertSheetFromDrafts(
   drafts: PlanDraft[],
   userId: string,
   calendar: Calendar,
-  options: { today?: string; costCodes?: CostCodeColumn; project?: ProjectColumn } = {},
+  options: { today?: string; costCodes?: CostCodeColumn; project?: ProjectColumn; deliverySites?: DeliverySiteColumn } = {},
 ): Promise<string> {
   const today = options.today ?? todayIso()
   const items = drafts.map((draft) => ({ draft, plan: planBackward(draft, calendar, today) }))
-  return insertSheetData(client, buildSheetFromDrafts(items, userId, calendar, options.costCodes, options.project))
+  return insertSheetData(client, buildSheetFromDrafts(items, userId, calendar, options.costCodes, options.project, options.deliverySites))
 }

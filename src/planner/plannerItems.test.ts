@@ -11,7 +11,9 @@ import {
   removeCardItem,
   removeItem,
   setCostCode,
+  setDeliverySite,
   syncCostCodes,
+  syncDeliverySites,
   validateItems,
   type FormValues,
   type ItemForm,
@@ -210,5 +212,57 @@ describe('cost codes', () => {
     const item = { ...setCostCode(newItem('Chiller'), 'CHL'), name: 'Chiller 1', date: '2027-11-17' }
     const job = jobFromForm({ scheduleType: 'lle-procurement', items: [item], sameDate: false, sharedDate: '', notes: '' })
     expect(job.items[0]).not.toHaveProperty('costCode')
+  })
+})
+
+describe('delivery sites', () => {
+  it('starts a new item with no site, unedited', () => {
+    expect(newItem('Chiller')).toMatchObject({ deliverySite: '', deliverySiteEdited: false })
+  })
+
+  it('gives unedited items the default site', () => {
+    expect(syncDeliverySites([newItem('Chiller')], 'BKK-03')[0].deliverySite).toBe('BKK-03')
+  })
+
+  it('follows the default when it changes, including to none', () => {
+    const items = syncDeliverySites([newItem('Chiller')], 'BKK-03')
+    expect(syncDeliverySites(items, '')[0].deliverySite).toBe('')
+  })
+
+  it('keeps a site picked by hand', () => {
+    const picked = setDeliverySite(newItem('Chiller'), 'BKK-03')
+    expect(syncDeliverySites([picked], '')[0].deliverySite).toBe('BKK-03')
+  })
+
+  it('keeps a site cleared by hand', () => {
+    const cleared = setDeliverySite(syncDeliverySites([newItem('Chiller')], 'BKK-03')[0], '')
+    expect(syncDeliverySites([cleared], 'BKK-03')[0].deliverySite).toBe('')
+  })
+
+  it('returns the same array when nothing changes', () => {
+    const items = syncDeliverySites([newItem('Chiller')], 'BKK-03')
+    expect(syncDeliverySites(items, 'BKK-03')).toBe(items)
+  })
+
+  it('does not put the site in the job', () => {
+    const item = { ...setDeliverySite(newItem('Chiller'), 'BKK-03'), name: 'Chiller 1', date: '2027-11-17' }
+    const job = jobFromForm({ scheduleType: 'lle-procurement', items: [item], sameDate: false, sharedDate: '', notes: '' })
+    expect(job.items[0]).not.toHaveProperty('deliverySite')
+  })
+})
+
+describe('a hand-picked site or cost code counts as touching the item', () => {
+  it('is no longer pristine', () => {
+    expect(isPristine(setDeliverySite(newItem('Chiller'), 'SIN-01'))).toBe(false)
+    expect(isPristine(setDeliverySite(newItem('Chiller'), ''))).toBe(false)
+    expect(isPristine(setCostCode(newItem('Chiller'), 'GEN'))).toBe(false)
+    expect(isPristine(syncDeliverySites(syncCostCodes([newItem('Chiller')], () => 'CHL'), 'BKK-03')[0])).toBe(true)
+  })
+
+  it('is kept when a card is ticked, instead of being replaced', () => {
+    const picked = setDeliverySite(newItem('Chiller'), 'SIN-01')
+    const items = addCardItem([picked], 'Switchgear')
+    expect(items).toHaveLength(2)
+    expect(items[0]).toBe(picked)
   })
 })

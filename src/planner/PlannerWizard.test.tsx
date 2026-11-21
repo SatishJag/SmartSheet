@@ -1016,3 +1016,107 @@ describe('PlannerWizard: Retry after a refused request', () => {
     expect(first.cells[code]).toBe('HVS — HV SiwtchGear')
   })
 })
+
+describe('PlannerWizard: delivery site', () => {
+  const OPTIONS_S: PlannerOptions = {
+    ...OPTIONS,
+    costCodes: [
+      { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
+      { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
+    ],
+    procoreProjects: [
+      { code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true },
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false },
+      { code: 'SIN-01', name: 'Singapore 1', isProgram: false },
+    ],
+  }
+  const withSites = (options: PlannerOptions = OPTIONS_S) => mockServer({ options: () => json(200, options) })
+  const site = (n: number) => within(itemGroup(n)).getByLabelText('Delivery site')
+
+  it('offers the sites only, starting on None, on the second line after the cost code', async () => {
+    withSites()
+    setup()
+    const field = await screen.findByLabelText('Delivery site')
+    expect(field).toHaveValue('')
+    expect(within(field).getAllByRole('option').map((o) => o.textContent)).toEqual(['None', 'BKK-03 — Bangkok 3', 'SIN-01 — Singapore 1'])
+    const code = screen.getByLabelText('Cost code')
+    expect(code.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('defaults every unedited item to the plan’s project when it is a site, and follows it', async () => {
+    withSites()
+    const { user } = setup()
+    await tickTwo(user)
+    await user.selectOptions(screen.getByLabelText('Procore project'), 'BKK-03')
+    await waitFor(() => expect(site(1)).toHaveValue('BKK-03'))
+    expect(site(2)).toHaveValue('BKK-03')
+    await user.selectOptions(screen.getByLabelText('Procore project'), 'PRG-DC-01')
+    await waitFor(() => expect(site(1)).toHaveValue(''))
+    expect(site(2)).toHaveValue('')
+  })
+
+  it('keeps a site picked by hand when the plan’s project changes', async () => {
+    withSites()
+    const { user } = setup()
+    await tickTwo(user)
+    await user.selectOptions(site(1), 'SIN-01')
+    await user.selectOptions(screen.getByLabelText('Procore project'), 'BKK-03')
+    await waitFor(() => expect(site(2)).toHaveValue('BKK-03'))
+    expect(site(1)).toHaveValue('SIN-01')
+  })
+
+  it('gives an item ticked later the default site', async () => {
+    withSites()
+    const { user } = setup()
+    await user.click(await card('Power transformer'))
+    await user.selectOptions(screen.getByLabelText('Procore project'), 'BKK-03')
+    await user.click(await card('Switchgear'))
+    await waitFor(() => expect(site(2)).toHaveValue('BKK-03'))
+  })
+
+  it('does not send the site to the planning server', async () => {
+    const { batches } = withSites()
+    const { user } = setup()
+    await tickTwo(user)
+    await user.selectOptions(site(1), 'BKK-03')
+    await user.selectOptions(site(2), 'SIN-01')
+    await fillItem(user, 1, '400 MVA transformer, Substation B', '2028-03-31')
+    await fillItem(user, 2, '132 kV GIS', '2027-03-31')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText(/2 items · earliest required start/)
+    expect(JSON.stringify(batches)).not.toMatch(/BKK-03|SIN-01|Bangkok|Singapore/)
+  })
+
+  it('creates the sheet with the site on every row of each item', async () => {
+    withSites()
+    const { client, user, onCreated } = setup()
+    await tickTwo(user)
+    await user.selectOptions(site(1), 'SIN-01')
+    await fillItem(user, 1, '400 MVA transformer, Substation B', '2028-03-31')
+    await fillItem(user, 2, '132 kV GIS', '2028-03-31')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText(/2 items · earliest required start/)
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const columns = ((await client.from('columns').select('id,title,position')).data as { id: string; title: string; position: number }[]).sort(
+      (a, b) => a.position - b.position,
+    )
+    const i = columns.findIndex((c) => c.title === 'Delivery site')
+    expect(columns[i - 1].title).toBe('Cost code')
+    const col = columns[i].id
+    const task = columns.find((c) => c.title === 'Task')!.id
+    const rows = (await client.from('rows').select('id,parent_id,cells')).data as { id: string; parent_id: string | null; cells: Record<string, unknown> }[]
+    const first = rows.find((r) => r.parent_id === null && String(r.cells[task]).startsWith('Power transformer'))!
+    const second = rows.find((r) => r.parent_id === null && String(r.cells[task]).startsWith('Switchgear'))!
+    const itemRows = (parent: (typeof rows)[number]) => [parent, ...rows.filter((r) => r.parent_id === parent.id)]
+    expect(itemRows(first).every((r) => r.cells[col] === 'SIN-01 — Singapore 1')).toBe(true)
+    expect(itemRows(second).every((r) => r.cells[col] === undefined)).toBe(true)
+  })
+
+  it('hides the field and adds no column when only the program project is on offer', async () => {
+    withSites({ ...OPTIONS_S, procoreProjects: [{ code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true }] })
+    setup()
+    expect(await screen.findByLabelText('Cost code')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Delivery site')).not.toBeInTheDocument()
+  })
+})

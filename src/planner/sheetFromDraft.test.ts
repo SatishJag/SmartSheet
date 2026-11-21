@@ -13,6 +13,7 @@ import {
   buildSheetFromDraft,
   buildSheetFromDrafts,
   type CostCodeColumn,
+  type DeliverySiteColumn,
   type ProjectColumn,
   insertSheetFromDraft,
   insertSheetFromDrafts,
@@ -525,5 +526,77 @@ describe('Procore project column', () => {
     const column = loaded.columns.find((c) => c.title === 'Procore project')!
     expect(column).toMatchObject({ type: 'PICKLIST', options: P.options })
     expect(loaded.rows.filter((r) => r.parentId === null).map((r) => r.cells[column.id])).toEqual(Array(3).fill('BKK-03 — Bangkok 3'))
+  })
+})
+
+describe('Delivery site column', () => {
+  const CC: CostCodeColumn = { options: ['CHL — Chiller', 'GEN — Generator'], values: ['GEN — Generator', undefined, 'CHL — Chiller'] }
+  const P: ProjectColumn = { options: ['PRG-DC-01 — Data centre programme', 'BKK-03 — Bangkok 3'], value: 'PRG-DC-01 — Data centre programme' }
+  const S: DeliverySiteColumn = { options: ['BKK-03 — Bangkok 3', 'SIN-01 — Singapore 1'], values: ['BKK-03 — Bangkok 3', undefined, 'SIN-01 — Singapore 1'] }
+  const plannedOf = (drafts: ReturnType<typeof threeDrafts>) => drafts.map((draft) => ({ draft, plan: planBackward(draft, cal, TODAY) }))
+  const three = plannedOf(threeDrafts())
+  const one = plannedOf([lleDraft('2027-06-30')])
+  const titles = (columns: { title: string }[]) => columns.map((c) => c.title)
+  const colId = (columns: { id: string; title: string }[], title: string) => columns.find((c) => c.title === title)?.id
+
+  it('adds a strict Delivery site dropdown after Cost code', () => {
+    const { columns } = buildSheetFromDrafts(three, 'u', cal, CC, P, S)
+    expect(titles(columns).slice(-4)).toEqual(['Procore project', 'Cost code', 'Delivery site', 'Basis'])
+    expect(columns.find((c) => c.title === 'Delivery site')).toMatchObject({ type: 'PICKLIST', options: S.options })
+  })
+
+  it('goes just before Basis on its own', () => {
+    const { columns } = buildSheetFromDrafts(three, 'u', cal, undefined, undefined, S)
+    expect(titles(columns).slice(-2)).toEqual(['Delivery site', 'Basis'])
+  })
+
+  it('puts each item’s site on its summary row and on every one of its activities', () => {
+    const { columns, rows } = buildSheetFromDrafts(three, 'u', cal, CC, P, S)
+    const col = colId(columns, 'Delivery site')!
+    const parents = rows.filter((r) => r.parentId === null)
+    parents.forEach((parent, i) => {
+      expect(parent.cells[col]).toBe(S.values[i])
+      const children = rows.filter((r) => r.parentId === parent.id)
+      expect(children.length).toBeGreaterThan(0)
+      for (const child of children) expect(child.cells[col]).toBe(S.values[i])
+    })
+  })
+
+  it('puts a single item’s site on every row', () => {
+    const { columns, rows } = buildSheetFromDrafts(one, 'u', cal, undefined, undefined, { options: S.options, values: ['SIN-01 — Singapore 1'] })
+    const col = colId(columns, 'Delivery site')!
+    expect(rows.length).toBeGreaterThan(1)
+    expect(rows.every((r) => r.cells[col] === 'SIN-01 — Singapore 1')).toBe(true)
+  })
+
+  it('ignores a value that is not one of the options', () => {
+    const { columns, rows } = buildSheetFromDrafts(one, 'u', cal, undefined, undefined, { options: S.options, values: ['XYZ — Nowhere'] })
+    const col = colId(columns, 'Delivery site')!
+    expect(rows.every((r) => r.cells[col] === undefined)).toBe(true)
+  })
+
+  it('adds no column without sites', () => {
+    expect(colId(buildSheetFromDrafts(three, 'u', cal, CC, P).columns, 'Delivery site')).toBeUndefined()
+    expect(colId(buildSheetFromDrafts(three, 'u', cal, CC, P, { options: [], values: [] }).columns, 'Delivery site')).toBeUndefined()
+  })
+
+  it('keeps the cost code and project on summary rows only', () => {
+    const { columns, rows } = buildSheetFromDrafts(three, 'u', cal, CC, P, S)
+    const code = colId(columns, 'Cost code')!
+    const project = colId(columns, 'Procore project')!
+    for (const child of rows.filter((r) => r.parentId !== null)) {
+      expect(child.cells[code]).toBeUndefined()
+      expect(child.cells[project]).toBeUndefined()
+    }
+  })
+
+  it('saves the column and the sites, and they load back', async () => {
+    const { client, userId } = fakeClient()
+    const sheetId = await insertSheetFromDrafts(client, threeDrafts(), userId, cal, { today: TODAY, deliverySites: S })
+    const loaded = await supabasePersistence(client).loadSheet(sheetId)
+    const column = loaded.columns.find((c) => c.title === 'Delivery site')!
+    expect(column).toMatchObject({ type: 'PICKLIST', options: S.options })
+    const withSite = loaded.rows.filter((r) => r.cells[column.id] === 'BKK-03 — Bangkok 3')
+    expect(withSite.length).toBeGreaterThan(1)
   })
 })
