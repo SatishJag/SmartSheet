@@ -408,6 +408,20 @@
 /* With no equipment history the "other" input IS the type field. */
 .planner-item-row.no-select { grid-template-areas: 'type name date'; }
 .planner-item-row.no-select.has-index { grid-template-areas: 'idx type name date rm'; }
+/* With cost codes on offer: a Cost code field after the date. */
+.planner-item-row.has-code {
+  grid-template-columns: minmax(140px, 200px) minmax(0, 1fr) 170px 190px;
+  grid-template-areas: 'type name date code';
+}
+.planner-item-row.has-code.has-index {
+  grid-template-columns: 28px minmax(140px, 190px) minmax(0, 1fr) 170px 190px 40px;
+  grid-template-areas: 'idx type name date code rm';
+}
+.planner-item-row.has-code.has-other { grid-template-areas: 'type name date code' 'other other other other'; }
+.planner-item-row.has-code.has-index.has-other { grid-template-areas: 'idx type name date code rm' '. other other other other .'; }
+.planner-item-row.has-code.no-select { grid-template-areas: 'type name date code'; }
+.planner-item-row.has-code.no-select.has-index { grid-template-areas: 'idx type name date code rm'; }
+.planner-f-code { grid-area: code; }
 .planner-f-type { grid-area: type; }
 .planner-f-other { grid-area: other; }
 .no-select .planner-f-other { grid-area: type; }
@@ -673,6 +687,12 @@
   .planner-item-row.has-index.has-other { grid-template-areas: 'idx type date rm' '. other other other' 'name name name name'; }
   .planner-item-row.no-select { grid-template-areas: 'type date' 'name name'; }
   .planner-item-row.no-select.has-index { grid-template-areas: 'idx type date rm' 'name name name name'; }
+  .planner-item-row.has-code { grid-template-columns: minmax(130px, 200px) minmax(0, 1fr); grid-template-areas: 'type date' 'name code'; }
+  .planner-item-row.has-code.has-index { grid-template-columns: 28px minmax(130px, 1fr) 200px 40px; grid-template-areas: 'idx type date rm' 'name name code code'; }
+  .planner-item-row.has-code.has-other { grid-template-areas: 'type date' 'other other' 'name code'; }
+  .planner-item-row.has-code.has-index.has-other { grid-template-areas: 'idx type date rm' '. other other other' 'name name code code'; }
+  .planner-item-row.has-code.no-select { grid-template-areas: 'type date' 'name code'; }
+  .planner-item-row.has-code.no-select.has-index { grid-template-areas: 'idx type date rm' 'name name code code'; }
 }
 
 @media (max-width: 640px) {

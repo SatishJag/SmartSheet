@@ -27,12 +27,15 @@ import {
   OTHER,
   removeCardItem,
   removeItem,
+  setCostCode,
+  syncCostCodes,
   validateItems,
   type FormValues,
   type ItemForm,
 } from './plannerItems'
+import { codeForType, costCodeOption, optionForCode } from './costCodes'
 import { insertSheetFromDrafts } from './sheetFromDraft'
-import { DEFAULT_ITEM_LABELS, type ItemLabels, type PlannerOptions } from './types'
+import { DEFAULT_ITEM_LABELS, type CostCode, type ItemLabels, type PlannerOptions } from './types'
 import './plannerWizard.css'
 
 export { BASIS_LABELS, sourceLabel } from './PlanPreview'
@@ -176,6 +179,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const equipmentTypes = options?.equipmentTypes[scheduleType] ?? []
   const projectCounts = options?.projectCounts?.[scheduleType] ?? {}
   const defaultChoice = equipmentTypes[0] ?? OTHER
+  const costCodes = options?.costCodes ?? NO_COST_CODES
   // Items whose type is not on offer for the schedule type (or not chosen yet) get the first type with history.
   useEffect(() => {
     if (!options) return
@@ -186,6 +190,12 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
       return next.some((n, k) => n !== prev[k]) ? next : prev
     })
   }, [scheduleType, options])
+
+  // Each item's cost code follows its type until the user picks or clears one (a no-op when nothing changes).
+  useEffect(() => {
+    if (costCodes.length === 0) return
+    setItems((prev) => syncCostCodes(prev, (type) => codeForType(costCodes, type)))
+  }, [items, costCodes])
 
   // Each step's heading takes focus, so keyboard and screen-reader users land on the new content.
   useEffect(() => {
@@ -332,7 +342,15 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     setFailure(null)
     setStep('creating')
     try {
-      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today })
+      // Cost codes come from the form as it is now (they do not affect the plan), by item key.
+      const sheetCostCodes =
+        costCodes.length > 0
+          ? {
+              options: costCodes.map(costCodeOption),
+              values: entries.map((e) => optionForCode(costCodes, items.find((i) => i.key === e.key)?.costCode ?? '')),
+            }
+          : undefined
+      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today, costCodes: sheetCostCodes })
       if (mounted.current) onCreated(sheetId)
     } catch (err) {
       if (!mounted.current) return
@@ -600,6 +618,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                           form={form}
                           errors={submitted ? errors[item.key] : undefined}
                           onChange={(patch) => updateItem(item.key, patch)}
+                          costCodes={costCodes}
+                          onCostCode={(code) => setItems((all) => all.map((i) => (i.key === item.key ? setCostCode(i, code) : i)))}
                           onRemove={() => dropItem(item.key)}
                         />
                       ))}
@@ -732,7 +752,12 @@ interface ItemFieldsProps {
   errors: { type?: string; name?: string; date?: string } | undefined
   onChange: (patch: Partial<ItemForm>) => void
   onRemove: () => void
+  /** The Procore cost codes on offer; none: no Cost code field. */
+  costCodes: readonly CostCode[]
+  onCostCode: (code: string) => void
 }
+
+const NO_COST_CODES: CostCode[] = []
 
 const FieldError = ({ id, children }: { id: string; children: string }) => (
   <small id={id} className="planner-error">
@@ -742,11 +767,13 @@ const FieldError = ({ id, children }: { id: string; children: string }) => (
 )
 
 /** One item of the request form (equipment, material, ...), as a compact row: type, name, its own required date (and Remove). */
-function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, errors, onChange, onRemove }: ItemFieldsProps) {
+function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, errors, onChange, onRemove, costCodes, onCostCode }: ItemFieldsProps) {
   const typeId = `${idBase}-type`
   const otherId = `${idBase}-other`
   const nameId = `${idBase}-name`
   const dateId = `${idBase}-date`
+  const costCodeId = `${idBase}-cost-code`
+  const hasCostCode = costCodes.length > 0
   const typeError = errors?.type
   const nameError = errors?.name
   const dateError = errors?.date
@@ -754,7 +781,7 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, e
   const effective = effectiveDate(item, form)
   const showOther = equipmentTypes.length === 0 || item.choice === OTHER
   const hasSelect = equipmentTypes.length > 0
-  const classes = ['planner-item-row', many ? 'has-index' : 'is-single', showOther ? 'has-other' : '', hasSelect ? '' : 'no-select'].filter(Boolean).join(' ')
+  const classes = ['planner-item-row', many ? 'has-index' : 'is-single', showOther ? 'has-other' : '', hasSelect ? '' : 'no-select', hasCostCode ? 'has-code' : ''].filter(Boolean).join(' ')
   const body = (
     <>
       {many && (
@@ -829,6 +856,21 @@ function ItemFields({ item, index, idBase, many, equipmentTypes, labels, form, e
         )}
         {dateError && <FieldError id={`${dateId}-error`}>{dateError}</FieldError>}
       </div>
+      {hasCostCode && (
+        <div className="planner-field planner-f-code">
+          <label htmlFor={costCodeId} className="planner-label">
+            Cost code
+          </label>
+          <select id={costCodeId} value={item.costCode} onChange={(e) => onCostCode(e.target.value)}>
+            <option value="">None</option>
+            {costCodes.map((c) => (
+              <option key={c.code} value={c.code}>
+                {costCodeOption(c)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {many && (
         <button
           type="button"

@@ -797,3 +797,92 @@ describe('PlannerWizard: several items, preview and create', () => {
     expect((await realFrom('sheets').select('id')).data).toHaveLength(1)
   })
 })
+
+describe('PlannerWizard: cost codes', () => {
+  const OPTIONS_CC: PlannerOptions = {
+    ...OPTIONS,
+    costCodes: [
+      { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
+      { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
+    ],
+  }
+  const withCodes = () => mockServer({ options: () => json(200, OPTIONS_CC) })
+
+  it('fills the cost code from the equipment type and follows a type change', async () => {
+    withCodes()
+    const { user } = setup()
+    const code = await screen.findByLabelText('Cost code')
+    await waitFor(() => expect(code).toHaveValue('TRF'))
+    expect(within(code).getByRole('option', { name: 'TRF — Transformer' })).toBeInTheDocument()
+    expect(within(code).getByRole('option', { name: 'None' })).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Equipment type'), 'Switchgear')
+    expect(code).toHaveValue('HVS')
+  })
+
+  it('keeps a hand-picked cost code when the type changes', async () => {
+    withCodes()
+    const { user } = setup()
+    const code = await screen.findByLabelText('Cost code')
+    await waitFor(() => expect(code).toHaveValue('TRF'))
+    await user.selectOptions(code, '')
+    await user.selectOptions(screen.getByLabelText('Equipment type'), 'Switchgear')
+    expect(code).toHaveValue('')
+  })
+
+  it('keeps an unedited code in step when the schedule type changes the item’s type', async () => {
+    mockServer({
+      options: () =>
+        json(200, {
+          ...OPTIONS_CC,
+          scheduleTypes: [...OPTIONS.scheduleTypes, { id: 'switchgear-only', name: 'Switchgear only', description: 'S' }],
+          equipmentTypes: { ...OPTIONS.equipmentTypes, 'switchgear-only': ['Switchgear'] },
+        }),
+    })
+    const { user } = setup()
+    const code = await screen.findByLabelText('Cost code')
+    await waitFor(() => expect(code).toHaveValue('TRF'))
+    await user.selectOptions(screen.getByLabelText('Schedule type'), 'switchgear-only')
+    await waitFor(() => expect(screen.getByLabelText('Cost code')).toHaveValue('HVS'))
+  })
+
+  it('does not send the cost code to the planning server', async () => {
+    const { batches } = withCodes()
+    const { user } = setup()
+    await requestTwo(user)
+    await screen.findByText(/2 items · earliest required start/)
+    const sent = JSON.stringify(batches)
+    expect(sent).not.toMatch(/costCode|TRF|HVS/)
+  })
+
+  it('creates the sheet with the cost code column and each item’s code', async () => {
+    withCodes()
+    const { client, user, onCreated } = setup()
+    await tickTwo(user)
+    await user.selectOptions(within(itemGroup(2)).getByLabelText('Cost code'), '')
+    await fillItem(user, 1, '400 MVA transformer, Substation B', '2028-03-31')
+    await fillItem(user, 2, '132 kV GIS', '2028-03-31')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText(/2 items · earliest required start/)
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const columns = (await client.from('columns').select('id,title,type,options')).data as { id: string; title: string; type: string; options: string[] | null }[]
+    const column = columns.find((c) => c.title === 'Cost code')!
+    expect(column).toMatchObject({ type: 'PICKLIST', options: ['HVS — HV SiwtchGear', 'TRF — Transformer'] })
+    const rows = (await client.from('rows').select('parent_id,position,cells')).data as { parent_id: string | null; position: string; cells: Record<string, unknown> }[]
+    const parents = rows.filter((r) => r.parent_id === null).sort((a, b) => (a.position < b.position ? -1 : 1))
+    expect(parents.map((r) => r.cells[column.id])).toEqual(['TRF — Transformer', undefined])
+  })
+
+  it('hides the field and adds no column when the options have no cost codes', async () => {
+    mockServer()
+    const { client, user, onCreated } = setup()
+    await fillRequest(user)
+    expect(screen.queryByLabelText('Cost code')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const titles = ((await client.from('columns').select('title')).data as { title: string }[]).map((c) => c.title)
+    expect(titles).not.toContain('Cost code')
+  })
+})

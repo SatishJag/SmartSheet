@@ -105,7 +105,14 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   const singles: PlanRequest[] = []
   await page.route('**/api/planner/options', (route) =>
     route.fulfill({
-      json: { ...OPTIONS, projectCounts: { 'lle-procurement': { 'Power transformer': 8, Switchgear: 5 } } } satisfies PlannerOptions,
+      json: {
+        ...OPTIONS,
+        projectCounts: { 'lle-procurement': { 'Power transformer': 8, Switchgear: 5 } },
+        costCodes: [
+          { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
+          { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
+        ],
+      } satisfies PlannerOptions,
     }),
   )
   // The server answers each item with the catalog draft (the second one domestic: no customs step).
@@ -138,6 +145,9 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   const second = dialog.getByRole('group', { name: 'Item 2' })
   await expect(first.getByLabel('Equipment type')).toHaveValue('Power transformer')
   await expect(second.getByLabel('Equipment type')).toHaveValue('Switchgear')
+  // Each item's Procore cost code is filled in from its type.
+  await expect(first.getByLabel('Cost code')).toHaveValue('TRF')
+  await expect(second.getByLabel('Cost code')).toHaveValue('HVS')
   await first.getByLabel('Equipment name').fill('400 MVA transformer')
   await second.getByLabel('Equipment name').fill('132 kV GIS')
   // One shared date, and the switchgear needed earlier on its own date.
@@ -194,10 +204,14 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   const mfg = transformer.activities.find((a) => a.code === 'MFG')!
   await expect(await gridCell(page, 9, 'Task')).toContainText('Manufacturing')
   await expect(await gridCell(page, 9, 'Start')).toHaveText(mfg.start)
+  // The cost code sits on each item's summary row, not on its activities.
+  await expect(await gridCell(page, 1, 'Cost code')).toHaveText('TRF — Transformer')
+  await expect(await gridCell(page, 2, 'Cost code')).toHaveText('')
   await expect(await gridCell(page, 9, 'Basis')).toHaveText('adjusted: p80 is 110 days; raised 10 days because the vendor is at capacity.')
   // Item 1 has 14 activities: rows 2 to 15; item 2's summary row is row 16 and its activities follow.
   await expect(await gridCell(page, 16, 'Task')).toContainText('Switchgear — 132 kV GIS')
   await expect(rowAt(16)).toHaveAttribute('aria-level', '1')
+  await expect(await gridCell(page, 16, 'Cost code')).toHaveText('HVS — HV SiwtchGear')
   await expect(await gridCell(page, 16, 'Start')).toHaveText(switchgear.mustStartBy)
   await expect(await gridCell(page, 16, 'End')).toHaveText(switchgear.projectEnd)
   await expect(await gridCell(page, 17, 'Task')).toContainText('Technical specification') // the same activity code as item 1
