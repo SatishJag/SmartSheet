@@ -21,10 +21,19 @@ afterAll(async () => {
 }, 60_000)
 
 describe('0020_procore_projects', () => {
-  it('seeds BKK-03 Bangkok 3 as the only project, a site offered to the planner', async () => {
+  it('seeds BKK-03 Bangkok 3, a site offered to the planner', async () => {
     await as.asUser(USER)
-    const r = await db.query(`select code, name, is_program, in_planner from procore_projects`)
+    const r = await db.query(`select code, name, is_program, in_planner from procore_projects where code = 'BKK-03'`)
     expect(r.rows).toEqual([{ code: 'BKK-03', name: 'Bangkok 3', is_program: false, in_planner: true }])
+  })
+
+  it('0021 adds the data centre program project, offered to the planner ahead of the sites', async () => {
+    await as.asUser(USER)
+    const r = await db.query(`select code, name, is_program, in_planner from procore_projects where in_planner order by is_program desc, code`)
+    expect(r.rows).toEqual([
+      { code: 'PRG-DC-01', name: 'Data centre programme', is_program: true, in_planner: true },
+      { code: 'BKK-03', name: 'Bangkok 3', is_program: false, in_planner: true },
+    ])
   })
 
   it('rejects a name with a comma', async () => {
