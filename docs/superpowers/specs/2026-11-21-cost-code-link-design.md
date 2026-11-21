@@ -140,3 +140,58 @@ the five does.
    summary row (several items) or on every row (one item) (tested).
 6. Tests: unit tests for 2, 3 and 5; a wizard test for auto-fill and the edited flag; an e2e check
    that a generated sheet shows the codes.
+
+---
+
+# Addendum: Procore project on the plan
+
+Date: 2026-11-21. Status: agreed with the owner (grill session, Q10–Q15), not built yet.
+
+## Why
+In Procore a budget line is **project + cost code**: `CHL` alone does not say which budget it
+spends against. Data centre long-lead equipment is bought at **program level**: a program (dummy)
+project in Procore owns the budget and the batch POs, and the equipment is later delivered to the
+real sites. So a plan also needs the Procore project it is bought against.
+
+## Decisions (owner's answers)
+1. **One project per plan** (Q10), chosen at the top of the wizard. Every item in the plan is bought
+   against it; each item keeps its own cost code.
+2. **The program project uses the same 15 company cost codes** (Q11), so the cost code work above
+   stands unchanged; a budget line is e.g. `PRG-DC-01 / CHL`.
+3. **The list holds program and site projects, program projects first** (Q12).
+4. **Only real Procore projects are listed** (Q13). The program project does not exist in Procore
+   yet, so the seed is `BKK-03 — Bangkok 3` only; the program project is added by a later migration
+   (`is_program = true`) once it exists. No placeholder codes.
+5. **Optional, starts empty** (Q14): the dropdown starts on **None**; nothing is pre-selected, even
+   when only one project is on offer, and an empty project never blocks Generate.
+6. **A "Procore project" dropdown column next to Cost code** on the generated sheet (Q15), filled on
+   the same rows as the cost code.
+
+## Data
+Migration `0020_procore_projects.sql`, same pattern and grants as `cost_codes` (read-only for signed-in
+users, closed to anon, no writes through the API):
+
+```
+procore_projects
+  code        text primary key   -- 'BKK-03', exactly as in Procore
+  name        text not null      -- 'Bangkok 3', exactly as in Procore; no commas
+  is_program  boolean not null default false
+  in_planner  boolean not null default true
+```
+
+Seed: `('BKK-03', 'Bangkok 3', false, true)`.
+
+## Behaviour
+- **Wizard:** a **Procore project** select right after **Schedule type**: **None**, then
+  `CODE — Name` for each `in_planner` project, program projects first, then by code. Changing project
+  type or schedule type keeps the choice. Hidden when the list is empty or could not be loaded.
+- **Not sent to the AI**, like the cost code.
+- **Sheet:** a `Procore project` PICKLIST column (options = the offered projects as `CODE — Name`)
+  immediately before `Cost code` (before `Basis` when there is no Cost code column). Same rows as the
+  cost code: every summary row when there are several items, every row when there is one. Empty when
+  None was chosen. The column is added whenever the list loaded, even if None was chosen, so the
+  project can be filled in later.
+
+## Not in scope
+Delivery site per item (where program-bought equipment ends up), allocating a batch to sites,
+per-project cost code lists, a project admin screen, any Procore sync.
