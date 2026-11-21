@@ -131,7 +131,7 @@ the five does.
 
 ## Parts
 1. Migration `0019_cost_codes.sql`: table, seed, grants, RLS.
-2. `src/planner/costCodes.ts`: load the flagged codes; option text; code from option text; code for
+2. `src/planner/costCodes.ts`: load the flagged codes; option text; code for
    an equipment type (pure, tested).
 3. `src/planner/plannerItems.ts`: `costCode` and `costCodeEdited` on `ItemForm`; auto-fill on card
    tick and type change, respecting the edited flag (pure, tested). `JobItem` carries the code by key.
