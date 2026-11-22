@@ -9,6 +9,8 @@ import { SheetList } from '../auth/SheetList'
 import { defaultCalendar } from '../engine/calendar'
 import { catalogDraft } from '../test/plannerFixtures'
 import { planBackward } from './backward'
+import { dcMasterCatalog } from './catalogs/dcMasterCatalog'
+import { buildDcMasterDraft } from './dcMasterDraft'
 import { PlannerWizard } from './PlannerWizard'
 import type { BatchPlanRequest, ImportActivitiesResult, ImportRequest, PlanDraft, PlannerOptions, PlanRequest } from './types'
 
@@ -1415,5 +1417,174 @@ describe('PlannerWizard: import a plan from Excel', () => {
     await upload(user, new File(['Alpha,Beta\n1,2\n'], 'notes.csv', { type: 'text/csv' }))
     expect(await screen.findByText('No list of activities found in this file.')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'What we found' })).not.toBeInTheDocument()
+  })
+})
+
+describe('PlannerWizard: All (full project plan)', () => {
+  const FULL_OPTIONS: PlannerOptions = {
+    projectTypes: [
+      { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+      { id: 'properties', name: 'Properties', description: 'Buildings' },
+    ],
+    scheduleTypes: [
+      { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'], itemLabels: { noun: 'plan', typeExample: '', nameExample: '', heading: 'Which data centre are you planning?', intro: 'Choose the project and its Ready for Service date.', dateLabel: 'RFS date' } },
+      { id: 'property-development', name: 'Property development master schedule', description: 'Full property plan', projectTypes: ['properties'], itemLabels: { noun: 'development', typeExample: 'Residential tower', nameExample: 'Marina Heights', dateLabel: 'Planned handover' } },
+      { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] },
+    ],
+    equipmentTypes: { 'lle-procurement': ['Power transformer'], 'dc-master': [], 'property-development': [] },
+    projects: [
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+      { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+    ],
+    costCodes: [{ code: 'CHL', description: 'Chiller', equipmentType: 'Chiller' }],
+  }
+  const dcDraft = (request: PlanRequest) =>
+    buildDcMasterDraft({ request, catalog: dcMasterCatalog(), histories: {} })
+
+  it('lists All first for Data centre and Properties', async () => {
+    mockServer({ options: () => json(200, FULL_OPTIONS) })
+    const { user } = setup()
+    const schedule = await screen.findByLabelText('Schedule type')
+    expect(within(schedule).getAllByRole('option')[0]).toHaveTextContent('All (full project plan)')
+    expect(schedule).toHaveValue('dc-master')
+    await user.selectOptions(screen.getByLabelText('Project type'), 'properties')
+    expect(within(schedule).getAllByRole('option')[0]).toHaveTextContent('All (full project plan)')
+    expect(schedule).toHaveValue('property-development')
+    // Properties' All keeps its development fields and notes.
+    expect(screen.getByLabelText('Planned handover')).toBeInTheDocument()
+    expect(screen.getByLabelText('Notes (optional)')).toBeInTheDocument()
+  })
+
+  it('Data centre All asks only for the project and the RFS date', async () => {
+    mockServer({ options: () => json(200, FULL_OPTIONS) })
+    setup()
+    expect(await screen.findByLabelText('RFS date')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Notes (optional)')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add another item' })).not.toBeInTheDocument()
+  })
+
+  it('requires the project for Data centre All', async () => {
+    const server = mockServer({ options: () => json(200, FULL_OPTIONS) })
+    const { user } = setup()
+    await user.type(await screen.findByLabelText('RFS date'), '2030-06-28')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Choose the project')
+    expect(server.drafts).toHaveLength(0)
+  })
+
+  it('sends one Data centre master request and creates the sheet on the 7-day calendar', async () => {
+    const server = mockServer({ options: () => json(200, FULL_OPTIONS), draft: (r) => json(200, { ok: true, draft: dcDraft(r) }) })
+    const { client, user, onCreated } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    await user.type(screen.getByLabelText('RFS date'), '2030-06-28')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    expect(server.drafts).toEqual([{ scheduleType: 'dc-master', equipmentType: 'Data centre', equipmentName: 'Bangkok 3', requiredDate: '2030-06-28' }])
+    expect(screen.getByText('Dates use a 7-day working week; you can change the calendar in the sheet\'s schedule settings.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Regenerate/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const sheet = (await client.from('sheets').select('name,calendar')).data![0] as { name: string; calendar: { workingWeekdays: number[] } }
+    expect(sheet.name).toBe('Full plan – Bangkok 3')
+    expect(sheet.calendar.workingWeekdays).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect((await client.from('rows').select('id')).data).toHaveLength(199)
+  })
+})
+
+describe('PlannerWizard: All (review fixes)', () => {
+  const OPTS: PlannerOptions = {
+    projectTypes: [
+      { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+      { id: 'properties', name: 'Properties', description: 'Buildings' },
+    ],
+    scheduleTypes: [
+      { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'], itemLabels: { noun: 'plan', typeExample: 'Data centre', nameExample: 'Bangkok 3', heading: 'Which data centre are you planning?', intro: 'Choose the project and its Ready for Service date.', dateLabel: 'RFS date' } },
+      { id: 'property-development', name: 'Property development master schedule', description: 'Property', projectTypes: ['properties'], itemLabels: { noun: 'development', typeExample: 'Residential tower', nameExample: 'Marina Heights', dateLabel: 'Planned handover' } },
+      { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] },
+    ],
+    equipmentTypes: { 'lle-procurement': ['Power transformer', 'Switchgear'], 'dc-master': [], 'property-development': [] },
+    costCodes: [{ code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' }],
+    projects: [
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+      { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+    ],
+  }
+  const dcDraft = (request: PlanRequest) => buildDcMasterDraft({ request, catalog: dcMasterCatalog(), histories: {} })
+
+  it('switching from All to long-lead equipment starts on the first equipment type and its cost code', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    const { user } = setup()
+    const schedule = await screen.findByLabelText('Schedule type')
+    expect(schedule).toHaveValue('dc-master')
+    await user.selectOptions(schedule, 'lle-procurement')
+    expect(screen.getByLabelText('Equipment type')).toHaveValue('Power transformer')
+    expect(screen.getByLabelText('Cost code')).toHaveValue('TRF')
+  })
+
+  it('says the Data centre master is built from the template, not that the AI failed', async () => {
+    mockServer({ options: () => json(200, OPTS), draft: (r) => json(200, { ok: true, draft: dcDraft(r) }) })
+    const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    await user.type(screen.getByLabelText('RFS date'), '2030-06-28')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    expect(screen.getByText('Built from the Data centre master template and past projects')).toBeInTheDocument()
+    expect(screen.queryByText(/AI unavailable/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/durations are defaults/)).not.toBeInTheDocument()
+  })
+
+  it('an import after a Data centre All draft is saved on the usual calendar', async () => {
+    mockServer({
+      options: () => json(200, OPTS),
+      draft: (r) => json(200, { ok: true, draft: dcDraft(r) }),
+      importPlan: () =>
+        json(200, { ok: true, scheduleType: 'property-development', targetCode: 'P420', durations: [{ code: 'P035', days: 12, basis: 'estimate', reason: 'Similar.' }], templateLinks: [], history: { scheduleType: 'property-development', equipmentType: null, projectCount: 0, sampleOnly: false, stats: [] } }),
+    })
+    const { client, user, onCreated } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    await user.type(screen.getByLabelText('RFS date'), '2030-06-28')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    const file = new File([readFileSync(resolve(__dirname, 'import/__fixtures__/plan-template.xlsx'))], 'Plan template.xlsx')
+    await user.upload(await screen.findByLabelText('Import from Excel file'), file)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByText(/Dates use a Monday to Friday working week/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const sheet = (await client.from('sheets').select('calendar')).data![0] as { calendar: { workingWeekdays: number[] } }
+    expect(sheet.calendar.workingWeekdays).toEqual(defaultCalendar.workingWeekdays)
+  })
+})
+
+describe('PlannerWizard: import templates (PR review)', () => {
+  it('does not offer the Data centre master as an import template', async () => {
+    const options: PlannerOptions = {
+      projectTypes: [
+        { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+        { id: 'properties', name: 'Properties', description: 'Villas and towers' },
+      ],
+      scheduleTypes: [
+        { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'] },
+        { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] },
+        { id: 'property-development', name: 'Property development master schedule', description: 'Property', projectTypes: ['properties'] },
+      ],
+      equipmentTypes: { 'lle-procurement': ['Power transformer'], 'dc-master': [], 'property-development': [] },
+      projects: [{ code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false }],
+    }
+    mockServer({
+      options: () => json(200, options),
+      importPlan: () => json(200, { ok: true, scheduleType: null, targetCode: null, durations: [], templateLinks: [], history: null }),
+    })
+    const { user } = setup()
+    await screen.findByLabelText('Schedule type')
+    const file = new File([readFileSync(resolve(__dirname, 'import/__fixtures__/plan-template.xlsx'))], 'Plan template.xlsx')
+    await user.upload(screen.getByLabelText('Import from Excel file'), file)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.selectOptions(screen.getByLabelText('Project type'), 'data-centre')
+    const values = within(screen.getByLabelText('Schedule type')).getAllByRole('option').map((o) => (o as HTMLOptionElement).value)
+    expect(values).not.toContain('dc-master')
+    expect(values).toContain('lle-procurement')
   })
 })

@@ -105,8 +105,12 @@ export interface PlanRequest {
   notes?: string
 }
 
-/** file / template / estimate: durations of an imported plan (the reason holds the wording). */
-export type DurationBasis = 'p50' | 'p80' | 'default' | 'adjusted' | 'file' | 'template' | 'estimate'
+/**
+ * file / template / estimate: durations of an imported plan, or the Data centre master's template (the
+ * reason holds the wording). history: a duration from another schedule type's history (the Data centre
+ * master's long-lead packages); the reason holds the wording.
+ */
+export type DurationBasis = 'p50' | 'p80' | 'default' | 'adjusted' | 'file' | 'template' | 'estimate' | 'history'
 
 export interface DraftActivity {
   code: string
@@ -123,6 +127,8 @@ export interface DraftActivity {
   criteria?: string
   /** An imported activity's status (one of the sheet's statuses); new plans start Not started. */
   status?: string
+  /** The cost code this activity's row carries (Data centre master package activities), e.g. "CHL". */
+  costCode?: string
   /** An imported activity that took the template's links because the file gave it none. */
   linksFromTemplate?: boolean
 }

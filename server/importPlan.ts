@@ -8,6 +8,7 @@
  * Nothing from the request is stored.
  */
 import type Anthropic from '@anthropic-ai/sdk'
+import { NO_ITEM_TYPES } from '../src/planner/fullPlan'
 import type { ImportField, TableMapping } from '../src/planner/import/table'
 import type {
   CatalogActivity,
@@ -118,10 +119,15 @@ export async function prepareImport(source: HistorySource, req: ImportRequest): 
     if (req.scheduleType !== null && !options.scheduleTypes.some((t) => t.id === req.scheduleType)) {
       throw new PlannerError(400, `Unknown schedule type: ${req.scheduleType}.`)
     }
+    if (req.scheduleType !== null && NO_ITEM_TYPES.includes(req.scheduleType)) {
+      throw new PlannerError(400, 'The Data centre master schedule cannot be used to import a plan; choose another schedule type or a general schedule.')
+    }
     scheduleType = req.scheduleType
   } else {
+    // The Data centre master (calendar days, RFS target) is never an import template: an import plans on
+    // the usual working week back from its handover date.
     const catalogs: Record<string, CatalogActivity[]> = {}
-    for (const t of options.scheduleTypes) catalogs[t.id] = await source.catalog(t.id)
+    for (const t of options.scheduleTypes) if (!NO_ITEM_TYPES.includes(t.id)) catalogs[t.id] = await source.catalog(t.id)
     scheduleType = matchScheduleType(catalogs, activities)
   }
 
