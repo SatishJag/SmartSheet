@@ -341,3 +341,19 @@ describe('feasibility', () => {
     expect(f.lateByWorkingDays).toBe(19)
   })
 })
+
+describe('assessFeasibility: a 7-day week and a named target date', () => {
+  const sevenDays: Calendar = { ...defaultCalendar, workingWeekdays: [0, 1, 2, 3, 4, 5, 6] }
+  it('counts plain days on a 7-day week and names the date at risk', () => {
+    const late = assessFeasibility(sevenDays, '2026-11-24', '2026-11-22', '2027-06-30', 'the RFS date')
+    expect(late.message).toBe('This plan should have started 2 days ago; the RFS date is at risk. Starting now, the earliest finish is 2027-07-02.')
+    const tight = assessFeasibility(sevenDays, '2026-11-22', '2026-11-22', '2027-06-30', 'the RFS date')
+    expect(tight.message).toBe('Work must start today to meet the RFS date; there is no spare time.')
+    const spare = assessFeasibility(sevenDays, '2026-11-22', '2026-11-25', '2027-06-30', 'the RFS date')
+    expect(spare.message).toBe('Work must start by 2026-11-25: 3 days from now.')
+  })
+
+  it('keeps today’s wording on a working week', () => {
+    expect(assessFeasibility(defaultCalendar, '2026-11-24', '2026-11-23', '2026-12-04').message).toMatch(/^This plan should have started 1 working day ago; the on-site date is at risk/)
+  })
+})
