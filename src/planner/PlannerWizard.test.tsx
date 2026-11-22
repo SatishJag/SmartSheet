@@ -1490,3 +1490,70 @@ describe('PlannerWizard: All (full project plan)', () => {
     expect((await client.from('rows').select('id')).data).toHaveLength(199)
   })
 })
+
+describe('PlannerWizard: All (review fixes)', () => {
+  const OPTS: PlannerOptions = {
+    projectTypes: [
+      { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+      { id: 'properties', name: 'Properties', description: 'Buildings' },
+    ],
+    scheduleTypes: [
+      { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'], itemLabels: { noun: 'plan', typeExample: 'Data centre', nameExample: 'Bangkok 3', heading: 'Which data centre are you planning?', intro: 'Choose the project and its Ready for Service date.', dateLabel: 'RFS date' } },
+      { id: 'property-development', name: 'Property development master schedule', description: 'Property', projectTypes: ['properties'], itemLabels: { noun: 'development', typeExample: 'Residential tower', nameExample: 'Marina Heights', dateLabel: 'Planned handover' } },
+      { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] },
+    ],
+    equipmentTypes: { 'lle-procurement': ['Power transformer', 'Switchgear'], 'dc-master': [], 'property-development': [] },
+    costCodes: [{ code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' }],
+    projects: [
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+      { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+    ],
+  }
+  const dcDraft = (request: PlanRequest) => buildDcMasterDraft({ request, catalog: dcMasterCatalog(), histories: {} })
+
+  it('switching from All to long-lead equipment starts on the first equipment type and its cost code', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    const { user } = setup()
+    const schedule = await screen.findByLabelText('Schedule type')
+    expect(schedule).toHaveValue('dc-master')
+    await user.selectOptions(schedule, 'lle-procurement')
+    expect(screen.getByLabelText('Equipment type')).toHaveValue('Power transformer')
+    expect(screen.getByLabelText('Cost code')).toHaveValue('TRF')
+  })
+
+  it('says the Data centre master is built from the template, not that the AI failed', async () => {
+    mockServer({ options: () => json(200, OPTS), draft: (r) => json(200, { ok: true, draft: dcDraft(r) }) })
+    const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    await user.type(screen.getByLabelText('RFS date'), '2030-06-28')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    expect(screen.getByText('Built from the Data centre master template and past projects')).toBeInTheDocument()
+    expect(screen.queryByText(/AI unavailable/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/durations are defaults/)).not.toBeInTheDocument()
+  })
+
+  it('an import after a Data centre All draft is saved on the usual calendar', async () => {
+    mockServer({
+      options: () => json(200, OPTS),
+      draft: (r) => json(200, { ok: true, draft: dcDraft(r) }),
+      importPlan: () =>
+        json(200, { ok: true, scheduleType: 'property-development', targetCode: 'P420', durations: [{ code: 'P035', days: 12, basis: 'estimate', reason: 'Similar.' }], templateLinks: [], history: { scheduleType: 'property-development', equipmentType: null, projectCount: 0, sampleOnly: false, stats: [] } }),
+    })
+    const { client, user, onCreated } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    await user.type(screen.getByLabelText('RFS date'), '2030-06-28')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    const file = new File([readFileSync(resolve(__dirname, 'import/__fixtures__/plan-template.xlsx'))], 'Plan template.xlsx')
+    await user.upload(await screen.findByLabelText('Import from Excel file'), file)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByText(/Dates use a Monday to Friday working week/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const sheet = (await client.from('sheets').select('calendar')).data![0] as { calendar: { workingWeekdays: number[] } }
+    expect(sheet.calendar.workingWeekdays).toEqual(defaultCalendar.workingWeekdays)
+  })
+})

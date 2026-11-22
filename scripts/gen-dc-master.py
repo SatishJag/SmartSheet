@@ -27,8 +27,8 @@ TYPE = {
     'description': 'The full data centre project from the reference template: strategy, feasibility, design, permits, funding, long-lead equipment, construction, commissioning levels 1 to 5, Ready for Service and close-out. Planned back from the RFS date on a 7-day week; long-lead packages use real history where it exists.',
     'itemLabels': {
         'noun': 'plan',
-        'typeExample': '',
-        'nameExample': '',
+        'typeExample': 'Data centre',
+        'nameExample': 'Bangkok 3',
         'heading': 'Which data centre are you planning?',
         'intro': 'Choose the project and its Ready for Service date. The full plan is built backward from that date.',
         'dateLabel': 'RFS date',

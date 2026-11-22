@@ -1,6 +1,7 @@
 // @vitest-environment node
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { describe, expect, it } from 'vitest'
+import { DC_MASTER_TYPE } from './catalogs/dcMaster'
 import { createSupabaseHistorySource } from './history'
 
 type Result = { data: unknown; error: { message: string } | null }
@@ -102,6 +103,19 @@ describe('createSupabaseHistorySource', () => {
         ['code', { ascending: true }],
       ])
       expect(calls).toContainEqual({ target: 'cost_codes', method: 'eq', args: ['in_planner', true] })
+    })
+
+    it('keeps the Data centre master’s wizard wording (review fix)', async () => {
+      const { client } = fakeClient({
+        schedule_types: ok([{ id: DC_MASTER_TYPE.id, name: DC_MASTER_TYPE.name, description: '', project_types: ['data-centre'], item_labels: DC_MASTER_TYPE.itemLabels }]),
+        project_types: ok([]),
+        planner_equipment_types: ok([]),
+        cost_codes: ok([]),
+        projects: ok([]),
+      })
+      const options = await createSupabaseHistorySource(client).options()
+      expect(options.scheduleTypes[0].itemLabels).toEqual(DC_MASTER_TYPE.itemLabels)
+      expect(options.scheduleTypes[0].itemLabels?.dateLabel).toBe('RFS date')
     })
 
     it('leaves costCodes out when the cost code query fails, and still returns the options', async () => {

@@ -19,6 +19,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 /** "Drafted by AI from 9 historical projects" / "Built from history only — AI unavailable". */
 export function sourceLabel(draft: PlanDraft): string {
   const n = draft.history.projectCount
+  // The Data centre master never uses the AI: its durations are the template's and real long-lead history.
+  if (draft.request.scheduleType === 'dc-master') return 'Built from the Data centre master template and past projects'
   if (draft.source === 'ai') return n > 0 ? `Drafted by AI from ${plural(n, 'historical project')}` : 'Drafted by AI (no historical projects)'
   return `Built from history only — AI unavailable${n > 0 ? ` (${plural(n, 'historical project')})` : ''}`
 }
@@ -32,7 +34,7 @@ export function entryTitle(entry: Entry): string {
 export const SAMPLE_WARNING = "Based on SAMPLE data, not your company's history."
 
 /** One item's preview: feasibility banner, source, warnings, activities table, assumptions and risks. */
-export function ItemPreview({ entry, showSampleWarning, noun = 'equipment' }: { entry: Entry; showSampleWarning: boolean; noun?: string }) {
+export function ItemPreview({ entry, showSampleWarning, noun = 'equipment', sevenDayWeek = false }: { entry: Entry; showSampleWarning: boolean; noun?: string; sevenDayWeek?: boolean }) {
   const tableTitleId = useId()
   const { draft, plan } = entry
   if (!draft || !plan) return null
@@ -70,7 +72,7 @@ export function ItemPreview({ entry, showSampleWarning, noun = 'equipment' }: { 
           </span>
         )}
       </div>
-      {draft.history.projectCount === 0 && (
+      {draft.history.projectCount === 0 && draft.request.scheduleType !== 'dc-master' && (
         <p className="planner-sample" role="note">
           <PIcon name="alertCircle" size={18} />
           <span>
@@ -144,7 +146,7 @@ export function ItemPreview({ entry, showSampleWarning, noun = 'equipment' }: { 
         </table>
       </div>
       <p className="planner-hint">
-        Dates use a {entry.request.scheduleType === 'dc-master' ? '7-day' : 'Monday to Friday'} working week; you can change the calendar in the sheet's schedule settings.
+        Dates use a {sevenDayWeek ? '7-day' : 'Monday to Friday'} working week; you can change the calendar in the sheet's schedule settings.
       </p>
 
       {(draft.assumptions.length > 0 || draft.risks.length > 0) && (
@@ -200,6 +202,8 @@ export interface PlanPreviewProps {
   onCreate: () => void
   /** False for an imported plan: regenerating would redraft it from the catalog and lose the planner's activities. */
   allowRegenerate?: boolean
+  /** The plan runs on a 7-day week (the Data centre master); the calendar hint says so. */
+  sevenDayWeek?: boolean
 }
 
 /**
@@ -209,7 +213,7 @@ export interface PlanPreviewProps {
  * a sticky footer so "Create schedule" is always in reach.
  */
 export function PlanPreview(props: PlanPreviewProps) {
-  const { entries, headingRef, instruction, instructionId, onInstruction, failure, creating, noun = 'equipment', onBack, onRegenerateAll, onRegenerateOne, onRemove, onCreate, allowRegenerate = true } = props
+  const { entries, headingRef, instruction, instructionId, onInstruction, failure, creating, noun = 'equipment', onBack, onRegenerateAll, onRegenerateOne, onRemove, onCreate, allowRegenerate = true, sevenDayWeek = false } = props
   const many = entries.length > 1
   const info = overview(entries)
   const busy = creating || entries.some((e) => e.status === 'busy')
@@ -286,7 +290,7 @@ export function PlanPreview(props: PlanPreviewProps) {
         )}
         {!many && entries[0].status !== 'failed' && (
           <div className="planner-card card">
-            <ItemPreview entry={entries[0]} showSampleWarning noun={noun} />
+            <ItemPreview entry={entries[0]} showSampleWarning noun={noun} sevenDayWeek={sevenDayWeek} />
           </div>
         )}
 

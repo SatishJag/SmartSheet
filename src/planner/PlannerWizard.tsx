@@ -279,7 +279,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const projectProblem = listed.length > 0 && !project ? 'Choose the project' : null
   // Items whose type is not on offer for the schedule type (or not chosen yet) get the first type with history.
   useEffect(() => {
-    if (!options) return
+    // A full plan without items (the Data centre master) has no item types: leave the items as they are,
+    // so switching to another schedule type gives them its first type as usual.
+    if (!options || NO_ITEM_TYPES.includes(scheduleType)) return
     setItems((prev) => {
       const next = prev.map((i) =>
         i.choice === OTHER || equipmentTypes.includes(i.choice) ? i : { ...i, choice: defaultChoice, fromCard: null },
@@ -460,7 +462,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
           : undefined
       const projectColumn =
         listed.length > 0 ? { options: listed.map(projectOption), value: optionForProject(listed, project) } : undefined
-      const fullPlan = NO_ITEM_TYPES.includes(job?.scheduleType ?? '')
+      // What is being saved decides: an import keeps the usual calendar whatever was drafted before it.
+      const savedType = imported ? '' : (entries[0]?.request.scheduleType ?? '')
+      const fullPlan = NO_ITEM_TYPES.includes(savedType)
       const deliverySites =
         sites.length > 0 && !imported
           ? {
@@ -471,7 +475,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               ),
             }
           : undefined
-      const sheetCalendar = planCalendar(job?.scheduleType ?? '', calendar)
+      const sheetCalendar = planCalendar(savedType, calendar)
       const sheetId = await insertSheetFromDrafts(client, drafts, userId, sheetCalendar, { today, costCodes: sheetCostCodes, project: projectColumn, deliverySites })
       if (mounted.current) onCreated(sheetId)
     } catch (err) {
@@ -1217,7 +1221,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               setFailure(null)
               setStep(imported ? 'imported' : 'request')
             }}
-            allowRegenerate={!imported && !NO_ITEM_TYPES.includes(job?.scheduleType ?? '')}
+            allowRegenerate={!imported && !NO_ITEM_TYPES.includes(entries[0]?.request.scheduleType ?? '')}
+            sevenDayWeek={!imported && planCalendar(entries[0]?.request.scheduleType ?? '', calendar).workingWeekdays.length === 7}
             onRegenerateAll={regenerateAll}
             onRegenerateOne={(key, extra) => void regenerateOne(key, extra)}
             onRemove={removeEntry}
