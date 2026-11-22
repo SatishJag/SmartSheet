@@ -457,6 +457,10 @@ test('Plan with AI: import a plan from Excel, confirm what was found, and create
   await expect(dialog.getByLabel('Project', { exact: true })).toHaveValue('VIL-01')
   await expect(dialog.getByLabel('Planned handover')).toHaveValue('2028-06-30')
   expect(imports).toHaveLength(1)
+  // Schedule type and Project share a row.
+  const typeBox = (await dialog.getByLabel('Schedule type').boundingBox())!
+  const projectBox = (await dialog.getByLabel('Project', { exact: true }).boundingBox())!
+  expect(Math.abs(typeBox.y - projectBox.y)).toBeLessThan(2)
 
   await dialog.getByRole('button', { name: 'Preview' }).click()
   await expect(dialog.getByRole('button', { name: /Regenerate/ })).toHaveCount(0)
