@@ -13,7 +13,7 @@ import type { DraftActivity, HistorySummary, PlanDraft } from './types'
 /** Title of the extra text column that says where each duration came from. */
 export const BASIS_COLUMN_TITLE = 'Basis'
 
-const NAME_PREFIX: Record<string, string> = { 'lle-procurement': 'LLE', 'property-development': 'Programme' }
+const NAME_PREFIX: Record<string, string> = { 'lle-procurement': 'LLE', 'property-development': 'Programme', 'dc-master': 'Full plan' }
 
 /** Title of the Procore cost code dropdown column (docs/superpowers/specs/2026-11-21-cost-code-link-design.md). */
 export const COST_CODE_COLUMN_TITLE = 'Cost code'
@@ -218,7 +218,7 @@ function activityRows(
   cols: PlanCols,
   calendar: Calendar,
   parentId: string | null,
-  tags: Record<string, unknown> = {},
+  tags: Record<string, unknown> | ((a: DraftActivity) => Record<string, unknown>) = {},
 ) {
   const planned = new Map(plan.activities.map((a) => [a.code, a]))
   const positions = generateNKeysBetween(null, null, draft.activities.length)
@@ -237,7 +237,7 @@ function activityRows(
     if (cols.activityId && a.activityId) cells[cols.activityId] = a.activityId
     if (cols.responsibility && a.responsibility) cells[cols.responsibility] = a.responsibility
     if (cols.criteria && a.criteria) cells[cols.criteria] = a.criteria
-    Object.assign(cells, tags)
+    Object.assign(cells, typeof tags === 'function' ? tags(a) : tags)
     if (p?.isRoot) cells[cols.start] = p.start
     return { id, parentId, position: positions[i], cells, version: 0 }
   })
@@ -275,7 +275,15 @@ export function buildSheetFromDraft(
     deliverySites?.options,
   )
   // One item: every row belongs to it, so every row carries its project, cost code and delivery site.
-  const tags = { ...tagCells(cols, projectValue(project), costCodeValue(costCodes, 0)), ...siteCells(cols, deliverySiteValue(deliverySites, 0)) }
+  // A draft whose activities carry their own cost codes (the Data centre master's packages) tags each
+  // of those rows with its code and the delivery site; its other rows carry the project only.
+  const site = deliverySiteValue(deliverySites, 0)
+  const tags = draft.activities.some((a) => a.costCode)
+    ? (a: DraftActivity) => {
+        const option = a.costCode ? costCodes?.options.find((o) => o.startsWith(`${a.costCode} — `)) : undefined
+        return option ? { ...tagCells(cols, projectValue(project), option), ...siteCells(cols, site) } : tagCells(cols, projectValue(project))
+      }
+    : { ...tagCells(cols, projectValue(project), costCodeValue(costCodes, 0)), ...siteCells(cols, site) }
   const { rows, dependencies } = activityRows(draft, plan, cols, calendar, null, tags)
   return { sheet, columns, rows, dependencies }
 }

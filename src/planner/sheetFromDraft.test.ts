@@ -8,6 +8,8 @@ import { supabasePersistence } from '../store/persistence'
 import { toSchedInput } from '../store/scheduleInput'
 import { activity, catalogDraft, link, lleDraft, makeDraft, sampleHistory } from '../test/plannerFixtures'
 import { planBackward } from './backward'
+import { dcMasterCatalog } from './catalogs/dcMasterCatalog'
+import { buildDcMasterDraft, SEVEN_DAY_WEEK } from './dcMasterDraft'
 import {
   basisText,
   buildSheetFromDraft,
@@ -617,5 +619,46 @@ describe('imported activities on the sheet', () => {
     const status = columns.find((c) => c.role === 'status')!.id
     expect(rows[0].cells[status]).toBe('In progress')
     expect(rows[1].cells[status]).toBe('Not started')
+  })
+})
+
+describe('Data centre master sheet', () => {
+  const sevenDays = { ...cal, workingWeekdays: SEVEN_DAY_WEEK }
+  const dc = () => {
+    const draft = buildDcMasterDraft({
+      request: { scheduleType: 'dc-master', equipmentType: 'Data centre', equipmentName: 'Bangkok 3', requiredDate: '2030-06-28' },
+      catalog: dcMasterCatalog(),
+      histories: {},
+    })
+    return { draft, plan: planBackward(draft, sevenDays, TODAY) }
+  }
+  const col = (data: ReturnType<typeof buildSheetFromDraft>, title: string) => data.columns.find((c) => c.title === title)!.id
+  const rowOf = (data: ReturnType<typeof buildSheetFromDraft>, activityId: string) => data.rows.find((r) => r.cells[col(data, 'Activity ID')] === activityId)!
+  const SITE = { options: ['BKK-03 — Bangkok 3'], values: ['BKK-03 — Bangkok 3'] }
+  const PROJECT = { options: ['BKK-03 — Bangkok 3'], value: 'BKK-03 — Bangkok 3' }
+
+  it('names a Data centre master sheet "Full plan – <project>"', () => {
+    expect(sheetNameForDraft(dc().draft)).toBe('Full plan – Bangkok 3')
+  })
+
+  it('tags package rows with their own cost code and the delivery site', () => {
+    const { draft, plan } = dc()
+    const data = buildSheetFromDraft(draft, plan, 'user-1', sevenDays, { options: ['CHL — Chiller', 'GEN — Generator'], values: [undefined] }, PROJECT, SITE)
+    const [cost, site, project] = [col(data, 'Cost code'), col(data, 'Delivery site'), col(data, 'Project')]
+    const chiller = rowOf(data, 'DC-0082') // Chillers step 1
+    expect([chiller.cells[cost], chiller.cells[site]]).toEqual(['CHL — Chiller', 'BKK-03 — Bangkok 3'])
+    const generator = rowOf(data, 'DC-0064') // Generator Sets step 1
+    expect(generator.cells[cost]).toBe('GEN — Generator')
+    const design = rowOf(data, 'DC-0001')
+    expect([design.cells[cost], design.cells[site]]).toEqual([undefined, undefined])
+    expect(data.rows.every((r) => r.cells[project] === 'BKK-03 — Bangkok 3')).toBe(true)
+    expect(data.sheet.calendar.workingWeekdays).toEqual(SEVEN_DAY_WEEK)
+  })
+
+  it('leaves a package uncoded when its code is not offered', () => {
+    const { draft, plan } = dc()
+    const data = buildSheetFromDraft(draft, plan, 'user-1', sevenDays, { options: ['CHL — Chiller'], values: [undefined] }, PROJECT, SITE)
+    const switchgear = rowOf(data, 'DC-0091') // Switchgear step 1 (HVS not offered)
+    expect([switchgear.cells[col(data, 'Cost code')], switchgear.cells[col(data, 'Delivery site')]]).toEqual([undefined, undefined])
   })
 })
