@@ -326,6 +326,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   }, [items])
 
   const busy = step === 'drafting' || step === 'creating'
+  // The Data centre master is built from its template, not by the AI: the header says so.
+  const shownType = step === 'preview' || step === 'creating' ? entries[0]?.request.scheduleType : scheduleType
+  const templatePlan = !imported && NO_ITEM_TYPES.includes(shownType ?? '')
 
   function close() {
     if (step === 'creating') return
@@ -725,7 +728,11 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
           </span>
           <div className="planner-header-text">
             <h2 id={ids.title}>Plan with AI</h2>
-            <p>An AI master planner drafts the first cut; you review and approve.</p>
+            <p>
+              {templatePlan
+                ? 'Builds the full plan from the Data centre master template; you review and approve.'
+                : 'An AI master planner drafts the first cut; you review and approve.'}
+            </p>
           </div>
           <ol className="planner-steps" aria-label="Steps">
             <li aria-current={stepNumber === 1 ? 'step' : undefined} className={stepNumber === 1 ? 'is-current' : 'is-done'}>
