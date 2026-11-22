@@ -1123,7 +1123,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                       Schedule type
                     </label>
                     <select id={ids.type} value={imported.scheduleType} onChange={(e) => void changeImportType(e.target.value)} disabled={importBusy}>
-                      {visibleSchedules.map((t) => (
+                      {visibleSchedules.filter((t) => !NO_ITEM_TYPES.includes(t.id)).map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.name}
                         </option>

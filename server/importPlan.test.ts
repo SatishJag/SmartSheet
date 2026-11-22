@@ -1,6 +1,7 @@
 // @vitest-environment node
 import type Anthropic from '@anthropic-ai/sdk'
 import { describe, expect, it, vi } from 'vitest'
+import { dcMasterCatalog } from '../src/planner/catalogs/dcMasterCatalog'
 import { propertyDevelopmentCatalog } from '../src/planner/catalogs/propertyCatalog'
 import type { CatalogActivity, HistorySource, HistorySummary, ImportActivityRef, PlannerOptions } from '../src/planner/types'
 import type { AnthropicLike } from './ai'
@@ -189,5 +190,30 @@ describe('planImport: review fixes', () => {
     await planImport(source(), { hints: { fileName: 'p.xlsx', sheetNames: [] }, activities: acts, scheduleType: null }, config(ai.client))
     const body = (ai.create.mock.calls[0] as unknown as [{ max_tokens: number }])[0]
     expect(body.max_tokens).toBeGreaterThanOrEqual(400 * 40)
+  })
+})
+
+describe('import: the Data centre master is not an import template (PR review)', () => {
+  const DC = dcMasterCatalog()
+  const withDc: HistorySource = {
+    options: async () => ({ ...OPTIONS, scheduleTypes: [...OPTIONS.scheduleTypes, { id: 'dc-master', name: 'Data centre master schedule', description: '' }] }),
+    catalog: async (type) => (type === 'dc-master' ? DC : type === 'property-development' ? PROPERTY : type === 'lle-procurement' ? LLE : []),
+    summary: async (type) => EMPTY(type),
+  }
+  const config = { anthropic: null, model: 'm', aiTimeoutMs: 1000, aiDeadlineMs: 1000, log: () => {} }
+  // Activities named exactly as the Data centre template's, so they would match it by name.
+  const acts: ImportActivityRef[] = DC.slice(185, 199).map((a) => ({ code: a.activityId!, name: a.name, phase: a.phase, hasDuration: false, hasPredecessors: false }))
+
+  it('never matches a file to the Data centre master', async () => {
+    const { value } = await planImport(withDc, { hints: { fileName: 'dc.xlsx', sheetNames: [] }, activities: acts }, config)
+    expect(value.scheduleType).toBeNull()
+    expect(value.templateLinks).toEqual([])
+  })
+
+  it('refuses the Data centre master as the chosen template', async () => {
+    await expect(planImport(withDc, { hints: { fileName: 'dc.xlsx', sheetNames: [] }, activities: acts, scheduleType: 'dc-master' }, config)).rejects.toMatchObject({
+      status: 400,
+      message: 'The Data centre master schedule cannot be used to import a plan; choose another schedule type or a general schedule.',
+    })
   })
 })

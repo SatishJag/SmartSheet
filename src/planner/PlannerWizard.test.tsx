@@ -1557,3 +1557,34 @@ describe('PlannerWizard: All (review fixes)', () => {
     expect(sheet.calendar.workingWeekdays).toEqual(defaultCalendar.workingWeekdays)
   })
 })
+
+describe('PlannerWizard: import templates (PR review)', () => {
+  it('does not offer the Data centre master as an import template', async () => {
+    const options: PlannerOptions = {
+      projectTypes: [
+        { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+        { id: 'properties', name: 'Properties', description: 'Villas and towers' },
+      ],
+      scheduleTypes: [
+        { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'] },
+        { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] },
+        { id: 'property-development', name: 'Property development master schedule', description: 'Property', projectTypes: ['properties'] },
+      ],
+      equipmentTypes: { 'lle-procurement': ['Power transformer'], 'dc-master': [], 'property-development': [] },
+      projects: [{ code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false }],
+    }
+    mockServer({
+      options: () => json(200, options),
+      importPlan: () => json(200, { ok: true, scheduleType: null, targetCode: null, durations: [], templateLinks: [], history: null }),
+    })
+    const { user } = setup()
+    await screen.findByLabelText('Schedule type')
+    const file = new File([readFileSync(resolve(__dirname, 'import/__fixtures__/plan-template.xlsx'))], 'Plan template.xlsx')
+    await user.upload(screen.getByLabelText('Import from Excel file'), file)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.selectOptions(screen.getByLabelText('Project type'), 'data-centre')
+    const values = within(screen.getByLabelText('Schedule type')).getAllByRole('option').map((o) => (o as HTMLOptionElement).value)
+    expect(values).not.toContain('dc-master')
+    expect(values).toContain('lle-procurement')
+  })
+})
