@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { isPanelPath, PROCORE_ORIGINS } from '../src/procore/origins'
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -44,16 +45,24 @@ async function isFile(p: string): Promise<boolean> {
   }
 }
 
-async function send(req: IncomingMessage, res: ServerResponse, file: string, cache: string): Promise<void> {
+/** Who may frame a response: nobody, or (the /procore page only) Procore's own sites. */
+type FramePolicy = 'none' | 'procore'
+
+const FRAME_HEADERS: Record<FramePolicy, Record<string, string>> = {
+  // The app keeps its session in this origin's storage: never let another site frame it.
+  none: { 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" },
+  // X-Frame-Options cannot list several origins, so the CSP alone says who may frame the panel page.
+  procore: { 'Content-Security-Policy': `frame-ancestors ${PROCORE_ORIGINS.join(' ')}` },
+}
+
+async function send(req: IncomingMessage, res: ServerResponse, file: string, cache: string, frame: FramePolicy = 'none'): Promise<void> {
   const info = await stat(file)
   res.writeHead(200, {
     'Content-Type': contentType(file),
     'Content-Length': info.size,
     'Cache-Control': cache,
     'X-Content-Type-Options': 'nosniff',
-    // The app keeps its session in this origin's storage: never let another site frame it.
-    'X-Frame-Options': 'DENY',
-    'Content-Security-Policy': "frame-ancestors 'none'",
+    ...FRAME_HEADERS[frame],
     'Referrer-Policy': 'strict-origin-when-cross-origin',
   })
   if (req.method === 'HEAD') {
@@ -99,5 +108,6 @@ export async function serveStatic(req: IncomingMessage, res: ServerResponse, roo
 
   const index = path.join(base, 'index.html')
   if (!(await isFile(index))) return plain(res, 404, 'The app has not been built (run npm run build).')
-  return send(req, res, index, 'no-cache')
+  // Procore shows /procore (Plan with AI only) in its side panel and full screen; nothing else is framable.
+  return send(req, res, index, 'no-cache', isPanelPath(decoded) ? 'procore' : 'none')
 }
