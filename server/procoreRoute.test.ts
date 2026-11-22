@@ -31,6 +31,7 @@ function fakeProcore(overrides: Partial<Record<string, () => unknown[]>> = {}) {
   }
   const client: ProcoreClient = {
     companyId: '42',
+    get: vi.fn() as unknown as ProcoreClient['get'],
     getAll: vi.fn(async <T,>(path: string, query: Record<string, string>) => {
       void query
       const r = routes[path]
@@ -170,5 +171,68 @@ describe('POST /api/procore/committed', () => {
     expect(res.status).toBe(429)
     expect(res.headers.get('Retry-After')).toMatch(/^\d+$/)
     expect(await res.json()).toEqual({ ok: false, error: 'You have reached the limit of 30 Procore syncs per hour. Try again later.' })
+  })
+})
+
+describe('GET /api/procore/project', () => {
+  function withProject(projectNumber: string | null | (() => never)) {
+    const client: ProcoreClient = {
+      companyId: '42',
+      getAll: vi.fn() as unknown as ProcoreClient['getAll'],
+      get: vi.fn(async (path: string, query: Record<string, string>) => {
+        if (typeof projectNumber === 'function') projectNumber()
+        return { id: 7, project_number: projectNumber, path, query }
+      }) as unknown as ProcoreClient['get'],
+    }
+    return client
+  }
+  const get = (base: string, q: string, token = 'good-token') =>
+    fetch(`${base}/api/procore/project${q}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+
+  it('needs a signed-in user and numeric ids', async () => {
+    const base = await start({ procore: withProject('BKK-03') })
+    expect((await get(base, '?company=42&project=7', '')).status).toBe(401)
+    expect((await get(base, '?company=abc&project=7')).status).toBe(400)
+    expect((await get(base, '?company=42')).status).toBe(400)
+  })
+
+  it('says when Procore is not set up', async () => {
+    const base = await start({ procore: null })
+    const res = await get(base, '?company=42&project=7')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ code: null, reason: 'not-configured' })
+  })
+
+  it('refuses another company', async () => {
+    const base = await start({ procore: withProject('BKK-03') })
+    expect(await (await get(base, '?company=99&project=7')).json()).toEqual({ code: null, reason: 'other-company' })
+  })
+
+  it('matches the project number to a listed project', async () => {
+    const procore = withProject('BKK-03')
+    const base = await start({ procore })
+    expect(await (await get(base, '?company=42&project=7')).json()).toEqual({ code: 'BKK-03' })
+    expect(vi.mocked(procore.get).mock.calls[0].slice(0, 2)).toEqual(['/rest/v1.0/projects/7', { company_id: '42', view: 'minimal' }])
+  })
+
+  it('says when Procore has no project number', async () => {
+    const base = await start({ procore: withProject(null) })
+    expect(await (await get(base, '?company=42&project=7')).json()).toEqual({ code: null, reason: 'not-found' })
+  })
+
+  it('does not match a project the caller cannot read', async () => {
+    const base = await start({ procore: withProject('XYZ-99') })
+    expect(await (await get(base, '?company=42&project=7')).json()).toEqual({ code: null, reason: 'not-listed' })
+  })
+
+  it('answers procore-error when Procore fails', async () => {
+    const base = await start({
+      procore: withProject(() => {
+        throw new ProcoreError('Procore is busy; try again in a minute.')
+      }),
+    })
+    const res = await get(base, '?company=42&project=7')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ code: null, reason: 'procore-error' })
   })
 })

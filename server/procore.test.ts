@@ -195,3 +195,20 @@ describe('createProcoreClient', () => {
     expect((err as Error).message).not.toContain(SECRET)
   })
 })
+
+describe('createProcoreClient: get', () => {
+  it('reads one object with the same sign-in and headers', async () => {
+    const p = fakeProcore((url) => Response.json({ id: 7, project_number: 'BKK-03', path: url.pathname, q: url.searchParams.get('view') }))
+    const client = createProcoreClient(CONFIG, { fetch: p.fetch })
+    expect(await client.get('/rest/v1.0/projects/7', { company_id: '42', view: 'minimal' })).toEqual({ id: 7, project_number: 'BKK-03', path: '/rest/v1.0/projects/7', q: 'minimal' })
+    const call = p.apiCalls()[0]
+    expect(header(call.init, 'Authorization')).toBe('Bearer t1')
+    expect(header(call.init, 'Procore-Company-Id')).toBe('42')
+    expect(call.url.searchParams.get('page')).toBeNull()
+  })
+
+  it('rejects a body that is not one object', async () => {
+    const p = fakeProcore(() => Response.json([{ id: 7 }]))
+    await expect(createProcoreClient(CONFIG, { fetch: p.fetch }).get('/x', {})).rejects.toEqual(new ProcoreError('Procore sent an unexpected response.'))
+  })
+})
