@@ -194,13 +194,16 @@ export interface CostCode {
 }
 
 /**
- * A Procore project a plan can be bought against (procore_projects with in_planner; see
- * supabase/migrations/0020_procore_projects.sql). Program (dummy) projects come first.
+ * A project a plan belongs to (projects with in_planner; see supabase/migrations/0022_projects.sql).
+ * Program (dummy) projects come first. `projectType` is the project type it is listed under;
+ * `inProcore` says it exists in Procore (the property projects are samples for now).
  */
-export interface ProcoreProject {
+export interface Project {
   code: string
   name: string
   isProgram: boolean
+  projectType: string
+  inProcore: boolean
 }
 
 export interface PlannerOptions {
@@ -221,10 +224,11 @@ export interface PlannerOptions {
    */
   costCodes?: CostCode[]
   /**
-   * Optional: the Procore projects a plan can be bought against, program projects first. Absent when
-   * there are none or they could not be read; the wizard then hides the field and the sheet gets no column.
+   * Optional: the projects a plan can belong to, program projects first. Absent when there are none or
+   * they could not be read; the wizard then hides the field (and does not require it) and the sheet
+   * gets no column.
    */
-  procoreProjects?: ProcoreProject[]
+  projects?: Project[]
 }
 
 /**

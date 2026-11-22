@@ -27,8 +27,8 @@ export interface CostCodeColumn {
   values: (string | undefined)[]
 }
 
-/** Title of the Procore project dropdown column (one project per plan). */
-export const PROJECT_COLUMN_TITLE = 'Procore project'
+/** Title of the project dropdown column (one project per plan). */
+export const PROJECT_COLUMN_TITLE = 'Project'
 
 /**
  * The Procore project column a plan sheet gets: its dropdown options ("BKK-03 — Bangkok 3") and the
