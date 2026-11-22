@@ -17,6 +17,7 @@ import { KanbanView } from './kanban/KanbanView'
 import { DensityProvider, readDensity, saveDensity, type Density } from './density'
 import { Icon, type IconName } from '../ui/Icon'
 import { ResourcesButton } from '../resources/AssignPanel'
+import { ProcoreSyncButton } from '../planner/ProcoreSyncButton'
 import './sheetView.css'
 
 export interface SheetViewProps {
@@ -339,6 +340,7 @@ function SheetContent({
                       Plan with AI
                     </button>
                   )}
+                  {(role === 'owner' || role === 'editor') && <ProcoreSyncButton client={client} />}
                   <ResourcesButton client={client} sheetId={sheetId} />
                   <label
                     className="switch"

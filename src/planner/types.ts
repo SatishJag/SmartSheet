@@ -299,3 +299,31 @@ export interface ImportActivitiesResult {
 
 export type ImportMappingResponse = { ok: true; mapping: TableMapping | null } | { ok: false; error: string }
 export type ImportActivitiesResponse = ({ ok: true } & ImportActivitiesResult) | { ok: false; error: string }
+
+/**
+ * Procore sync (docs/superpowers/specs/2026-11-22-procore-sync-design.md): what a sheet asks for, per
+ * project, and the committed totals the server reads from Procore's commitments.
+ */
+export interface CommittedRequest {
+  projects: { code: string; costCodes: string[] }[]
+}
+
+export interface CommittedCostCode {
+  code: string
+  /** Sum of the counted commitments' line amounts on this cost code. */
+  committed: number
+  /** At least one counted commitment has a line on this cost code. */
+  awarded: boolean
+  /** The project has this cost code in Procore. */
+  known: boolean
+}
+
+export type CommittedProject =
+  | { code: string; status: 'ok'; costCodes: CommittedCostCode[] }
+  /** not-in-procore: not listed, or not marked in_procore; not-found: Procore has no project with that number. */
+  | { code: string; status: 'not-in-procore' | 'not-found' }
+
+export interface CommittedResponse {
+  ok: true
+  projects: CommittedProject[]
+}

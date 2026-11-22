@@ -197,3 +197,18 @@
   .sheet-title { font-size: 1.0625rem; }
   .breadcrumb .inline-rename input { min-width: 0; width: 100%; }
 }
+
+/* Sync with Procore: the button and its result line, which wraps on narrow screens. */
+.procore-sync {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.procore-sync-result {
+  color: var(--ink-2);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}

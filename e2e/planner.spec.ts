@@ -472,3 +472,46 @@ test('Plan with AI: import a plan from Excel, confirm what was found, and create
   await expect(await gridCell(page, 3, 'Status')).toContainText('In progress')
   await expect(await gridCell(page, 4, 'Basis')).toHaveText('AI estimate: Similar to a site survey.')
 })
+
+test('Sync with Procore fills Committed and Awarded', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(`${TODAY}T10:00:00`))
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
+        costCodes: [{ code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' }],
+      } satisfies PlannerOptions,
+    }),
+  )
+  await page.route('**/api/planner/draft', (route) => {
+    const request = route.request().postDataJSON() as PlanRequest
+    return route.fulfill({ json: { ok: true, draft: { ...catalogDraft(request.requiredDate), request } } })
+  })
+  const syncRequests: unknown[] = []
+  await page.route('**/api/procore/committed', (route) => {
+    syncRequests.push(route.request().postDataJSON())
+    return route.fulfill({
+      json: { ok: true, projects: [{ code: 'BKK-03', status: 'ok', costCodes: [{ code: 'TRF', committed: 1250000, awarded: true, known: true }] }] },
+    })
+  })
+
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  await dialog.getByLabel('Project', { exact: true }).selectOption('BKK-03')
+  await dialog.getByLabel('Equipment type').selectOption('Power transformer')
+  await dialog.getByLabel('Equipment name').fill('400 MVA transformer')
+  await dialog.getByLabel('Required on site').fill(REQUIRED)
+  await dialog.getByRole('button', { name: 'Generate' }).click()
+  await dialog.getByRole('button', { name: 'Create schedule' }).click()
+  await expect(page.getByRole('heading', { name: 'LLE – 400 MVA transformer' })).toBeVisible()
+  await expect(await gridCell(page, 1, 'Cost code')).toHaveText('TRF — Transformer')
+
+  await page.getByRole('button', { name: 'Sync with Procore' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Last synced' })).toHaveText(/^Last synced \d\d:\d\d · 1 item updated$/)
+  expect(syncRequests).toEqual([{ projects: [{ code: 'BKK-03', costCodes: ['TRF'] }] }])
+  await expect(await gridCell(page, 1, 'Committed (Procore)')).toHaveText('1250000')
+  await expect(await gridCell(page, 1, 'Awarded')).toHaveText('Yes')
+  await expect(await gridCell(page, 14, 'Awarded')).toHaveText('Yes')
+})

@@ -3,13 +3,15 @@
  * injected so tests can run it on an ephemeral port with fakes.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import type { BatchDraftResponse, DraftResponse, HistorySource, ImportActivitiesResponse, ImportMappingResponse } from '../src/planner/types'
+import type { BatchDraftResponse, CommittedProject, CommittedResponse, DraftResponse, HistorySource, ImportActivitiesResponse, ImportMappingResponse, PlannerOptions } from '../src/planner/types'
 import { DEFAULT_MODEL, type AnthropicLike } from './ai'
 import { DEFAULT_BATCH_CONCURRENCY, DEFAULT_BATCH_DEADLINE_MS, draftBatch as draftBatchItems } from './batch'
 import { createDraftLimiter, type DraftLimits } from './limits'
 import { consoleLogger, type Logger } from './log'
 import { completeImport, mapImportColumns, parseImportRequest, prepareImport } from './importPlan'
 import { createDraft, PlannerError } from './planner'
+import { ProcoreError, type ProcoreClient } from './procore'
+import { committedForProject, parseCommittedRequest } from './procoreSync'
 import { parseBatchRequest, parsePlanRequest } from './request'
 import { serveStatic } from './static'
 
@@ -52,7 +54,12 @@ export interface AppDeps {
   /** Time for a whole batch; items not started by then are drafted from history alone. Default 210 s. */
   batchDeadlineMs?: number
   log?: Logger
+  /** Reads committed totals from Procore for the sync; null or absent when Procore is not configured (503). */
+  procore?: ProcoreClient | null
 }
+
+/** Procore syncs: no AI is called, but each sync makes many Procore calls (rate-limited per company). */
+const PROCORE_SYNC_LIMITS: DraftLimits = { perUserPerHour: 30, perUserInFlight: 1, globalInFlight: 4 }
 
 const MAX_TOKEN_CHARS = 8192
 
@@ -121,6 +128,7 @@ export function createApp(deps: AppDeps): Server {
   /** An imported plan (up to 500 activities) is larger than a draft request. */
   const importMaxBody = 1024 * 1024
   const limiter = createDraftLimiter(deps.draftLimits ?? DEFAULT_DRAFT_LIMITS)
+  const procoreLimiter = createDraftLimiter(PROCORE_SYNC_LIMITS)
 
   /** The verified caller, or throws an HttpError (401/503). */
   async function authorize(req: IncomingMessage): Promise<AuthenticatedUser> {
@@ -303,12 +311,74 @@ export function createApp(deps: AppDeps): Server {
     }
   }
 
+  /**
+   * The Procore sync: committed totals per cost code for the sheet's projects. Only projects the caller
+   * can read in `projects` and marked in Procore are looked up; a Procore failure fails the whole sync.
+   */
+  async function procoreCommitted(req: IncomingMessage, res: ServerResponse) {
+    const { userId, history: source } = await authorize(req)
+    const procore = deps.procore
+    if (!procore) throw new HttpError(503, 'Procore is not set up on this server.')
+    const parsed = parseCommittedRequest(await readJson(req))
+    if (!parsed.ok) throw new HttpError(400, parsed.error)
+
+    const slot = procoreLimiter.acquire(userId)
+    if (!slot.ok) {
+      log('procore.sync.limited', { status: slot.status })
+      const message =
+        slot.status === 503
+          ? 'Too many Procore syncs are running. Try again in a moment.'
+          : /already/.test(slot.message)
+            ? 'A Procore sync is already running for you.'
+            : `You have reached the limit of ${PROCORE_SYNC_LIMITS.perUserPerHour} Procore syncs per hour. Try again later.`
+      throw new HttpError(slot.status, message, { 'Retry-After': String(slot.retryAfterSeconds) })
+    }
+    const disconnected = new AbortController()
+    const onClose = () => {
+      if (!res.writableFinished) disconnected.abort()
+    }
+    res.on('close', onClose)
+    try {
+      let options: PlannerOptions
+      try {
+        options = await source.options()
+      } catch (err) {
+        log('procore.sync.error', { error: (err as Error).message })
+        throw new HttpError(502, 'Could not read the project list.')
+      }
+      const inProcore = new Set((options.projects ?? []).filter((p) => p.inProcore).map((p) => p.code))
+      const projects: CommittedProject[] = []
+      for (const p of parsed.value.projects) {
+        if (!inProcore.has(p.code)) {
+          projects.push({ code: p.code, status: 'not-in-procore' })
+          continue
+        }
+        try {
+          projects.push(await committedForProject(procore, p.code, p.costCodes, disconnected.signal))
+        } catch (err) {
+          if (disconnected.signal.aborted) return
+          if (err instanceof ProcoreError) {
+            log('procore.sync.failed', { project: p.code, error: err.message })
+            throw new HttpError(502, `Could not sync with Procore: ${err.message}`)
+          }
+          throw err
+        }
+      }
+      log('procore.sync', { projects: projects.length, synced: projects.filter((p) => p.status === 'ok').length })
+      json(res, 200, { ok: true, projects } satisfies CommittedResponse)
+    } finally {
+      res.off('close', onClose)
+      slot.release()
+    }
+  }
+
   const routes: Record<string, { method: string; handle: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void }> = {
     '/api/health': { method: 'GET', handle: (_req, res) => json(res, 200, { ok: true }) },
     '/api/planner/options': { method: 'GET', handle: options },
     '/api/planner/draft': { method: 'POST', handle: draft },
     '/api/planner/draft-batch': { method: 'POST', handle: draftBatch },
     '/api/planner/import': { method: 'POST', handle: importPlan },
+    '/api/procore/committed': { method: 'POST', handle: procoreCommitted },
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse) {

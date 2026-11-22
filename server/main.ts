@@ -14,6 +14,9 @@
  *   RESEND_API_KEY, MAIL_FROM     real e-mail; without them e-mail is simulated. PUBLIC_APP_URL builds the links.
  *   See server/automation/config.ts for the other AUTOMATION_* settings.
  *   WHATSAPP_*                    the WhatsApp assistant (server/whatsapp/config.ts); without them it runs as a simulator
+ *   PROCORE_CLIENT_ID, PROCORE_CLIENT_SECRET   the Procore app's client credentials (read-only sync)
+ *   PROCORE_COMPANY_ID            the Procore company id
+ *   PROCORE_ENV                   sandbox (Developer Sandbox) or production; without all four the sync answers 503
  */
 import path from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
@@ -21,6 +24,7 @@ import { DEFAULT_MODEL } from './ai'
 import { createApp, DEFAULT_DRAFT_LIMITS } from './app'
 import { createAutomation } from './automation'
 import { consoleLogger as log } from './log'
+import { createProcoreClient, procoreConfigFromEnv } from './procore'
 import { createSupabaseAuthenticator } from './supabase'
 import { createWhatsApp } from './whatsapp'
 
@@ -35,6 +39,15 @@ const staticDir = path.resolve(env.STATIC_DIR || 'dist')
 if (!supabaseUrl || !supabaseAnonKey) log('config.warning', { message: 'SUPABASE_URL / SUPABASE_ANON_KEY not set: the planner API answers 503.' })
 if (!apiKey) log('config.warning', { message: 'ANTHROPIC_API_KEY not set: drafts are built from history only.' })
 
+const procoreSettings = procoreConfigFromEnv(env)
+if ('missing' in procoreSettings) {
+  // Names only: never the values.
+  log('config.warning', {
+    message: procoreSettings.missing.length === 4 ? 'Procore sync not configured.' : `Procore sync not configured: set ${procoreSettings.missing.join(', ')}.`,
+  })
+}
+const procore = 'config' in procoreSettings ? createProcoreClient(procoreSettings.config) : null
+
 const automation = createAutomation(env, log)
 const anthropic = apiKey ? new Anthropic({ apiKey }) : null
 const whatsapp = createWhatsApp(env, log, anthropic ? { client: anthropic, model } : null)
@@ -46,6 +59,7 @@ const server = createApp({
   anthropic,
   model,
   log,
+  procore,
   draftLimits: {
     ...DEFAULT_DRAFT_LIMITS,
     perUserPerHour: Number(env.PLANNER_DRAFTS_PER_HOUR) || DEFAULT_DRAFT_LIMITS.perUserPerHour,

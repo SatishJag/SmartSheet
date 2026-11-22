@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   BatchItemResult,
   BatchPlanRequest,
+  CommittedRequest,
+  CommittedResponse,
   DraftResponse,
   ImportActivitiesResponse,
   ImportMappingResponse,
@@ -65,10 +67,11 @@ function serverMessage(body: unknown): string | null {
   return typeof m === 'string' && m.trim() !== '' ? m.trim() : null
 }
 
+/** `path` is what follows `/api/`, e.g. `planner/options`. */
 async function call(path: string, token: string, init: RequestInit, opts: CallOptions): Promise<unknown> {
   let res: Response
   try {
-    res = await fetch(`/api/planner/${path}`, {
+    res = await fetch(`/api/${path}`, {
       ...init,
       signal: opts.signal,
       headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${token}`, Accept: 'application/json' },
@@ -128,7 +131,7 @@ function isDraft(v: unknown): v is PlanDraft {
 
 /** GET /api/planner/options: schedule types and equipment types with history. */
 export async function getOptions(token: string, opts: CallOptions = {}): Promise<PlannerOptions> {
-  const body = await call('options', token, { method: 'GET' }, opts)
+  const body = await call('planner/options', token, { method: 'GET' }, opts)
   if (!isOptions(body)) throw new PlannerApiError(UNEXPECTED_MESSAGE, 'response', 200)
   return body
 }
@@ -136,7 +139,7 @@ export async function getOptions(token: string, opts: CallOptions = {}): Promise
 /** POST /api/planner/draft: a first-cut plan (no dates) for the request. */
 export async function requestDraft(token: string, request: PlanRequest, opts: CallOptions = {}): Promise<PlanDraft> {
   const body = (await call(
-    'draft',
+    'planner/draft',
     token,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) },
     opts,
@@ -157,7 +160,7 @@ export async function requestDraft(token: string, request: PlanRequest, opts: Ca
 export async function requestImport(token: string, request: ImportRequest & { columns: NonNullable<ImportRequest['columns']> }, opts?: CallOptions): Promise<Extract<ImportMappingResponse, { ok: true }>>
 export async function requestImport(token: string, request: ImportRequest, opts?: CallOptions): Promise<Extract<ImportActivitiesResponse, { ok: true }>>
 export async function requestImport(token: string, request: ImportRequest, opts: CallOptions = {}): Promise<unknown> {
-  const body = await call('import', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }, opts)
+  const body = await call('planner/import', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }, opts)
   if (isObject(body) && body.ok === false) {
     throw new PlannerApiError(serverMessage(body) ?? 'The import could not be read.', 'server', 200)
   }
@@ -183,7 +186,7 @@ function toBatchResult(v: unknown): BatchItemResult {
  */
 export async function requestBatch(token: string, request: BatchPlanRequest, opts: CallOptions = {}): Promise<BatchItemResult[]> {
   const body = await call(
-    'draft-batch',
+    'planner/draft-batch',
     token,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) },
     opts,
@@ -195,4 +198,13 @@ export async function requestBatch(token: string, request: BatchPlanRequest, opt
     throw new PlannerApiError(UNEXPECTED_MESSAGE, 'response', 200)
   }
   return body.results.map(toBatchResult)
+}
+
+/** POST /api/procore/committed: the committed totals per cost code for the sheet's projects (Procore sync). */
+export async function requestCommitted(token: string, request: CommittedRequest, opts: CallOptions = {}): Promise<CommittedResponse> {
+  const body = await call('procore/committed', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }, opts)
+  if (!isObject(body) || body.ok !== true || !Array.isArray(body.projects) || !body.projects.every((p) => isObject(p) && typeof p.code === 'string' && typeof p.status === 'string')) {
+    throw new PlannerApiError(UNEXPECTED_MESSAGE, 'response', 200)
+  }
+  return body as unknown as CommittedResponse
 }
