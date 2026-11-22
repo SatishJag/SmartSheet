@@ -1,6 +1,7 @@
 # "All" — the full project plan: design
 
-Date: 2026-11-22. Status: decisions agreed with the owner; awaiting approval of this text.
+Date: 2026-11-22. Status: decisions agreed with the owner (including the two builder-check questions);
+awaiting approval of this text.
 
 ## Why
 Plan with AI plans one schedule type at a time (long-lead equipment, materials, subcontracts…). The owner
@@ -17,7 +18,8 @@ Development Schedule Template** (Properties). For Data centre it becomes the bui
     stages, IDs, names, lead responsibility, completion criteria and links; the six long-lead packages'
     step durations come from history where it exists; the sheet runs on a 7-day calendar.
   - Properties: **All** gives the existing Property development master schedule (the same 44-activity
-    template, schedule type `property-development`, already built).
+    template, schedule type `property-development`, already built), **working exactly as it does today**:
+    development items (type and description), the AI and notes, several developments at once.
   - The plan is worked back from the **RFS date** (Data centre) / **handover date** (Properties), as every
     plan is today, with the usual "should have started N days ago" warning.
   - Package rows carry their cost code, so **Sync with Procore** works on the plan at once.
@@ -40,6 +42,12 @@ Development Schedule Template** (Properties). For Data centre it becomes the bui
 - Package rows get cost codes: Chillers **CHL**, Generator Sets **GEN**, Transformers **TRF**, Switchgear
   **HVS**; Power Modules and Fan Wall Units none for now.
 - **No AI** for the Data centre master: template + history only.
+- **Only real history counts** (builder check, answer A). Today every long-lead history project is
+  sample data (`is_sample = true`, 38 projects). While an equipment type's history is sample-only, its
+  package keeps the template's durations and Basis says "template". Real history takes over with no code
+  change once it is loaded.
+- **Properties All is today's Properties master, unchanged** (builder check, answer A); only its place and
+  label in the list change.
 - Approach: a built-in catalog like the Properties master (below).
 
 ## Approaches
@@ -95,11 +103,12 @@ Each package's 9 steps (in template order) take their duration from these `lle-p
 | 9 LLE delivered and released for installation | milestone, 0 |
 
 - Steps are identified by their position in the package (1–9), not by name text.
-- A step's history duration = the sum of the codes' **p50 working days**, converted to calendar days as
-  `ceil(working × 7 / 5)`. A step keeps the template duration when the equipment type has no history
-  (Power Modules, Fan Wall Units) or a code has no statistics.
-- History used is the package's own equipment type only (all four have 7–9 projects); no fallback to
-  "all equipment types".
+- A step's history duration = the sum of the codes' **p50 working days** (history stores working days, not
+  dates), converted to calendar days as `ceil(working × 7 / 5)`. A step keeps the template duration when:
+  the equipment type has no history (Power Modules, Fan Wall Units); its history is **sample-only**
+  (`HistorySummary.sampleOnly`); or any of the step's codes has no statistics.
+- History used is the package's own equipment type only; no fallback to "all equipment types". (When an
+  equipment type mixes real and sample projects, the summary is not sample-only and is used as it is.)
 - **FAT overlap:** the template starts FAT `SS +172` after manufacture starts: with manufacture at 202
   days, FAT starts 30 days before manufacture ends and runs inside it. When manufacture's duration comes
   from history, the FAT link's lag becomes `max(0, manufacture − 30)`, so FAT keeps that position near the
@@ -112,7 +121,10 @@ Each package's 9 steps (in template order) take their duration from these `lle-p
   - template: **"template"**;
   - history: **"p50 of N projects (Chiller), in calendar days"** (N = that equipment type's project count);
   - milestones as today.
-  If the history is sample data, the assumptions say so (as today: "The history is SAMPLE data…").
+  One draft can draw on four equipment types' histories, so the draft records, per package activity, which
+  equipment type and project count its duration came from (the builder extends `basisText` / the draft's
+  history to carry this). The assumptions say which packages use history and which use the template, and
+  why (e.g. "Chillers: template durations; the history for Chiller is sample data only.").
 - Each package activity carries its cost code (new optional `costCode` on the draft activity), so the
   sheet can tag it.
 - `request`: `scheduleType 'dc-master'`, `equipmentType ''`, `equipmentName` = the project's name,
@@ -122,11 +134,14 @@ Each package's 9 steps (in template order) take their duration from these `lle-p
 - The Schedule type list shows **All (full project plan)** first for each project type: Data centre →
   `dc-master`, Properties → `property-development` (which today appears as "Property development master
   schedule"; it is listed once, as All). Which schedule types are "full plan" is a fixed list in code.
-- With All: one plan, no equipment items; Project is required (as today). The date is labelled **RFS
-  date** (Data centre) or **Handover date** (Properties). No notes field effect for Data centre (no AI).
+- **Data centre All:** one plan, no equipment items; Project is required (as today); the date is labelled
+  **RFS date**; the notes field and the AI "regenerate" controls are hidden (no AI).
+- **Properties All:** exactly today's Property development flow (items, AI, notes, its date label);
+  only listed first under the new label.
 - Preview and sheet use a **7-day calendar** (`workingWeekdays [0…6]`, otherwise the template calendar)
-  for `dc-master`; Properties keeps today's calendar.
-- Sheet name: **"Full plan – <project name>"** for both.
+  for `dc-master`, and any preview text that says "Monday to Friday" says the 7-day week instead;
+  Properties keeps today's calendar.
+- Sheet name for Data centre All: **"Full plan – <project name>"**; Properties keeps today's naming.
 
 ### The sheet
 - One flat sheet (as the Properties master): the template columns plus Activity ID, Lead responsibility,
@@ -138,13 +153,23 @@ Each package's 9 steps (in template order) take their duration from these `lle-p
 ## Testing
 - Catalog: module ↔ migration agree; 199 activities, 22 stages, targets DC-0192, links resolve, no cycles,
   the six packages have 9 steps each in order.
-- Packages: history durations summed and converted (`ceil(×7/5)`); fallback to template without history;
-  FAT lag follows manufacture; cost codes per package.
+- Packages: history durations summed and converted (`ceil(×7/5)`) for real history; template kept for
+  sample-only history, no history, or a step with a code missing statistics; FAT lag follows manufacture;
+  cost codes per package. With today's (sample) data, every package's durations equal the template's.
 - Draft: no AI call for `dc-master` even with an API key; Basis texts; sample-data assumption.
-- Backward plan: RFS on the entered date; post-RFS activities after it; 7-day calendar dates.
+- Backward plan: RFS on the entered date; the template's own logic for the activities around RFS (e.g.
+  taking-over DC-0193 does not depend on RFS in the template; keep the template's links, do not add any);
+  7-day calendar dates.
 - Wizard: All listed first for both project types; Properties All = property-development; RFS date label;
   sheet name; package rows tagged.
 - e2e: Data centre All → preview → sheet with 199 rows, CHL on chiller package rows.
+
+## Builder-check calls (coordinator's)
+- Taking-over and the other post-RFS activities keep the template's links exactly; no links are added.
+- A step whose codes are only partly covered by history keeps the template duration.
+- `basisText` and the draft's history are extended to name the equipment type behind a package duration.
+- Notes and AI-regenerate controls are hidden for `dc-master`; the preview's calendar hint follows the
+  7-day calendar.
 
 ## Calls left to the builder
 - The script's location and form (Python with openpyxl, run once; output committed).
