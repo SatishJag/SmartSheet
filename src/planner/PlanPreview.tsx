@@ -11,6 +11,7 @@ export const BASIS_LABELS: Record<DurationBasis, string> = {
   file: 'From your file',
   template: 'Template',
   estimate: 'AI estimate',
+  history: 'History',
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`

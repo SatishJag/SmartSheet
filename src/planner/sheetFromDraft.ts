@@ -97,6 +97,8 @@ export function basisText(activity: DraftActivity, history: HistorySummary): str
     case 'file':
     case 'template':
       return activity.reason + linksNote(activity)
+    case 'history':
+      return activity.reason
     case 'estimate': {
       const text = activity.reason.startsWith('default:') ? activity.reason : `AI estimate: ${activity.reason}`
       return text + linksNote(activity)
