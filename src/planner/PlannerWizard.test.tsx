@@ -1616,3 +1616,37 @@ describe('PlannerWizard: Data centre All wording', () => {
     expect(screen.queryByText(/Review the AI's first cut/)).not.toBeInTheDocument()
   })
 })
+
+describe('PlannerWizard: header for Data centre All', () => {
+  const OPTS: PlannerOptions = {
+    projectTypes: [{ id: 'data-centre', name: 'Data centre', description: 'Halls' }],
+    scheduleTypes: [
+      { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'], itemLabels: { noun: 'plan', typeExample: 'Data centre', nameExample: 'Bangkok 3', heading: 'Which data centre are you planning?', intro: 'Choose the project and its Ready for Service date.', dateLabel: 'RFS date' } },
+      { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre'] },
+    ],
+    equipmentTypes: { 'dc-master': [], 'lle-procurement': ['Power transformer'] },
+    projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
+  }
+  const TEMPLATE_LINE = 'Builds the full plan from the Data centre master template; you review and approve.'
+  const AI_LINE = 'An AI master planner drafts the first cut; you review and approve.'
+
+  it('says the plan comes from the template, on the request step and the preview', async () => {
+    mockServer({ options: () => json(200, OPTS), draft: (r) => json(200, { ok: true, draft: buildDcMasterDraft({ request: r, catalog: dcMasterCatalog(), histories: {} }) }) })
+    const { user } = setup()
+    expect(await screen.findByText(TEMPLATE_LINE)).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Plan with AI' })).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Project'), 'BKK-03')
+    await user.type(screen.getByLabelText('RFS date'), '2028-01-31')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    expect(screen.getByText(TEMPLATE_LINE)).toBeInTheDocument()
+    expect(screen.queryByText(AI_LINE)).not.toBeInTheDocument()
+  })
+
+  it('keeps the AI line for other schedule types', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Schedule type'), 'lle-procurement')
+    expect(screen.getByText(AI_LINE)).toBeInTheDocument()
+  })
+})
