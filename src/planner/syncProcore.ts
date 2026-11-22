@@ -4,6 +4,7 @@
  * store batch. Pure apart from the store calls in applySync.
  */
 import type { StoreApi } from 'zustand/vanilla'
+import type { Column } from '../model/validate'
 import type { SheetData } from '../store/persistence'
 import type { SheetState } from '../store/sheetStore'
 import { BASIS_COLUMN_TITLE, COST_CODE_COLUMN_TITLE, DELIVERY_SITE_COLUMN_TITLE, PROJECT_COLUMN_TITLE } from './sheetFromDraft'
@@ -84,6 +85,49 @@ export interface SyncSummary {
   projectsNotFound: string[]
   /** Project + cost codes shared by several items: they all show the same total. */
   shared: { project: string; costCode: string; items: number }[]
+  /** Rows the sheet refused to write (e.g. locked by an automation); their items are not counted as updated. */
+  failedRows: number
+}
+
+/** A sync the sheet cannot take, with a reason fit to show; nothing has been written. */
+export class SyncError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SyncError'
+  }
+}
+
+/** The server's limits (server/procoreSync.ts): checked here so one stray cell gets a clear reason, not a refusal. */
+const MAX_PROJECTS = 5
+const MAX_COST_CODES = 50
+const MAX_CODE_CHARS = 20
+
+/** Why the plan cannot be sent, or null when it can. */
+export function checkSyncLimits(plan: SyncPlan): string | null {
+  for (const p of plan.request.projects) {
+    if (p.code.length > MAX_CODE_CHARS) return `The project "${p.code}" is longer than ${MAX_CODE_CHARS} characters; fix it and sync again.`
+    const long = p.costCodes.find((c) => c.length > MAX_CODE_CHARS)
+    if (long) return `The cost code "${long}" is longer than ${MAX_CODE_CHARS} characters; fix it and sync again.`
+  }
+  if (plan.request.projects.length > MAX_PROJECTS) return `This sheet has ${plan.request.projects.length} projects; a sync takes up to ${MAX_PROJECTS}.`
+  const codes = plan.request.projects.reduce((n, p) => n + p.costCodes.length, 0)
+  if (codes > MAX_COST_CODES) return `This sheet has ${codes} cost codes; a sync takes up to ${MAX_COST_CODES}.`
+  return null
+}
+
+const plainText = (c: Column) => c.type === 'TEXT_NUMBER' && !c.role && !c.formula
+const cannotHold = (title: string, what: string) => new SyncError(`The "${title}" column can’t hold ${what}. Change its type to Text/Number, or rename it so the sync adds its own.`)
+
+/** The text written for Yes and No in an existing Awarded column, or null when it cannot hold them. */
+function awardedValues(col: Column): { yes: string; no: string } | null {
+  if (plainText(col)) return { yes: 'Yes', no: 'No' }
+  if (col.type === 'CHECKBOX' && !col.formula) return { yes: 'true', no: 'false' }
+  if (col.type === 'PICKLIST' && !col.formula) {
+    const yes = col.options?.find((o) => o.trim().toLowerCase() === 'yes')
+    const no = col.options?.find((o) => o.trim().toLowerCase() === 'no')
+    if (yes && no) return { yes, no }
+  }
+  return null
 }
 
 /**
@@ -99,43 +143,59 @@ export function applySync(store: StoreApi<SheetState>, plan: SyncPlan, response:
     notInProcore: response.projects.filter((p) => p.status === 'not-in-procore').map((p) => p.code),
     projectsNotFound: response.projects.filter((p) => p.status === 'not-found').map((p) => p.code),
     shared: [],
+    failedRows: 0,
   }
-  const writes: { rowIds: string[]; committed: number; awarded: boolean }[] = []
+  const writes: { rowIds: string[]; committed: number; awarded: boolean; items: number }[] = []
   for (const g of plan.groups) {
     const result = byCode.get(g.project)
     if (!result || result.status !== 'ok') continue
     const cc = result.costCodes.find((c) => c.code === g.costCode)
     if (!cc) continue
-    writes.push({ rowIds: g.rowIds, committed: cc.committed, awarded: cc.awarded })
-    summary.items += g.items
+    writes.push({ rowIds: g.rowIds, committed: cc.committed, awarded: cc.awarded, items: g.items })
     if (!cc.known) summary.notFound.push({ project: g.project, costCode: g.costCode })
     if (g.items > 1) summary.shared.push({ project: g.project, costCode: g.costCode, items: g.items })
   }
   if (writes.length === 0) return summary
 
+  // Check the columns the sync would reuse before writing anything.
+  const before = store.getState().data!
+  const existingCommitted = byTitle(before, COMMITTED_COLUMN_TITLE)
+  const existingAwarded = byTitle(before, AWARDED_COLUMN_TITLE)
+  if (existingCommitted && !plainText(existingCommitted)) throw cannotHold(existingCommitted.title, 'amounts')
+  let values = { yes: 'Yes', no: 'No' }
+  if (existingAwarded) {
+    const found = awardedValues(existingAwarded)
+    if (!found) throw cannotHold(existingAwarded.title, 'Yes/No')
+    values = found
+  }
+
   const state = store.getState()
   state.batch(() => {
     const data = store.getState().data!
-    let committedId = byTitle(data, COMMITTED_COLUMN_TITLE)?.id
-    let awardedId = byTitle(data, AWARDED_COLUMN_TITLE)?.id
+    let committedId = existingCommitted?.id
+    let awardedId = existingAwarded?.id
     if (!committedId) {
       const site = byTitle(data, DELIVERY_SITE_COLUMN_TITLE)
       const basisIndex = data.columns.findIndex((c) => c === byTitle(data, BASIS_COLUMN_TITLE))
       const anchor = site?.id ?? (basisIndex > 0 ? data.columns[basisIndex - 1].id : data.columns.at(-1)?.id)
       const added = state.addColumn(COMMITTED_COLUMN_TITLE, 'TEXT_NUMBER', undefined, anchor)
-      if (!added.ok) throw new Error(added.error)
+      if (!added.ok) throw new SyncError(added.error)
       committedId = (added as { id: string }).id
     }
     if (!awardedId) {
       const added = state.addColumn(AWARDED_COLUMN_TITLE, 'PICKLIST', ['Yes', 'No'], committedId)
-      if (!added.ok) throw new Error(added.error)
+      if (!added.ok) throw new SyncError(added.error)
       awardedId = (added as { id: string }).id
     }
     for (const w of writes) {
+      let failed = 0
       for (const rowId of w.rowIds) {
-        state.setCell(rowId, committedId, String(w.committed))
-        state.setCell(rowId, awardedId, w.awarded ? 'Yes' : 'No')
+        const a = state.setCell(rowId, committedId, String(w.committed))
+        const b = state.setCell(rowId, awardedId, w.awarded ? values.yes : values.no)
+        if (!a.ok || !b.ok) failed++
       }
+      summary.failedRows += failed
+      if (failed === 0) summary.items += w.items
     }
   })
   return summary
@@ -156,6 +216,7 @@ export function syncResultText(summary: SyncSummary, at: Date): string {
   }
   if (summary.notInProcore.length > 0) parts.push(`${listed(summary.notInProcore)} ${summary.notInProcore.length === 1 ? 'is' : 'are'} not in Procore`)
   if (summary.projectsNotFound.length > 0) parts.push(`${listed(summary.projectsNotFound)} ${summary.projectsNotFound.length === 1 ? 'was' : 'were'} not found in Procore`)
+  if (summary.failedRows > 0) parts.push(`${plural(summary.failedRows, 'row', 'rows')} could not be updated`)
   for (const s of summary.shared) parts.push(`${s.costCode} on ${s.project} is shared by ${s.items} items; ${s.items === 2 ? 'both' : 'all'} show the cost code total`)
   return parts.join(' · ')
 }

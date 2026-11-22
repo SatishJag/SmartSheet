@@ -95,6 +95,20 @@ describe('ProcoreSyncButton', () => {
     expect(titles(store.getState().data)).toEqual(['Task', 'Project', 'Cost code', 'Basis'])
   })
 
+  it('says why it cannot sync, without asking the server', async () => {
+    await renderButton(sheet({ 'c-project': 'BKK-03 — Bangkok 3', 'c-cost': 'A VERY LONG HAND TYPED CODE' }))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Sync with Procore' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Could not sync: The cost code "A VERY LONG HAND TYPED CODE" is longer than 20 characters; fix it and sync again.')
+    expect(requestCommitted).not.toHaveBeenCalled()
+  })
+
+  it('shows a column problem as the reason', async () => {
+    vi.mocked(requestCommitted).mockResolvedValue(RESPONSE)
+    await renderButton(sheet({ 'c-project': 'BKK-03 — Bangkok 3', 'c-cost': 'CHL — Chiller' }, [...COLUMNS, { id: 'c-cm', title: 'Committed (Procore)', type: 'DATE' }]))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Sync with Procore' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Could not sync: The "Committed (Procore)" column can’t hold amounts.')
+  })
+
   it('aborts on unmount', async () => {
     let signal: AbortSignal | undefined
     let resolve!: (r: CommittedResponse) => void

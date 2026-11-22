@@ -8,7 +8,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { useSheetStore, useSheetStoreApi } from '../store/SheetStoreContext'
 import { Icon } from '../ui/Icon'
 import { getAccessToken, requestCommitted } from './plannerApi'
-import { applySync, canSyncProcore, collectSync, syncResultText } from './syncProcore'
+import { applySync, canSyncProcore, checkSyncLimits, collectSync, syncResultText } from './syncProcore'
 
 export const NOTHING_TO_SYNC = 'Nothing to sync: no rows have both a project in Procore and a cost code.'
 
@@ -35,6 +35,11 @@ export function ProcoreSyncButton({ client }: { client: SupabaseClient }) {
     const plan = collectSync(data)
     if (plan.request.projects.length === 0) {
       setResult(NOTHING_TO_SYNC)
+      return
+    }
+    const tooMuch = checkSyncLimits(plan)
+    if (tooMuch) {
+      setResult(`Could not sync: ${tooMuch}`)
       return
     }
     const controller = new AbortController()

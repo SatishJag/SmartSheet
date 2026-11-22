@@ -1,11 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { clearLocks, setRowLocked } from '../automation/locks'
 import type { StoreApi } from 'zustand/vanilla'
 import type { Column } from '../model/validate'
 import type { SheetData } from '../store/persistence'
 import type { SheetState } from '../store/sheetStore'
 import { makeRow, makeSheetData, makeTestStore } from '../test/fixtures'
 import type { CommittedResponse } from './types'
-import { AWARDED_COLUMN_TITLE, COMMITTED_COLUMN_TITLE, applySync, canSyncProcore, collectSync, syncResultText, type SyncSummary } from './syncProcore'
+import { AWARDED_COLUMN_TITLE, COMMITTED_COLUMN_TITLE, SyncError, applySync, canSyncProcore, checkSyncLimits, collectSync, syncResultText, type SyncSummary } from './syncProcore'
 
 const C = { task: 'c-task', project: 'c-project', cost: 'c-cost', site: 'c-site', basis: 'c-basis' }
 const BASE_COLUMNS: Column[] = [
@@ -129,6 +130,7 @@ describe('applySync', () => {
       notInProcore: ['VIL-01'],
       projectsNotFound: [],
       shared: [{ project: 'BKK-03', costCode: 'CHL', items: 2 }],
+      failedRows: 0,
     } satisfies SyncSummary)
   })
 
@@ -156,7 +158,7 @@ describe('applySync', () => {
     const { store } = await makeTestStore(FLAT)
     const summary = applySync(store, collectSync(FLAT), { ok: true, projects: [{ code: 'BKK-03', status: 'not-found' }] })
     expect(titles(store)).toEqual(['Task', 'Project', 'Cost code', 'Delivery site', 'Basis'])
-    expect(summary).toEqual({ items: 0, notFound: [], notInProcore: [], projectsNotFound: ['BKK-03'], shared: [] })
+    expect(summary).toEqual({ items: 0, notFound: [], notInProcore: [], projectsNotFound: ['BKK-03'], shared: [], failedRows: 0 })
   })
 })
 
@@ -171,6 +173,7 @@ describe('syncResultText', () => {
           notInProcore: ['VIL-01'],
           projectsNotFound: ['BKK-02'],
           shared: [{ project: 'BKK-03', costCode: 'CHL', items: 2 }],
+          failedRows: 0,
         },
         at,
       ),
@@ -180,7 +183,7 @@ describe('syncResultText', () => {
   })
 
   it('says "all" when more than two items share a cost code', () => {
-    expect(syncResultText({ items: 3, notFound: [], notInProcore: [], projectsNotFound: [], shared: [{ project: 'BKK-03', costCode: 'CHL', items: 3 }] }, at)).toBe(
+    expect(syncResultText({ items: 3, notFound: [], notInProcore: [], projectsNotFound: [], shared: [{ project: 'BKK-03', costCode: 'CHL', items: 3 }], failedRows: 0 }, at)).toBe(
       'Last synced 14:05 · 3 items updated · CHL on BKK-03 is shared by 3 items; all show the cost code total',
     )
   })
@@ -197,9 +200,66 @@ describe('syncResultText', () => {
           notInProcore: ['VIL-01', 'TWR-01'],
           projectsNotFound: [],
           shared: [],
+          failedRows: 0,
         },
         new Date(2026, 10, 22, 9, 7),
       ),
     ).toBe('Last synced 09:07 · 1 item updated · 2 cost codes not found in Procore (ELE on BKK-03, HVS on BKK-03) · VIL-01 and TWR-01 are not in Procore')
+  })
+})
+
+describe('review fixes: columns and rows that cannot take the values', () => {
+  afterEach(() => clearLocks('sheet-1'))
+
+  const withAwarded = (awarded: Column) => sheet(FLAT.rows, [...BASE_COLUMNS, awarded])
+
+  it('writes true/false into a checkbox Awarded column', async () => {
+    const data = withAwarded({ id: 'c-aw', title: 'Awarded', type: 'CHECKBOX' })
+    const { store } = await makeTestStore(data)
+    const summary = applySync(store, collectSync(data), OK_RESPONSE)
+    expect(store.getState().data!.rows.find((r) => r.id === 'a')!.cells['c-aw']).toBe(true)
+    expect(summary).toMatchObject({ items: 1, failedRows: 0 })
+  })
+
+  it('uses a dropdown Awarded column’s own Yes and No options', async () => {
+    const data = withAwarded({ id: 'c-aw', title: 'Awarded', type: 'PICKLIST', options: ['yes', 'no', 'Pending'] })
+    const { store } = await makeTestStore(data)
+    applySync(store, collectSync(data), OK_RESPONSE)
+    expect(store.getState().data!.rows.find((r) => r.id === 'a')!.cells['c-aw']).toBe('yes')
+  })
+
+  it('refuses, writing nothing, when a reused column cannot hold the values', async () => {
+    const cases: [Column, string][] = [
+      [{ id: 'c-aw', title: 'Awarded', type: 'PICKLIST', options: ['Awarded', 'Pending'] }, 'The "Awarded" column can’t hold Yes/No. Change its type to Text/Number, or rename it so the sync adds its own.'],
+      [{ id: 'c-cm', title: 'Committed (Procore)', type: 'DATE' }, 'The "Committed (Procore)" column can’t hold amounts. Change its type to Text/Number, or rename it so the sync adds its own.'],
+    ]
+    for (const [column, message] of cases) {
+      const data = withAwarded(column)
+      const { store } = await makeTestStore(data)
+      expect(() => applySync(store, collectSync(data), OK_RESPONSE)).toThrow(new SyncError(message))
+      expect(store.getState().data!.columns).toHaveLength(data.columns.length)
+      expect(store.getState().data!.rows.every((r) => r.cells[column.id] === undefined)).toBe(true)
+    }
+  })
+
+  it('counts rows that could not be written instead of calling them updated', async () => {
+    const { store } = await makeTestStore(MULTI)
+    setRowLocked('sheet-1', 's3', true)
+    const summary = applySync(store, collectSync(MULTI), OK_RESPONSE)
+    expect(summary).toMatchObject({ items: 2, failedRows: 1 })
+    expect(syncResultText(summary, new Date(2026, 10, 22, 14, 5))).toContain('· 1 row could not be updated')
+  })
+})
+
+describe('review fixes: what the sync can send', () => {
+  it('names a cost code or project too long to sync, and a sheet with too many', () => {
+    const one = (project: string, cost: string) => collectSync(sheet([makeRow('a', 'a0', tagged(project, cost))]))
+    expect(checkSyncLimits(one('BKK-03', 'CHL'))).toBeNull()
+    expect(checkSyncLimits(one('BKK-03', 'A VERY LONG HAND TYPED CODE'))).toBe('The cost code "A VERY LONG HAND TYPED CODE" is longer than 20 characters; fix it and sync again.')
+    expect(checkSyncLimits(one('Bangkok data centre three', 'CHL'))).toBe('The project "Bangkok data centre three" is longer than 20 characters; fix it and sync again.')
+    const many = sheet(Array.from({ length: 6 }, (_, i) => makeRow(`r${i}`, `a${i}`, tagged(`P-${i}`, 'CHL'))))
+    expect(checkSyncLimits(collectSync(many))).toBe('This sheet has 6 projects; a sync takes up to 5.')
+    const codes = sheet(Array.from({ length: 51 }, (_, i) => makeRow(`r${i}`, `a${String(i).padStart(2, '0')}`, tagged('BKK-03', `C${i}`))))
+    expect(checkSyncLimits(collectSync(codes))).toBe('This sheet has 51 cost codes; a sync takes up to 50.')
   })
 })
