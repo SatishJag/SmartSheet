@@ -1327,6 +1327,45 @@ describe('PlannerWizard: import a plan from Excel', () => {
     expect(byId('P010')[col('Project')]).toBe('VIL-01 — Sample villa')
   })
 
+  it('Back from an import puts the form back as it was', async () => {
+    const { batches } = withImport()
+    const { user } = setup()
+    await waitFor(() => expect(screen.getByLabelText('Project type')).toHaveValue('data-centre'))
+    expect(screen.getByLabelText('Schedule type')).toHaveValue('lle-procurement')
+    await user.selectOptions(screen.getByLabelText('Project'), 'BKK-03')
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    expect(screen.getByLabelText('Project type')).toHaveValue('properties')
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await screen.findByLabelText('Project type')).toHaveValue('data-centre')
+    expect(screen.getByLabelText('Schedule type')).toHaveValue('lle-procurement')
+    expect(screen.getByLabelText('Project')).toHaveValue('BKK-03')
+    await requestTwo(user)
+    await screen.findByText(/2 items · earliest required start/)
+    expect(batches[0].scheduleType).toBe('lle-procurement')
+  })
+
+  it('a failed schedule-type correction goes back to the type whose durations are loaded', async () => {
+    let calls = 0
+    withImport(() => (++calls === 1 ? json(200, { ok: true, ...FOUND }) : json(429, { ok: false, error: 'You have reached the limit of 10 drafts per hour. Try again later.' })))
+    const { user } = setup()
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.selectOptions(screen.getByLabelText('Schedule type'), '')
+    expect(await screen.findByRole('alert')).toHaveTextContent('limit of 10 drafts per hour')
+    expect(screen.getByLabelText('Schedule type')).toHaveValue('property-development')
+  })
+
+  it('shows the columns the AI matched for a layout it did not know', async () => {
+    withImport((req) =>
+      json(200, req.columns ? { ok: true, mapping: { sheet: 'odd', headingRow: 0, fields: { activityId: 0, name: 1, duration: 2 } } } : { ok: true, ...FOUND, scheduleType: null, targetCode: null, durations: [], history: null }),
+    )
+    const { user } = setup()
+    await upload(user, new File(['Ref,What,Days\nR1,Dig,5\nR2,Fill,3\n'], 'odd.csv', { type: 'text/csv' }))
+    await screen.findByRole('heading', { name: 'What we found' })
+    expect(screen.getByText('The AI matched the columns on sheet "odd" (headings in row 1): Ref → activity ID, What → activity, Days → duration. Check them before you preview.')).toBeInTheDocument()
+  })
+
   it('a file with no activity table says so and creates nothing', async () => {
     withImport((req) => json(200, req.columns ? { ok: true, mapping: null } : { ok: true, ...FOUND }))
     const { user } = setup()

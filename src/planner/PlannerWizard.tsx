@@ -9,7 +9,7 @@ import { PlanPreview } from './PlanPreview'
 import { equipmentGlyph, PIcon } from './PIcon'
 import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestDraft, requestImport } from './plannerApi'
 import { buildImportDraft, scheduleImport } from './import/importDraft'
-import { findActivityTable, guessProject, readActivities, readBasis, type ImportedActivity } from './import/table'
+import { findActivityTable, guessProject, readActivities, readBasis, type ImportedActivity, type ImportField, type TableMapping } from './import/table'
 import { readWorkbook, type Workbook } from './import/workbook'
 import {
   appendNote,
@@ -107,6 +107,31 @@ interface ImportState {
   scheduleType: string
   /** The planned handover date (ISO), or '' until entered. */
   handover: string
+  /** The request form as it was before the import, restored by Back. */
+  formBefore: { projectType: string; scheduleType: string; project: string }
+}
+
+const FIELD_LABELS: Record<ImportField, string> = {
+  activityId: 'activity ID',
+  name: 'activity',
+  phase: 'stage',
+  kind: 'type',
+  responsibility: 'responsibility',
+  duration: 'duration',
+  start: 'start',
+  finish: 'finish',
+  status: 'status',
+  predecessors: 'predecessors',
+  criteria: 'criteria',
+}
+
+/** The AI's guess at an unknown layout, spelled out for the planner to check. */
+function mappingWarning(wb: Workbook, map: TableMapping): string {
+  const headings = wb.sheets.find((sh) => sh.name === map.sheet)?.rows[map.headingRow] ?? []
+  const pairs = (Object.entries(map.fields) as [ImportField, number][])
+    .sort((a, b) => a[1] - b[1])
+    .map(([field, col]) => `${headings[col] || `column ${col + 1}`} → ${FIELD_LABELS[field]}`)
+  return `The AI matched the columns on sheet "${map.sheet}" (headings in row ${map.headingRow + 1}): ${pairs.join(', ')}. Check them before you preview.`
 }
 
 const NO_TABLE = 'No list of activities found in this file.'
@@ -451,11 +476,13 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     setFailure(null)
     setImportProblem(null)
     setStep('importing')
+    const formBefore = { projectType, scheduleType, project }
     try {
       const wb = await readWorkbook(file)
       const token = await getAccessToken(client)
       const hints = importHints(wb)
       let map = findActivityTable(wb)
+      const guessed = !map
       if (!map) {
         const columns = wb.sheets
           .slice(0, MAP_SAMPLE_SHEETS)
@@ -463,7 +490,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
         map = (await requestImport(token, { hints, columns })).mapping
       }
       if (!map) throw new Error(NO_TABLE)
-      const { activities, warnings } = readActivities(wb, map, calendar)
+      const { activities, warnings: rowWarnings } = readActivities(wb, map, calendar)
+      const warnings = guessed ? [mappingWarning(wb, map), ...rowWarnings] : rowWarnings
       if (activities.length === 0) throw new Error(NO_TABLE)
       const server = await requestImport(token, { hints, activities: activities.map(importRef) })
       if (!mounted.current) return
@@ -475,7 +503,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
       const nextType = typed && types.length > 0 && !types.includes(projectType) ? types[0] : projectType
       if (nextType !== projectType) setProjectType(nextType)
       setProject(guessProject(projectsFor(options?.projects ?? NO_PROJECTS, typed ? nextType : ''), wb, basis))
-      setImported({ workbook: wb, activities, readWarnings: warnings, server, scheduleType: server.scheduleType ?? '', handover: basis.handoverDate ?? '' })
+      setImported({ workbook: wb, activities, readWarnings: warnings, server, scheduleType: server.scheduleType ?? '', handover: basis.handoverDate ?? '', formBefore })
       setSubmitted(false)
       setStep('imported')
     } catch (err) {
@@ -499,7 +527,10 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
       const server = await requestImport(token, { hints: importHints(current.workbook), activities: current.activities.map(importRef), scheduleType: id || null })
       if (mounted.current) setImported((prev) => (prev ? { ...prev, server } : prev))
     } catch (err) {
-      if (mounted.current) setImportProblem(describe(err, 'Could not fetch the durations for that schedule type'))
+      if (!mounted.current) return
+      // The loaded durations, links and target belong to the previous type: go back to it.
+      setImported((prev) => (prev ? { ...prev, scheduleType: current.scheduleType } : prev))
+      setImportProblem(describe(err, 'Could not fetch the durations for that schedule type'))
     } finally {
       if (mounted.current) setImportBusy(false)
     }
@@ -536,6 +567,12 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   }
 
   function leaveImport() {
+    if (imported) {
+      const { formBefore } = imported
+      setProjectType(formBefore.projectType)
+      setScheduleType(formBefore.scheduleType)
+      setProject(formBefore.project)
+    }
     setImported(null)
     setImportProblem(null)
     setFailure(null)

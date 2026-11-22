@@ -174,16 +174,20 @@ export function readActivities(wb: Workbook, map: TableMapping, cal: Calendar): 
   }
 
   const warnings: string[] = []
-  const seen = new Map<string, number>()
+  const codeOf = (row: string[], i: number) => cell(row, 'activityId') || `A${String(i + 1).padStart(3, '0')}`
+  // Every code the file uses, so a renamed duplicate never takes a code another row already has.
+  const taken = new Set(rows.map(codeOf))
+  const used = new Set<string>()
   const activities = rows.map((row, i): ImportedActivity => {
-    let code = cell(row, 'activityId') || `A${String(i + 1).padStart(3, '0')}`
-    const times = seen.get(code) ?? 0
-    seen.set(code, times + 1)
-    if (times > 0) {
-      const renamed = `${code}-${times + 1}`
+    let code = codeOf(row, i)
+    if (used.has(code)) {
+      let n = 2
+      while (taken.has(`${code}-${n}`) || used.has(`${code}-${n}`)) n++
+      const renamed = `${code}-${n}`
       warnings.push(`${code} appears more than once; the later row is ${renamed}.`)
       code = renamed
     }
+    used.add(code)
 
     const status = mapStatus(cell(row, 'status'))
     if (status.warning) warnings.push(`${code}: ${status.warning}`)

@@ -122,3 +122,19 @@ describe('scheduleImport', () => {
     expect(result).toEqual({ error: expect.stringMatching(/^The plan cannot be scheduled: /) })
   })
 })
+
+describe('buildImportDraft: fallback estimates', () => {
+  it('says how many durations could not be estimated', () => {
+    const acts = [act('A', { durationDays: 2, durationFrom: 'file' }), act('B', { links: [{ from: 'A', type: 'FS', lagDays: 0 }], hasPredecessors: true }), act('C', { links: [{ from: 'B', type: 'FS', lagDays: 0 }], hasPredecessors: true })]
+    const server: ImportActivitiesResult = {
+      ...SERVER,
+      targetCode: null,
+      templateLinks: [],
+      durations: [
+        { code: 'B', days: 5, basis: 'estimate', reason: 'default: no AI estimate available' },
+        { code: 'C', days: 5, basis: 'estimate', reason: 'default: no AI estimate available' },
+      ],
+    }
+    expect(build(acts, server).warnings).toContain('2 durations could not be estimated; they are set to 5 days. Check them in Basis.')
+  })
+})

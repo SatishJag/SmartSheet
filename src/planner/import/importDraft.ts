@@ -58,6 +58,10 @@ export function buildImportDraft(input: ImportDraftInput): { draft: PlanDraft; w
     ...server.templateLinks.map((l) => ({ from: l.from, to: l.to, type: l.type, lagDays: l.lagDays })),
   ]
   for (const code of templateTargets) warnings.push(`${code} has no predecessors in the file; it uses the template’s links.`)
+  const fallbacks = draftActivities.filter((a) => a.basis === 'estimate' && a.reason.startsWith('default:')).length
+  if (fallbacks > 0) {
+    warnings.push(`${fallbacks} duration${fallbacks === 1 ? '' : 's'} could not be estimated; ${fallbacks === 1 ? 'it is' : 'they are'} set to 5 days. Check them in Basis.`)
+  }
 
   const hasPredecessor = new Set(links.map((l) => l.to))
   const hasSuccessor = new Set(links.map((l) => l.from))

@@ -127,20 +127,27 @@ export async function prepareImport(source: HistorySource, req: ImportRequest): 
 
   const catalog = scheduleType ? await source.catalog(scheduleType) : []
   const history = scheduleType ? await source.summary(scheduleType, null) : null
+  // A file activity is a template activity when its code matches, else its name (renumbered copies).
   const byCode = new Map(catalog.map((a) => [a.code, a]))
+  const byName = new Map(catalog.map((a) => [lower(a.name), a]))
+  const templateOf = (a: ImportActivityRef) => byCode.get(a.code) ?? byName.get(lower(a.name))
+  const fileCodeOf = new Map<string, string>() // template code -> the file's code for it (first one)
+  for (const a of activities) {
+    const t = templateOf(a)
+    if (t && !fileCodeOf.has(t.code)) fileCodeOf.set(t.code, a.code)
+  }
   const stats = new Map((history?.stats ?? []).filter((s) => s.n > 0).map((s) => [s.code, s]))
-  const fileCodes = new Set(activities.map((a) => a.code))
 
   const durations: ImportDuration[] = []
   const toEstimate: ImportActivityRef[] = []
   const templateLinks: ImportTemplateLink[] = []
   for (const a of activities) {
-    const known = byCode.get(a.code)
+    const known = templateOf(a)
     if (!a.hasDuration) {
       if (!known) toEstimate.push(a)
       else if (known.defaultDays === 0) durations.push({ code: a.code, days: 0, basis: 'template', reason: TEMPLATE_REASON })
       else {
-        const s = stats.get(a.code)
+        const s = stats.get(known.code)
         if (s && Math.round(s.p50) >= 1) {
           durations.push({ code: a.code, days: Math.round(s.p50), basis: 'history', reason: `Median (p50) of ${s.n} historical project${s.n === 1 ? '' : 's'}.` })
         } else {
@@ -150,7 +157,8 @@ export async function prepareImport(source: HistorySource, req: ImportRequest): 
     }
     if (known && !a.hasPredecessors) {
       for (const l of known.defaultLinks) {
-        if (fileCodes.has(l.from) && l.from !== a.code) templateLinks.push({ to: a.code, from: l.from, type: l.type, lagDays: l.lagDays })
+        const from = fileCodeOf.get(l.from)
+        if (from && from !== a.code) templateLinks.push({ to: a.code, from, type: l.type, lagDays: l.lagDays })
       }
     }
   }
@@ -158,7 +166,7 @@ export async function prepareImport(source: HistorySource, req: ImportRequest): 
   return {
     value: {
       scheduleType,
-      targetCode: target && fileCodes.has(target.code) ? target.code : null,
+      targetCode: (target && fileCodeOf.get(target.code)) ?? null,
       durations,
       templateLinks,
       history: scheduleType ? (history ?? empty(scheduleType)) : null,
@@ -172,7 +180,7 @@ type BetaMessage = Anthropic.Beta.Messages.BetaMessage
 type ToolUse = Anthropic.Beta.Messages.BetaToolUseBlock
 
 /** One forced tool call; the tool input, or null on any failure (logged). */
-async function callTool(config: ImportConfig, tool: Anthropic.Beta.Messages.BetaTool, prompt: string, event: string): Promise<unknown> {
+async function callTool(config: ImportConfig, tool: Anthropic.Beta.Messages.BetaTool, prompt: string, event: string, maxTokens = 8000): Promise<unknown> {
   if (!config.anthropic) return null
   const deadline = AbortSignal.timeout(config.aiDeadlineMs)
   const signal = config.signal ? AbortSignal.any([deadline, config.signal]) : deadline
@@ -181,7 +189,7 @@ async function callTool(config: ImportConfig, tool: Anthropic.Beta.Messages.Beta
     res = await config.anthropic.beta.messages.create(
       {
         model: config.model,
-        max_tokens: 8000,
+        max_tokens: maxTokens,
         system: 'You help import construction schedules from spreadsheets. Answer only through the tool.',
         tools: [tool],
         tool_choice: { type: 'tool', name: tool.name },
@@ -221,7 +229,10 @@ const ESTIMATE_TOOL: Anthropic.Beta.Messages.BetaTool = {
   },
 }
 
-/** The AI's estimates for these activities, or null unless every code has a whole number of days ≥ 1. */
+/** Longest believable estimate (about eight working years); anything above falls back. */
+const MAX_ESTIMATE_DAYS = 2000
+
+/** The AI's usable estimates by code: whole days from 1 to 2000; codes missing or invalid are left out. */
 async function estimateDurations(config: ImportConfig, acts: ImportActivityRef[], scheduleTypeName: string | null): Promise<Map<string, { days: number; reason: string }> | null> {
   const prompt = [
     `A planner imported a ${scheduleTypeName ?? 'construction'} schedule. These activities have no duration in the file.`,
@@ -229,14 +240,18 @@ async function estimateDurations(config: ImportConfig, acts: ImportActivityRef[]
     '',
     ...acts.map((a) => `- ${a.code}: ${a.name}${a.phase ? ` (stage: ${a.phase})` : ''}`),
   ].join('\n')
-  const input = await callTool(config, ESTIMATE_TOOL, prompt, 'planner.import.estimate')
+  // About 40 output tokens per estimate, with room to spare: long lists are not cut off.
+  const input = await callTool(config, ESTIMATE_TOOL, prompt, 'planner.import.estimate', Math.min(32000, 2000 + acts.length * 60))
   if (!isObject(input) || !Array.isArray(input.estimates)) return null
+  const wanted = new Set(acts.map((a) => a.code))
   const out = new Map<string, { days: number; reason: string }>()
   for (const e of input.estimates) {
-    if (!isObject(e) || typeof e.code !== 'string' || !Number.isInteger(e.days) || (e.days as number) < 1 || typeof e.reason !== 'string') return null
-    out.set(e.code, { days: e.days as number, reason: e.reason.slice(0, 300) })
+    if (!isObject(e) || typeof e.code !== 'string' || !wanted.has(e.code) || out.has(e.code)) continue
+    const days = e.days
+    if (!Number.isInteger(days) || (days as number) < 1 || (days as number) > MAX_ESTIMATE_DAYS || typeof e.reason !== 'string') continue
+    out.set(e.code, { days: days as number, reason: e.reason.slice(0, 300) })
   }
-  return acts.every((a) => out.has(a.code)) ? out : null
+  return out
 }
 
 /** Adds the AI estimates (or the 5-day fallback) to a prepared import. */

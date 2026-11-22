@@ -158,3 +158,36 @@ describe('mapImportColumns', () => {
     expect(await mapImportColumns(req, config(null))).toEqual({ usedAi: false, mapping: null })
   })
 })
+
+describe('planImport: review fixes', () => {
+  it('applies the template to activities matched by name when the file’s IDs differ', async () => {
+    const acts = PROPERTY.map((a, i) => ref(`A${String(i + 1).padStart(3, '0')}`, a.name, a.phase, a.defaultDays === 0, false))
+    const result = await planImport(source(), { hints: { fileName: 'p.csv', sheetNames: [] }, activities: acts }, config(null))
+    expect(result.value.scheduleType).toBe('property-development')
+    expect(result.usedAi).toBe(false)
+    const p420 = PROPERTY.findIndex((a) => a.code === 'P420')
+    expect(result.value.targetCode).toBe(`A${String(p420 + 1).padStart(3, '0')}`)
+    expect(result.value.durations.every((d) => d.basis === 'template')).toBe(true)
+    // P020's template link P010 FS becomes A002 <- A001.
+    expect(result.value.templateLinks).toContainEqual({ to: 'A002', from: 'A001', type: 'FS', lagDays: 0 })
+  })
+
+  it('keeps the valid AI estimates and falls back only for the invalid ones, with a cap on days', async () => {
+    const acts = [ref('B', 'Task B', ''), ref('C', 'Task C', ''), ref('D', 'Task D', '')]
+    const ai = fakeAi({ estimates: [{ code: 'B', days: 3, reason: 'ok' }, { code: 'C', days: -2, reason: 'bad' }, { code: 'D', days: 200000, reason: 'huge' }] })
+    const result = await planImport(source(), { hints: { fileName: 'p.xlsx', sheetNames: [] }, activities: acts, scheduleType: null }, config(ai.client))
+    expect(result.value.durations).toEqual([
+      { code: 'B', days: 3, basis: 'estimate', reason: 'ok' },
+      { code: 'C', days: ESTIMATE_FALLBACK_DAYS, basis: 'estimate', reason: 'default: no AI estimate available' },
+      { code: 'D', days: ESTIMATE_FALLBACK_DAYS, basis: 'estimate', reason: 'default: no AI estimate available' },
+    ])
+  })
+
+  it('gives the AI room to answer for many activities', async () => {
+    const acts = Array.from({ length: 400 }, (_, i) => ref(`Z${i}`, `Task ${i}`, ''))
+    const ai = fakeAi({ estimates: [] })
+    await planImport(source(), { hints: { fileName: 'p.xlsx', sheetNames: [] }, activities: acts, scheduleType: null }, config(ai.client))
+    const body = (ai.create.mock.calls[0] as unknown as [{ max_tokens: number }])[0]
+    expect(body.max_tokens).toBeGreaterThanOrEqual(400 * 40)
+  })
+})

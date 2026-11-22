@@ -169,3 +169,17 @@ describe('Basis of Plan', () => {
     expect(guessProject(PROJECTS, wb, readBasis(wb))).toBe('BKK-03')
   })
 })
+
+describe('readActivities: duplicate IDs', () => {
+  it('renames a duplicate to the next ID not already in the file', () => {
+    const wb = sheet([
+      ['Activity ID', 'Activity', 'Duration'],
+      ['P010', 'First', '1'],
+      ['P010', 'Second', '1'],
+      ['P010-2', 'Third', '1'],
+    ])
+    const { activities, warnings } = readActivities(wb, findActivityTable(wb)!, defaultCalendar)
+    expect(activities.map((a) => a.code)).toEqual(['P010', 'P010-3', 'P010-2'])
+    expect(warnings).toEqual(['P010 appears more than once; the later row is P010-3.'])
+  })
+})
