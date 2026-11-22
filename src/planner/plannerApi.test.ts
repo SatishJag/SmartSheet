@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { lleDraft } from '../test/plannerFixtures'
-import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestDraft, requestImport, SESSION_EXPIRED_MESSAGE } from './plannerApi'
+import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestCommitted, requestDraft, requestImport, SESSION_EXPIRED_MESSAGE } from './plannerApi'
 import type { BatchPlanRequest, PlannerOptions } from './types'
 
 const OPTIONS: PlannerOptions = {
@@ -200,5 +200,24 @@ describe('requestImport', () => {
     expect((await failure(requestImport('tok', body))).message).toBe('You have reached the limit of 10 drafts per hour. Try again later.')
     mockFetch(() => reply(200, { ok: true }))
     expect((await failure(requestImport('tok', body))).kind).toBe('response')
+  })
+})
+
+describe('requestCommitted', () => {
+  it('POSTs the sheet’s projects to the Procore sync endpoint', async () => {
+    const response = { ok: true, projects: [{ code: 'BKK-03', status: 'not-found' }] }
+    const fetch = mockFetch(() => reply(200, response))
+    const request = { projects: [{ code: 'BKK-03', costCodes: ['CHL'] }] }
+    expect(await requestCommitted('tok', request)).toEqual(response)
+    const [url, init] = fetch.mock.calls[0]
+    expect(url).toBe('/api/procore/committed')
+    expect(init.method).toBe('POST')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok')
+    expect(JSON.parse(String(init.body))).toEqual(request)
+  })
+
+  it('a reply without projects is an unexpected response', async () => {
+    mockFetch(() => reply(200, { ok: true }))
+    expect((await failure(requestCommitted('tok', { projects: [] }))).kind).toBe('response')
   })
 })
