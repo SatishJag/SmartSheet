@@ -109,5 +109,7 @@ export async function serveStatic(req: IncomingMessage, res: ServerResponse, roo
   const index = path.join(base, 'index.html')
   if (!(await isFile(index))) return plain(res, 404, 'The app has not been built (run npm run build).')
   // Procore shows /procore (Plan with AI only) in its side panel and full screen; nothing else is framable.
-  return send(req, res, index, 'no-cache', isPanelPath(decoded) ? 'procore' : 'none')
+  // Decide on the raw path, exactly as the browser reports it to the page (window.location.pathname): an
+  // encoded variant such as /procore%2F or /%70rocore is not the panel page and must not be framable.
+  return send(req, res, index, 'no-cache', isPanelPath(pathname) ? 'procore' : 'none')
 }

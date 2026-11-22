@@ -621,3 +621,15 @@ test('Plan with AI in a Procore side panel: /procore on the Procore project, the
   await expect(page.getByRole('heading', { name: 'Schedule created' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Open in SmartSheet' })).toHaveAttribute('href', /\/\?sheet=[0-9a-f-]{36}$/)
 })
+
+test('Plan with AI in Procore full screen keeps the usual width, centred', async ({ page }) => {
+  await page.route('**/api/planner/options', (route) => route.fulfill({ json: OPTIONS }))
+  await openApp(page)
+  await page.setViewportSize({ width: 1600, height: 900 })
+  await page.goto('/procore')
+  const panel = page.getByRole('region', { name: 'Plan with AI' })
+  await expect(panel).toBeVisible()
+  const box = (await panel.boundingBox())!
+  expect(box.width, 'wizard width').toBeLessThanOrEqual(1081)
+  expect(Math.abs(box.x - (1600 - box.x - box.width)), 'left and right margins').toBeLessThanOrEqual(2)
+})

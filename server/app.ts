@@ -129,6 +129,8 @@ export function createApp(deps: AppDeps): Server {
   const importMaxBody = 1024 * 1024
   const limiter = createDraftLimiter(deps.draftLimits ?? DEFAULT_DRAFT_LIMITS)
   const procoreLimiter = createDraftLimiter(PROCORE_SYNC_LIMITS)
+  // Project lookups (the /procore page) use the same Procore quota as the sync: limit them per user too.
+  const projectLimiter = createDraftLimiter({ perUserPerHour: 60, perUserInFlight: 2, globalInFlight: 8 })
 
   /** The verified caller, or throws an HttpError (401/503). */
   async function authorize(req: IncomingMessage): Promise<AuthenticatedUser> {
@@ -378,7 +380,7 @@ export function createApp(deps: AppDeps): Server {
    * just leaves the project for the planner to choose.
    */
   async function procoreProject(req: IncomingMessage, res: ServerResponse) {
-    const { history: source } = await authorize(req)
+    const { userId, history: source } = await authorize(req)
     const query = new URL(req.url ?? '/', 'http://localhost').searchParams
     const company = query.get('company') ?? ''
     const project = query.get('project') ?? ''
@@ -390,6 +392,19 @@ export function createApp(deps: AppDeps): Server {
     const procore = deps.procore
     if (!procore) return answer({ code: null, reason: 'not-configured' })
     if (company !== procore.companyId) return answer({ code: null, reason: 'other-company' })
+    const slot = projectLimiter.acquire(userId)
+    if (!slot.ok) {
+      log('procore.project.limited', { status: slot.status })
+      throw new HttpError(slot.status, 'Too many project lookups. Try again later.', { 'Retry-After': String(slot.retryAfterSeconds) })
+    }
+    try {
+      return await matchProject(procore, source, company, project, answer)
+    } finally {
+      slot.release()
+    }
+  }
+
+  async function matchProject(procore: ProcoreClient, source: HistorySource, company: string, project: string, answer: (m: ProjectMatch) => void) {
     let projectNumber: string
     try {
       const found = await procore.get<{ project_number?: string | null }>(`/rest/v1.0/projects/${project}`, { company_id: company, view: 'minimal' })

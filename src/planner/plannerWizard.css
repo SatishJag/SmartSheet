@@ -783,7 +783,9 @@
 }
 
 .planner-wizard.is-embedded {
-  max-width: none;
+  /* Full screen looks as the dialog does today (at most 1080 px, centred); a 400-px panel uses all of it. */
+  max-width: 1080px;
+  margin: 0 auto;
   min-height: 100dvh;
   max-height: none;
   height: 100dvh;
@@ -791,11 +793,4 @@
   border-radius: 0;
   box-shadow: none;
   animation: none;
-}
-
-/* A narrow panel: the activity table keeps its columns and scrolls sideways inside its card. */
-@media (max-width: 480px) {
-  .planner-wizard.is-embedded .planner-table-wrap {
-    overflow-x: auto;
-  }
 }

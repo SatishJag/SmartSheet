@@ -694,7 +694,7 @@ describe('framing /procore (Procore side panel and full screen)', () => {
 
   it('only /procore itself is framable', async () => {
     const base = await start()
-    for (const p of ['/', '/procore/x', '/procorex', '/assets/app-123.js']) {
+    for (const p of ['/', '/procore/x', '/procorex', '/assets/app-123.js', '/procore%2F', '/%70rocore', '/PROCORE']) {
       const res = await fetch(`${base}${p}`)
       expect(res.headers.get('x-frame-options'), p).toBe('DENY')
       expect(res.headers.get('content-security-policy'), p).toBe("frame-ancestors 'none'")

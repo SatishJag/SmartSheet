@@ -236,3 +236,17 @@ describe('GET /api/procore/project', () => {
     expect(await res.json()).toEqual({ code: null, reason: 'procore-error' })
   })
 })
+
+describe('GET /api/procore/project: limits (review)', () => {
+  it('lets one user look up 60 projects an hour, then answers without asking Procore', async () => {
+    const get = vi.fn(async () => ({ id: 7, project_number: 'BKK-03' }))
+    const procore = { companyId: '42', getAll: vi.fn(), get } as unknown as ProcoreClient
+    const base = await start({ procore })
+    const ask = () => fetch(`${base}/api/procore/project?company=42&project=7`, { headers: { Authorization: 'Bearer good-token' } })
+    for (let i = 0; i < 60; i++) expect(await (await ask()).json()).toEqual({ code: 'BKK-03' })
+    const res = await ask()
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toMatch(/^\d+$/)
+    expect(get).toHaveBeenCalledTimes(60)
+  })
+})
