@@ -36,9 +36,9 @@ import {
   type ItemForm,
 } from './plannerItems'
 import { codeForType, costCodeOption, optionForCode } from './costCodes'
-import { defaultDeliverySite, optionForProject, projectOption, siteProjects } from './procoreProjects'
+import { defaultDeliverySite, optionForProject, projectOption, siteProjects } from './projects'
 import { insertSheetFromDrafts } from './sheetFromDraft'
-import { DEFAULT_ITEM_LABELS, type CostCode, type ItemLabels, type PlannerOptions, type ProcoreProject } from './types'
+import { DEFAULT_ITEM_LABELS, type CostCode, type ItemLabels, type PlannerOptions, type Project } from './types'
 import './plannerWizard.css'
 
 export { BASIS_LABELS, sourceLabel } from './PlanPreview'
@@ -192,7 +192,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const projectCounts = options?.projectCounts?.[scheduleType] ?? {}
   const defaultChoice = equipmentTypes[0] ?? OTHER
   const costCodes = options?.costCodes ?? NO_COST_CODES
-  const procoreProjects = options?.procoreProjects ?? NO_PROJECTS
+  const procoreProjects = options?.projects ?? NO_PROJECTS
   const sites = useMemo(() => siteProjects(procoreProjects), [procoreProjects])
   // Items whose type is not on offer for the schedule type (or not chosen yet) get the first type with history.
   useEffect(() => {
@@ -810,12 +810,12 @@ interface ItemFieldsProps {
   costCodes: readonly CostCode[]
   onCostCode: (code: string) => void
   /** The Procore site projects an item can be delivered to; none: no Delivery site field. */
-  sites: readonly ProcoreProject[]
+  sites: readonly Project[]
   onDeliverySite: (code: string) => void
 }
 
 const NO_COST_CODES: CostCode[] = []
-const NO_PROJECTS: ProcoreProject[] = []
+const NO_PROJECTS: Project[] = []
 
 const FieldError = ({ id, children }: { id: string; children: string }) => (
   <small id={id} className="planner-error">

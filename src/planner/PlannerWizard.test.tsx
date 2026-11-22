@@ -888,10 +888,10 @@ describe('PlannerWizard: cost codes', () => {
 })
 
 describe('PlannerWizard: Procore project', () => {
-  const PROJECTS = [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }]
+  const PROJECTS = [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }]
   const OPTIONS_P: PlannerOptions = {
     ...OPTIONS,
-    procoreProjects: PROJECTS,
+    projects: PROJECTS,
     costCodes: [
       { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
       { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
@@ -1024,10 +1024,10 @@ describe('PlannerWizard: delivery site', () => {
       { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
       { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
     ],
-    procoreProjects: [
-      { code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true },
-      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false },
-      { code: 'SIN-01', name: 'Singapore 1', isProgram: false },
+    projects: [
+      { code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true, projectType: 'data-centre', inProcore: true },
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+      { code: 'SIN-01', name: 'Singapore 1', isProgram: false, projectType: 'data-centre', inProcore: true },
     ],
   }
   const withSites = (options: PlannerOptions = OPTIONS_S) => mockServer({ options: () => json(200, options) })
@@ -1114,7 +1114,7 @@ describe('PlannerWizard: delivery site', () => {
   })
 
   it('hides the field and adds no column when only the program project is on offer', async () => {
-    withSites({ ...OPTIONS_S, procoreProjects: [{ code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true }] })
+    withSites({ ...OPTIONS_S, projects: [{ code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true, projectType: 'data-centre', inProcore: true }] })
     setup()
     expect(await screen.findByLabelText('Cost code')).toBeInTheDocument()
     expect(screen.queryByLabelText('Delivery site')).not.toBeInTheDocument()

@@ -108,9 +108,9 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
       json: {
         ...OPTIONS,
         projectCounts: { 'lle-procurement': { 'Power transformer': 8, Switchgear: 5 } },
-        procoreProjects: [
-          { code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true },
-          { code: 'BKK-03', name: 'Bangkok 3', isProgram: false },
+        projects: [
+          { code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true, projectType: 'data-centre', inProcore: true },
+          { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
         ],
         costCodes: [
           { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
@@ -258,7 +258,7 @@ test('Plan with AI on a phone: item rows with a Cost code field do not scroll si
     route.fulfill({
       json: {
         ...OPTIONS,
-        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
+        projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
         costCodes: [
           { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
           { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
@@ -285,7 +285,7 @@ test('Plan with AI on a phone: item rows with a Cost code field do not scroll si
 
 test('Plan with AI: the Procore project sits beside the schedule type, and below it on a phone', async ({ page }) => {
   await page.route('**/api/planner/options', (route) =>
-    route.fulfill({ json: { ...OPTIONS, procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }] } satisfies PlannerOptions }),
+    route.fulfill({ json: { ...OPTIONS, projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }] } satisfies PlannerOptions }),
   )
   await openApp(page)
   await page.getByRole('button', { name: 'Plan with AI' }).click()
@@ -312,7 +312,7 @@ test('Plan with AI: the top fields have room between them', async ({ page }) => 
       json: {
         ...OPTIONS,
         projectTypes: [{ id: 'data-centre', name: 'Data centre', description: 'Power, cooling and white-space fit-out for data halls.' }],
-        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
+        projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
       } satisfies PlannerOptions,
     }),
   )
@@ -336,7 +336,7 @@ test('Plan with AI: the equipment name stays wide enough to read beside the cost
       json: {
         ...OPTIONS,
         costCodes: [{ code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' }],
-        procoreProjects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false }],
+        projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
       } satisfies PlannerOptions,
     }),
   )
