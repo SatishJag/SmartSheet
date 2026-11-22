@@ -1,0 +1,160 @@
+// @vitest-environment node
+import type Anthropic from '@anthropic-ai/sdk'
+import { describe, expect, it, vi } from 'vitest'
+import { propertyDevelopmentCatalog } from '../src/planner/catalogs/propertyCatalog'
+import type { CatalogActivity, HistorySource, HistorySummary, ImportActivityRef, PlannerOptions } from '../src/planner/types'
+import type { AnthropicLike } from './ai'
+import { matchScheduleType, parseImportRequest, planImport, mapImportColumns, ESTIMATE_FALLBACK_DAYS } from './importPlan'
+
+type BetaMessage = Anthropic.Beta.Messages.BetaMessage
+
+const PROPERTY = propertyDevelopmentCatalog()
+const LLE: CatalogActivity[] = [
+  { scheduleType: 'lle-procurement', code: 'SPEC', name: 'Technical specification', phase: 'Engineering', sequence: 1, defaultLinks: [], defaultDays: 10, isTarget: false },
+  { scheduleType: 'lle-procurement', code: 'ONSITE', name: 'On site', phase: 'Delivery', sequence: 2, defaultLinks: [{ from: 'SPEC', type: 'FS', lagDays: 0 }], defaultDays: 0, isTarget: true },
+]
+const OPTIONS: PlannerOptions = {
+  scheduleTypes: [
+    { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: '' },
+    { id: 'property-development', name: 'Property development master schedule', description: '' },
+  ],
+  equipmentTypes: {},
+}
+const EMPTY = (scheduleType: string): HistorySummary => ({ scheduleType, equipmentType: null, projectCount: 0, sampleOnly: false, stats: [] })
+
+function source(summary: (type: string) => HistorySummary = EMPTY): HistorySource {
+  return {
+    options: async () => OPTIONS,
+    catalog: async (type) => (type === 'property-development' ? PROPERTY : type === 'lle-procurement' ? LLE : []),
+    summary: async (type) => summary(type),
+  }
+}
+
+function fakeAi(...inputs: unknown[]) {
+  const create = vi.fn(async () => {
+    const input = inputs.shift()
+    if (input instanceof Error) throw input
+    return {
+      id: 'msg',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-opus-5-5',
+      stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', id: 'toolu_1', name: (input as { __tool?: string }).__tool ?? 'estimate_durations', input }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    } as unknown as BetaMessage
+  })
+  const client: AnthropicLike = { beta: { messages: { create } } }
+  return { client, create }
+}
+
+const config = (anthropic: AnthropicLike | null) => ({ anthropic, model: 'claude-opus-5-5', aiTimeoutMs: 1000, aiDeadlineMs: 2000, log: () => {} })
+const ref = (code: string, name: string, phase: string, hasDuration = false, hasPredecessors = true): ImportActivityRef => ({ code, name, phase, hasDuration, hasPredecessors })
+const fromTemplate = (n: number) => PROPERTY.slice(0, n).map((a) => ref(a.code, a.name, a.phase, false, true))
+
+describe('parseImportRequest', () => {
+  const hints = { fileName: 'plan.xlsx', sheetNames: ['Plan'] }
+
+  it('accepts either columns or activities, not both or neither', () => {
+    expect(parseImportRequest({ hints, activities: [ref('A', 'Dig', '')] }).ok).toBe(true)
+    expect(parseImportRequest({ hints, columns: [{ sheet: 'Plan', rows: [['Task']] }] }).ok).toBe(true)
+    expect(parseImportRequest({ hints }).ok).toBe(false)
+    expect(parseImportRequest({ hints, activities: [], columns: [] }).ok).toBe(false)
+  })
+
+  it('refuses more than 500 activities and more than 5 sheets of columns', () => {
+    expect(parseImportRequest({ hints, activities: Array.from({ length: 501 }, (_, i) => ref(`A${i}`, 'x', '')) })).toMatchObject({ ok: false })
+    expect(parseImportRequest({ hints, columns: Array.from({ length: 6 }, (_, i) => ({ sheet: `S${i}`, rows: [] })) })).toMatchObject({ ok: false })
+  })
+
+  it('accepts a chosen schedule type or null, and rejects other shapes', () => {
+    expect(parseImportRequest({ hints, activities: [ref('A', 'Dig', '')], scheduleType: null })).toMatchObject({ ok: true, value: { scheduleType: null } })
+    expect(parseImportRequest({ hints, activities: [ref('A', 'Dig', '')], scheduleType: 'x' })).toMatchObject({ ok: true, value: { scheduleType: 'x' } })
+    expect(parseImportRequest({ hints, activities: [ref('A', 'Dig', '')], scheduleType: 3 }).ok).toBe(false)
+    expect(parseImportRequest({ hints, activities: [{ code: 'A' }] }).ok).toBe(false)
+  })
+})
+
+describe('matchScheduleType', () => {
+  it('picks the catalog that covers at least half of the file’s activities, by code or name', () => {
+    const catalogs = { 'property-development': PROPERTY, 'lle-procurement': LLE }
+    expect(matchScheduleType(catalogs, fromTemplate(44))).toBe('property-development')
+    const byName = PROPERTY.slice(0, 10).map((a, i) => ref(`X${i}`, a.name.toUpperCase(), ''))
+    expect(matchScheduleType(catalogs, byName)).toBe('property-development')
+    expect(matchScheduleType(catalogs, [ref('Z1', 'Unrelated', ''), ref('Z2', 'Other', ''), ref('P010', 'x', '')])).toBeNull()
+  })
+})
+
+describe('planImport', () => {
+  it('detects the template and fills blank durations from it, with links for activities that have none', async () => {
+    const acts = [
+      ref('P010', 'Define development brief and feasibility', '01 Feasibility', true, false),
+      ref('P020', 'Approve development business case', '01 Feasibility', true, false),
+      ref('P030', 'Complete land, title and technical due diligence', '02 Land', false, true),
+      ref('P420', 'Complete planned handover', '14 Handover', true, true),
+    ]
+    const result = await planImport(source(), { hints: { fileName: 'p.xlsx', sheetNames: [] }, activities: acts }, config(null))
+    expect(result.usedAi).toBe(false)
+    expect(result.value).toMatchObject({ scheduleType: 'property-development', targetCode: 'P420', history: { projectCount: 0 } })
+    const p030 = PROPERTY.find((a) => a.code === 'P030')!
+    expect(result.value.durations).toEqual([{ code: 'P030', days: p030.defaultDays, basis: 'template', reason: 'from the template, no history yet' }])
+    // P020 has no predecessors in the file: it gets the template's P010 FS link. P010 has none in the template.
+    expect(result.value.templateLinks).toEqual([{ to: 'P020', from: 'P010', type: 'FS', lagDays: 0 }])
+  })
+
+  it('uses history medians where there are some', async () => {
+    const withStats = (type: string): HistorySummary => ({ ...EMPTY(type), projectCount: 4, stats: [{ code: 'P030', n: 4, p50: 37.4, p80: 50, min: 30, max: 60 }] })
+    const result = await planImport(source(withStats), { hints: { fileName: 'p.xlsx', sheetNames: [] }, activities: [ref('P030', 'x', '', false)] }, config(null))
+    expect(result.value.durations).toEqual([{ code: 'P030', days: 37, basis: 'history', reason: 'Median (p50) of 4 historical projects.' }])
+  })
+
+  it('asks the AI only for blank activities the template does not have, and validates its answer', async () => {
+    const acts = [...fromTemplate(4), ref('P035', 'Survey the neighbouring plot', '02 Land', false, true)]
+    const ai = fakeAi({ estimates: [{ code: 'P035', days: 12, reason: 'Similar to a site survey.' }] })
+    const result = await planImport(source(), { hints: { fileName: 'p.xlsx', sheetNames: [] }, activities: acts }, config(ai.client))
+    expect(result.usedAi).toBe(true)
+    expect(result.value.durations.find((d) => d.code === 'P035')).toEqual({ code: 'P035', days: 12, basis: 'estimate', reason: 'Similar to a site survey.' })
+    const sent = JSON.stringify(ai.create.mock.calls[0])
+    expect(sent).toContain('Survey the neighbouring plot')
+    expect(sent).not.toContain('Define development brief') // template activities are not sent
+  })
+
+  it('falls back to 5 days when the AI answer is unusable or fails', async () => {
+    const acts = [ref('Z1', 'Odd task', ''), ref('Z2', 'Other task', '')]
+    for (const reply of [{ estimates: [{ code: 'Z1', days: -3, reason: 'x' }] }, new Error('down')]) {
+      const ai = fakeAi(reply, reply)
+      const result = await planImport(source(), { hints: { fileName: 'p.xlsx', sheetNames: [] }, activities: acts, scheduleType: null }, config(ai.client))
+      expect(result.value.durations).toEqual([
+        { code: 'Z1', days: ESTIMATE_FALLBACK_DAYS, basis: 'estimate', reason: 'default: no AI estimate available' },
+        { code: 'Z2', days: ESTIMATE_FALLBACK_DAYS, basis: 'estimate', reason: 'default: no AI estimate available' },
+      ])
+      expect(result.value.scheduleType).toBeNull()
+    }
+  })
+
+  it('uses a schedule type the planner chose, or none', async () => {
+    const acts = fromTemplate(3)
+    const chosen = await planImport(source(), { hints: { fileName: 'p.xlsx', sheetNames: [] }, activities: acts, scheduleType: 'lle-procurement' }, config(null))
+    expect(chosen.value.scheduleType).toBe('lle-procurement')
+    expect(chosen.value.durations.every((d) => d.basis === 'estimate')).toBe(true) // none are LLE activities
+    await expect(planImport(source(), { hints: { fileName: 'p.xlsx', sheetNames: [] }, activities: acts, scheduleType: 'nope' }, config(null))).rejects.toThrow('Unknown schedule type: nope.')
+  })
+})
+
+describe('mapImportColumns', () => {
+  const columns = [{ sheet: 'Plan', rows: [['Ref', 'What', 'Days', 'After'], ['1', 'Dig', '5', '']] }]
+  const req = { hints: { fileName: 'p.xlsx', sheetNames: ['Plan'] }, columns }
+
+  it('returns the AI’s mapping when it is valid', async () => {
+    const ai = fakeAi({ __tool: 'map_columns', found: true, sheet: 'Plan', headingRow: 0, fields: { activityId: 0, name: 1, duration: 2, predecessors: 3 } })
+    const result = await mapImportColumns(req, config(ai.client))
+    expect(result).toEqual({ usedAi: true, mapping: { sheet: 'Plan', headingRow: 0, fields: { activityId: 0, name: 1, duration: 2, predecessors: 3 } } })
+  })
+
+  it('returns null when the AI finds nothing, names an unknown sheet, or is not configured', async () => {
+    expect((await mapImportColumns(req, config(fakeAi({ __tool: 'map_columns', found: false }).client))).mapping).toBeNull()
+    expect((await mapImportColumns(req, config(fakeAi({ __tool: 'map_columns', found: true, sheet: 'Other', headingRow: 0, fields: { name: 1 } }).client))).mapping).toBeNull()
+    expect((await mapImportColumns(req, config(fakeAi({ __tool: 'map_columns', found: true, sheet: 'Plan', headingRow: 0, fields: { duration: 2 } }).client))).mapping).toBeNull()
+    expect(await mapImportColumns(req, config(null))).toEqual({ usedAi: false, mapping: null })
+  })
+})

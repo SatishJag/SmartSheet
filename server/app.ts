@@ -3,11 +3,12 @@
  * injected so tests can run it on an ephemeral port with fakes.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import type { BatchDraftResponse, DraftResponse, HistorySource } from '../src/planner/types'
+import type { BatchDraftResponse, DraftResponse, HistorySource, ImportActivitiesResponse, ImportMappingResponse } from '../src/planner/types'
 import { DEFAULT_MODEL, type AnthropicLike } from './ai'
 import { DEFAULT_BATCH_CONCURRENCY, DEFAULT_BATCH_DEADLINE_MS, draftBatch as draftBatchItems } from './batch'
 import { createDraftLimiter, type DraftLimits } from './limits'
 import { consoleLogger, type Logger } from './log'
+import { completeImport, mapImportColumns, parseImportRequest, prepareImport } from './importPlan'
 import { createDraft, PlannerError } from './planner'
 import { parseBatchRequest, parsePlanRequest } from './request'
 import { serveStatic } from './static'
@@ -117,6 +118,8 @@ export function createApp(deps: AppDeps): Server {
     log,
   }
   const maxBody = deps.maxBodyBytes ?? 16 * 1024
+  /** An imported plan (up to 500 activities) is larger than a draft request. */
+  const importMaxBody = 1024 * 1024
   const limiter = createDraftLimiter(deps.draftLimits ?? DEFAULT_DRAFT_LIMITS)
 
   /** The verified caller, or throws an HttpError (401/503). */
@@ -146,11 +149,11 @@ export function createApp(deps: AppDeps): Server {
   }
 
   /** The request's JSON body, or throws an HttpError (415/413/400). */
-  async function readJson(req: IncomingMessage): Promise<unknown> {
+  async function readJson(req: IncomingMessage, limit = maxBody): Promise<unknown> {
     const type = (req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase()
     if (type !== 'application/json') throw new HttpError(415, 'Send the request as application/json.')
     try {
-      return JSON.parse(await readBody(req, maxBody))
+      return JSON.parse(await readBody(req, limit))
     } catch (err) {
       if (err instanceof HttpError) throw err
       throw new HttpError(400, 'The request body is not valid JSON.')
@@ -217,6 +220,55 @@ export function createApp(deps: AppDeps): Server {
     }
   }
 
+  /**
+   * Import a plan from Excel: map an unknown layout's columns, or match the schedule type and fill
+   * blank durations. One hourly draft only when the AI is actually asked; always one slot in flight.
+   */
+  async function importPlan(req: IncomingMessage, res: ServerResponse) {
+    const { userId, history: source } = await authorize(req)
+    const parsed = parseImportRequest(await readJson(req, importMaxBody))
+    if (!parsed.ok) throw new HttpError(400, parsed.error)
+    const request = parsed.value
+    const disconnected = new AbortController()
+    const onClose = () => {
+      if (!res.writableFinished) disconnected.abort()
+    }
+    res.on('close', onClose)
+    const config = { ...plannerConfig, signal: disconnected.signal }
+    try {
+      if (request.columns) {
+        const slot = acquireSlot(userId, plannerConfig.anthropic ? 1 : 0, 'planner.import.limited')
+        try {
+          const { mapping } = await mapImportColumns(request, config)
+          log('planner.import.map', { sheets: request.columns.length, found: mapping !== null })
+          json(res, 200, { ok: true, mapping } satisfies ImportMappingResponse)
+        } finally {
+          slot.release()
+        }
+        return
+      }
+      let prepared
+      try {
+        prepared = await prepareImport(source, request)
+      } catch (err) {
+        if (err instanceof PlannerError) throw new HttpError(err.status, err.message)
+        log('planner.import.error', { error: (err as Error).message })
+        throw new HttpError(502, 'Could not read the planner history.')
+      }
+      const needsAi = prepared.toEstimate.length > 0 && plannerConfig.anthropic !== null
+      const slot = acquireSlot(userId, needsAi ? 1 : 0, 'planner.import.limited')
+      try {
+        const { value } = await completeImport(prepared, config)
+        log('planner.import', { activities: request.activities?.length ?? 0, scheduleType: value.scheduleType, estimated: prepared.toEstimate.length })
+        json(res, 200, { ok: true, ...value } satisfies ImportActivitiesResponse)
+      } finally {
+        slot.release()
+      }
+    } finally {
+      res.off('close', onClose)
+    }
+  }
+
   async function draft(req: IncomingMessage, res: ServerResponse) {
     const { userId, history: source } = await authorize(req)
     const body = await readJson(req)
@@ -256,6 +308,7 @@ export function createApp(deps: AppDeps): Server {
     '/api/planner/options': { method: 'GET', handle: options },
     '/api/planner/draft': { method: 'POST', handle: draft },
     '/api/planner/draft-batch': { method: 'POST', handle: draftBatch },
+    '/api/planner/import': { method: 'POST', handle: importPlan },
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse) {
