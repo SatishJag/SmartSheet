@@ -68,6 +68,16 @@ export interface PlannerWizardProps {
   today?: string
   /** The working calendar the plan and the new sheet use; defaults to the Project schedule template's. */
   calendar?: Calendar
+  /**
+   * Shown as the page itself (the /procore page inside Procore), not as a dialog over the app: no backdrop,
+   * no Close button, Escape does nothing and focus is not trapped. Cancel still calls onClose.
+   */
+  embedded?: boolean
+  /**
+   * A project code to choose, with its project type, once the options are loaded (the Procore project the
+   * page was opened on). Applied once per code, and never over a project the planner chose themselves.
+   */
+  initialProject?: string
 }
 
 type Step = 'request' | 'drafting' | 'preview' | 'creating' | 'importing' | 'imported'
@@ -164,7 +174,7 @@ const importHints = (wb: Workbook) => ({ fileName: wb.fileName, sheetNames: wb.s
  * heading as the step changes, Tab cycles within, Escape closes (except while saving), and focus
  * returns to the opener on close.
  */
-export function PlannerWizard({ client, userId, onCreated, onClose, today: todayProp, calendar = projectScheduleTemplate.calendar }: PlannerWizardProps) {
+export function PlannerWizard({ client, userId, onCreated, onClose, today: todayProp, calendar = projectScheduleTemplate.calendar, embedded = false, initialProject }: PlannerWizardProps) {
   const [today] = useState(() => todayProp ?? todayIso())
   const ids = {
     title: useId(),
@@ -300,6 +310,22 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   useEffect(() => {
     if (project && !listed.some((p) => p.code === project)) setProject('')
   }, [listed, project])
+
+  // The project the page was opened on (Procore): chosen once per code, with its project type, unless the
+  // planner has already chosen a project.
+  const appliedInitial = useRef<{ code: string; applied: string } | null>(null)
+  useEffect(() => {
+    if (!options || !initialProject || appliedInitial.current?.code === initialProject) return
+    const previous = appliedInitial.current?.applied ?? ''
+    appliedInitial.current = { code: initialProject, applied: previous }
+    if (project && project !== previous) return
+    const found = options.projects?.find((p) => p.code === initialProject)
+    if (!found) return
+    appliedInitial.current = { code: initialProject, applied: found.code }
+    setProjectType(found.projectType)
+    setScheduleType(schedulesFor(options, found.projectType)[0]?.id ?? '')
+    setProject(found.code)
+  }, [options, initialProject, project])
 
   // Each item's delivery site follows the plan's project when that is a site, until the user picks or clears one.
   useEffect(() => {
@@ -712,15 +738,15 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const stepNumber = step === 'preview' || step === 'creating' ? 2 : 1
   const scheduleDescription = options?.scheduleTypes.find((t) => t.id === scheduleType)?.description
   return (
-    <div className="planner-backdrop">
+    <div className={embedded ? 'planner-page' : 'planner-backdrop'}>
       <div
         ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
+        role={embedded ? 'region' : 'dialog'}
+        aria-modal={embedded ? undefined : true}
         aria-labelledby={ids.title}
         aria-busy={busy}
-        className="planner-wizard"
-        onKeyDown={onKeyDown}
+        className={embedded ? 'planner-wizard is-embedded' : 'planner-wizard'}
+        onKeyDown={embedded ? undefined : onKeyDown}
       >
         <header className="planner-header">
           <span className="planner-header-icon">
@@ -744,9 +770,11 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               Review plan
             </li>
           </ol>
+          {!embedded && (
           <button type="button" className="btn btn-icon planner-close" aria-label="Close" onClick={close} disabled={step === 'creating'}>
             <PIcon name="close" size={20} />
           </button>
+          )}
         </header>
 
         {step === 'request' && (

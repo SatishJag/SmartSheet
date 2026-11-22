@@ -1650,3 +1650,73 @@ describe('PlannerWizard: header for Data centre All', () => {
     expect(screen.getByText(AI_LINE)).toBeInTheDocument()
   })
 })
+
+describe('PlannerWizard: embedded in Procore', () => {
+  const OPTS: PlannerOptions = {
+    projectTypes: [
+      { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+      { id: 'properties', name: 'Properties', description: 'Buildings' },
+    ],
+    scheduleTypes: [
+      { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] },
+      { id: 'property-development', name: 'Property development master schedule', description: 'Property', projectTypes: ['properties'] },
+    ],
+    equipmentTypes: { 'lle-procurement': ['Power transformer'], 'property-development': [] },
+    projects: [
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+      { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+    ],
+  }
+  function renderEmbedded(initialProject?: string) {
+    const { client, userId } = fakeClient()
+    const props = { client, userId, onClose: vi.fn(), onCreated: vi.fn(), today: TODAY, embedded: true }
+    const view = render(<PlannerWizard {...props} initialProject={initialProject} />)
+    return { ...view, props, user: userEvent.setup() }
+  }
+
+  it('renders as the page: no Close button, no backdrop, Escape does nothing', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    const { container, props, user } = renderEmbedded()
+    await screen.findByLabelText('Schedule type')
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+    expect(container.querySelector('.planner-backdrop')).toBeNull()
+    expect(screen.getByRole('region', { name: 'Plan with AI' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(props.onClose).not.toHaveBeenCalled()
+  })
+
+  it('applies the initial project and its project type', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    renderEmbedded('VIL-01')
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue('VIL-01'))
+    expect(screen.getByLabelText('Project type')).toHaveValue('properties')
+  })
+
+  it('applies a project that arrives after the options loaded', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    const { rerender, props } = renderEmbedded()
+    await screen.findByLabelText('Project')
+    rerender(<PlannerWizard {...props} initialProject="BKK-03" />)
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue('BKK-03'))
+    expect(screen.getByLabelText('Project type')).toHaveValue('data-centre')
+  })
+
+  it('keeps a project the planner chose before the match arrived', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    const { rerender, props, user } = renderEmbedded()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    rerender(<PlannerWizard {...props} initialProject="VIL-01" />)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.getByLabelText('Project')).toHaveValue('BKK-03')
+    expect(screen.getByLabelText('Project type')).toHaveValue('data-centre')
+  })
+
+  it('ignores an unknown project code', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    renderEmbedded('ZZZ-9')
+    await screen.findByLabelText('Project')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.getByLabelText('Project')).toHaveValue('')
+    expect(screen.getByLabelText('Project type')).toHaveValue('data-centre')
+  })
+})

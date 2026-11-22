@@ -1,0 +1,25 @@
+/* /procore inside Procore: messages shown in place of the wizard (created, storage blocked). */
+.procore-panel {
+  min-height: 100dvh;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.procore-panel h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.procore-panel p {
+  margin: 0;
+}
+
+.procore-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

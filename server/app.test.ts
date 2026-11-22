@@ -679,6 +679,29 @@ describe('anti-framing headers', () => {
   })
 })
 
+describe('framing /procore (Procore side panel and full screen)', () => {
+  const PROCORE = 'frame-ancestors https://app.procore.com https://us02.procore.com https://uk01.procore.com https://sandbox.procore.com'
+
+  it('lets only Procore frame /procore', async () => {
+    const base = await start()
+    for (const p of ['/procore', '/procore/', '/procore?company=1&project=2']) {
+      const res = await fetch(`${base}${p}`)
+      expect(res.status, p).toBe(200)
+      expect(res.headers.get('content-security-policy'), p).toBe(PROCORE)
+      expect(res.headers.get('x-frame-options'), p).toBeNull()
+    }
+  })
+
+  it('only /procore itself is framable', async () => {
+    const base = await start()
+    for (const p of ['/', '/procore/x', '/procorex', '/assets/app-123.js', '/procore%2F', '/%70rocore', '/PROCORE']) {
+      const res = await fetch(`${base}${p}`)
+      expect(res.headers.get('x-frame-options'), p).toBe('DENY')
+      expect(res.headers.get('content-security-policy'), p).toBe("frame-ancestors 'none'")
+    }
+  })
+})
+
 describe('POST /api/planner/import', () => {
   const LIMITS = { perUserPerHour: 1, perUserInFlight: 1, globalInFlight: 8 }
   const hints = { fileName: 'plan.xlsx', sheetNames: ['Plan'] }

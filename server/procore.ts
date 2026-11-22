@@ -47,6 +47,8 @@ export interface ProcoreClient {
   readonly companyId: string
   /** Every item of a paginated list endpoint (array body), following Link rel="next". */
   getAll<T>(path: string, query: Record<string, string>, signal?: AbortSignal): Promise<T[]>
+  /** One object (e.g. a project), with the same sign-in, retries and timeout. */
+  get<T>(path: string, query: Record<string, string>, signal?: AbortSignal): Promise<T>
 }
 
 export interface ProcoreClientDeps {
@@ -120,7 +122,7 @@ export function createProcoreClient(config: ProcoreConfig, deps: ProcoreClientDe
   }
 
   /** One GET, with one fresh sign-in on 401 and one wait on a rate limit. */
-  async function get(url: string, signal?: AbortSignal): Promise<Response> {
+  async function request(url: string, signal?: AbortSignal): Promise<Response> {
     let renewed = false
     let waited = false
     for (;;) {
@@ -149,13 +151,20 @@ export function createProcoreClient(config: ProcoreConfig, deps: ProcoreClientDe
       const items: T[] = []
       for (let page = 1; page <= MAX_PAGES; page++) {
         const params = new URLSearchParams({ ...query, page: String(page), per_page: String(PER_PAGE) })
-        const res = await get(`${config.apiHost}${path}?${params.toString()}`, signal)
+        const res = await request(`${config.apiHost}${path}?${params.toString()}`, signal)
         const body: unknown = await res.json().catch(() => null)
         if (!Array.isArray(body)) throw new ProcoreError(UNEXPECTED)
         items.push(...(body as T[]))
         if (!/rel="?next"?/.test(res.headers.get('Link') ?? '')) return items
       }
       throw new ProcoreError(`Procore returned more than ${MAX_PAGES} pages; the sync stops there.`)
+    },
+    async get<T>(path: string, query: Record<string, string>, signal?: AbortSignal): Promise<T> {
+      const params = new URLSearchParams(query).toString()
+      const res = await request(`${config.apiHost}${path}${params ? `?${params}` : ''}`, signal)
+      const body: unknown = await res.json().catch(() => null)
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new ProcoreError(UNEXPECTED)
+      return body as T
     },
   }
 }

@@ -333,3 +333,13 @@ export interface CommittedResponse {
   ok: true
   projects: CommittedProject[]
 }
+
+/**
+ * GET /api/procore/project: our project code for the Procore project a Procore page was opened on, matched
+ * by its project number (docs/superpowers/specs/2026-11-22-procore-panel-design.md). `code` is null when it
+ * cannot be matched, and `reason` says why.
+ */
+export interface ProjectMatch {
+  code: string | null
+  reason?: 'not-configured' | 'other-company' | 'not-found' | 'not-listed' | 'procore-error'
+}

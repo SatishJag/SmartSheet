@@ -51,6 +51,7 @@ function fakeClient(routes: Record<string, unknown[] | (() => never)>) {
   const calls: { path: string; query: Record<string, string> }[] = []
   const client: ProcoreClient = {
     companyId: '42',
+    get: vi.fn() as unknown as ProcoreClient['get'],
     getAll: vi.fn(async <T,>(path: string, query: Record<string, string>) => {
       calls.push({ path, query })
       const r = routes[path]

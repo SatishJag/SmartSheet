@@ -3,7 +3,7 @@
  * injected so tests can run it on an ephemeral port with fakes.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import type { BatchDraftResponse, CommittedProject, CommittedResponse, DraftResponse, HistorySource, ImportActivitiesResponse, ImportMappingResponse, PlannerOptions } from '../src/planner/types'
+import type { BatchDraftResponse, CommittedProject, CommittedResponse, DraftResponse, HistorySource, ImportActivitiesResponse, ImportMappingResponse, PlannerOptions, ProjectMatch } from '../src/planner/types'
 import { DEFAULT_MODEL, type AnthropicLike } from './ai'
 import { DEFAULT_BATCH_CONCURRENCY, DEFAULT_BATCH_DEADLINE_MS, draftBatch as draftBatchItems } from './batch'
 import { createDraftLimiter, type DraftLimits } from './limits'
@@ -129,6 +129,8 @@ export function createApp(deps: AppDeps): Server {
   const importMaxBody = 1024 * 1024
   const limiter = createDraftLimiter(deps.draftLimits ?? DEFAULT_DRAFT_LIMITS)
   const procoreLimiter = createDraftLimiter(PROCORE_SYNC_LIMITS)
+  // Project lookups (the /procore page) use the same Procore quota as the sync: limit them per user too.
+  const projectLimiter = createDraftLimiter({ perUserPerHour: 60, perUserInFlight: 2, globalInFlight: 8 })
 
   /** The verified caller, or throws an HttpError (401/503). */
   async function authorize(req: IncomingMessage): Promise<AuthenticatedUser> {
@@ -372,6 +374,58 @@ export function createApp(deps: AppDeps): Server {
     }
   }
 
+  /**
+   * Our project code for the Procore project the /procore page was opened on (Procore side panel and full
+   * screen), matched by Procore's project number. Always 200 once signed in: a page that cannot be matched
+   * just leaves the project for the planner to choose.
+   */
+  async function procoreProject(req: IncomingMessage, res: ServerResponse) {
+    const { userId, history: source } = await authorize(req)
+    const query = new URL(req.url ?? '/', 'http://localhost').searchParams
+    const company = query.get('company') ?? ''
+    const project = query.get('project') ?? ''
+    if (!/^\d{1,20}$/.test(company) || !/^\d{1,20}$/.test(project)) throw new HttpError(400, 'Send the Procore company and project ids.')
+    const answer = (match: ProjectMatch) => {
+      log('procore.project', { matched: match.code !== null, reason: match.reason ?? null })
+      json(res, 200, match)
+    }
+    const procore = deps.procore
+    if (!procore) return answer({ code: null, reason: 'not-configured' })
+    if (company !== procore.companyId) return answer({ code: null, reason: 'other-company' })
+    const slot = projectLimiter.acquire(userId)
+    if (!slot.ok) {
+      log('procore.project.limited', { status: slot.status })
+      throw new HttpError(slot.status, 'Too many project lookups. Try again later.', { 'Retry-After': String(slot.retryAfterSeconds) })
+    }
+    try {
+      return await matchProject(procore, source, company, project, answer)
+    } finally {
+      slot.release()
+    }
+  }
+
+  async function matchProject(procore: ProcoreClient, source: HistorySource, company: string, project: string, answer: (m: ProjectMatch) => void) {
+    let projectNumber: string
+    try {
+      const found = await procore.get<{ project_number?: string | null }>(`/rest/v1.0/projects/${project}`, { company_id: company, view: 'minimal' })
+      projectNumber = (found.project_number ?? '').trim()
+    } catch (err) {
+      if (!(err instanceof ProcoreError)) throw err
+      log('procore.project.failed', { error: err.message })
+      return answer({ code: null, reason: 'procore-error' })
+    }
+    if (!projectNumber) return answer({ code: null, reason: 'not-found' })
+    let options: PlannerOptions
+    try {
+      options = await source.options()
+    } catch (err) {
+      log('procore.project.error', { error: (err as Error).message })
+      throw new HttpError(502, 'Could not read the project list.')
+    }
+    const listed = (options.projects ?? []).find((p) => p.code === projectNumber)
+    return answer(listed ? { code: listed.code } : { code: null, reason: 'not-listed' })
+  }
+
   const routes: Record<string, { method: string; handle: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void }> = {
     '/api/health': { method: 'GET', handle: (_req, res) => json(res, 200, { ok: true }) },
     '/api/planner/options': { method: 'GET', handle: options },
@@ -379,6 +433,7 @@ export function createApp(deps: AppDeps): Server {
     '/api/planner/draft-batch': { method: 'POST', handle: draftBatch },
     '/api/planner/import': { method: 'POST', handle: importPlan },
     '/api/procore/committed': { method: 'POST', handle: procoreCommitted },
+    '/api/procore/project': { method: 'GET', handle: procoreProject },
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse) {
