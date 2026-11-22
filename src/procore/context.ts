@@ -41,7 +41,8 @@ function originOf(url: string): string {
  */
 export function listenForProcoreContext(win: Window, referrer: string, onContext: (c: ProcoreContext) => void): () => void {
   const onMessage = (event: MessageEvent) => {
-    if (!isProcoreOrigin(event.origin)) return
+    // Only Procore, and only the window that framed this page.
+    if (!isProcoreOrigin(event.origin) || event.source !== win.parent) return
     const data = event.data as { type?: unknown; context?: { company_id?: unknown; project_id?: unknown } } | null
     if (!data || typeof data !== 'object' || data.type !== 'setup' || !data.context) return
     const companyId = asId(data.context.company_id)

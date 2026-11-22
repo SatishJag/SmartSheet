@@ -1487,6 +1487,7 @@ describe('PlannerWizard: All (full project plan)', () => {
     const sheet = (await client.from('sheets').select('name,calendar')).data![0] as { name: string; calendar: { workingWeekdays: number[] } }
     expect(sheet.name).toBe('Full plan – Bangkok 3')
     expect(sheet.calendar.workingWeekdays).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(onCreated).toHaveBeenCalledWith(expect.any(String), 'Full plan – Bangkok 3')
     expect((await client.from('rows').select('id')).data).toHaveLength(199)
   })
 })
@@ -1718,5 +1719,86 @@ describe('PlannerWizard: embedded in Procore', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(screen.getByLabelText('Project')).toHaveValue('')
     expect(screen.getByLabelText('Project type')).toHaveValue('data-centre')
+  })
+})
+
+describe('PlannerWizard: embedded review fixes', () => {
+  const OPTS: PlannerOptions = {
+    projectTypes: [
+      { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+      { id: 'properties', name: 'Properties', description: 'Buildings' },
+    ],
+    scheduleTypes: [
+      { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] },
+      { id: 'other-equipment-procurement', name: 'Other equipment procurement', description: 'Other', projectTypes: ['data-centre'] },
+      { id: 'property-development', name: 'Property development master schedule', description: 'Property', projectTypes: ['properties'] },
+    ],
+    equipmentTypes: { 'lle-procurement': ['Power transformer'], 'other-equipment-procurement': [], 'property-development': [] },
+    projects: [
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+      { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+    ],
+  }
+  function renderEmbedded() {
+    const { client, userId } = fakeClient()
+    const props = { client, userId, onClose: vi.fn(), onCreated: vi.fn(), today: TODAY, embedded: true }
+    const view = render(<PlannerWizard {...props} />)
+    return { ...view, props, user: userEvent.setup() }
+  }
+
+  it('keeps a schedule type or project type the planner changed before the match arrived', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    const { rerender, props, user } = renderEmbedded()
+    await user.selectOptions(await screen.findByLabelText('Schedule type'), 'other-equipment-procurement')
+    rerender(<PlannerWizard {...props} initialProject="BKK-03" />)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.getByLabelText('Schedule type')).toHaveValue('other-equipment-procurement')
+    expect(screen.getByLabelText('Project')).toHaveValue('BKK-03')
+
+    await user.selectOptions(screen.getByLabelText('Project type'), 'properties')
+    rerender(<PlannerWizard {...props} initialProject="BKK-03" />)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.getByLabelText('Project type')).toHaveValue('properties')
+  })
+
+  it('drops a project it chose itself when the page has no project any more', async () => {
+    mockServer({ options: () => json(200, OPTS) })
+    const { rerender, props } = renderEmbedded()
+    rerender(<PlannerWizard {...props} initialProject="BKK-03" />)
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue('BKK-03'))
+    rerender(<PlannerWizard {...props} initialProject={undefined} />)
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue(''))
+  })
+})
+
+describe('PlannerWizard: embedded, project kept after the request (Devin review)', () => {
+  const OPTS: PlannerOptions = {
+    projectTypes: [{ id: 'data-centre', name: 'Data centre', description: 'Halls' }],
+    scheduleTypes: [
+      { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'], itemLabels: { noun: 'plan', typeExample: 'Data centre', nameExample: 'Bangkok 3', heading: 'Which data centre are you planning?', intro: 'Choose the project and its Ready for Service date.', dateLabel: 'RFS date' } },
+    ],
+    equipmentTypes: { 'dc-master': [] },
+    projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
+  }
+
+  it('does not drop the matched project once the plan is in preview', async () => {
+    mockServer({ options: () => json(200, OPTS), draft: (r) => json(200, { ok: true, draft: buildDcMasterDraft({ request: r, catalog: dcMasterCatalog(), histories: {} }) }) })
+    const { client, userId } = fakeClient()
+    const onCreated = vi.fn()
+    const props = { client, userId, onClose: vi.fn(), onCreated, today: TODAY, embedded: true }
+    const { rerender } = render(<PlannerWizard {...props} initialProject="BKK-03" />)
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue('BKK-03'))
+    await user.type(screen.getByLabelText('RFS date'), '2030-06-28')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    // Procore moves the panel to a project with no match while the plan is being reviewed.
+    rerender(<PlannerWizard {...props} initialProject={undefined} />)
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const columns = (await client.from('columns').select('id,title')).data as { id: string; title: string }[]
+    const projectCol = columns.find((c) => c.title === 'Project')!.id
+    const rows = (await client.from('rows').select('cells')).data as { cells: Record<string, unknown> }[]
+    expect(rows.every((r) => r.cells[projectCol] === 'BKK-03 — Bangkok 3')).toBe(true)
   })
 })

@@ -385,8 +385,10 @@ export function createApp(deps: AppDeps): Server {
     const company = query.get('company') ?? ''
     const project = query.get('project') ?? ''
     if (!/^\d{1,20}$/.test(company) || !/^\d{1,20}$/.test(project)) throw new HttpError(400, 'Send the Procore company and project ids.')
-    const answer = (match: ProjectMatch) => {
-      log('procore.project', { matched: match.code !== null, reason: match.reason ?? null })
+    // Why there is no match stays in the log: callers get one reason, so they cannot probe which Procore
+    // project ids exist in our company.
+    const answer = (match: ProjectMatch, detail?: string) => {
+      log('procore.project', { matched: match.code !== null, reason: detail ?? match.reason ?? null })
       json(res, 200, match)
     }
     const procore = deps.procore
@@ -404,17 +406,18 @@ export function createApp(deps: AppDeps): Server {
     }
   }
 
-  async function matchProject(procore: ProcoreClient, source: HistorySource, company: string, project: string, answer: (m: ProjectMatch) => void) {
+  async function matchProject(procore: ProcoreClient, source: HistorySource, company: string, project: string, answer: (m: ProjectMatch, detail?: string) => void) {
     let projectNumber: string
     try {
-      const found = await procore.get<{ project_number?: string | null }>(`/rest/v1.0/projects/${project}`, { company_id: company, view: 'minimal' })
-      projectNumber = (found.project_number ?? '').trim()
+      const found = await procore.get<{ project_number?: string | number | null }>(`/rest/v1.0/projects/${project}`, { company_id: company, view: 'minimal' })
+      // Procore documents a string; tolerate a number.
+      projectNumber = String(found.project_number ?? '').trim()
     } catch (err) {
       if (!(err instanceof ProcoreError)) throw err
       log('procore.project.failed', { error: err.message })
-      return answer({ code: null, reason: 'procore-error' })
+      return answer({ code: null, reason: 'no-match' }, 'procore-error')
     }
-    if (!projectNumber) return answer({ code: null, reason: 'not-found' })
+    if (!projectNumber) return answer({ code: null, reason: 'no-match' }, 'no-project-number')
     let options: PlannerOptions
     try {
       options = await source.options()
@@ -423,7 +426,7 @@ export function createApp(deps: AppDeps): Server {
       throw new HttpError(502, 'Could not read the project list.')
     }
     const listed = (options.projects ?? []).find((p) => p.code === projectNumber)
-    return answer(listed ? { code: listed.code } : { code: null, reason: 'not-listed' })
+    return answer(listed ? { code: listed.code } : { code: null, reason: 'no-match' }, listed ? undefined : 'not-listed')
   }
 
   const routes: Record<string, { method: string; handle: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void }> = {

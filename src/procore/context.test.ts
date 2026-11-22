@@ -24,7 +24,7 @@ function fakeWindow() {
     addEventListener: vi.fn((type: string, fn: (e: MessageEvent) => void) => type === 'message' && listeners.add(fn)),
     removeEventListener: vi.fn((type: string, fn: (e: MessageEvent) => void) => type === 'message' && listeners.delete(fn)),
   }
-  const send = (origin: string, data: unknown) => listeners.forEach((fn) => fn({ origin, data } as MessageEvent))
+  const send = (origin: string, data: unknown, source: unknown = parent) => listeners.forEach((fn) => fn({ origin, data, source } as unknown as MessageEvent))
   return { win: win as unknown as Window, parent, send, listeners }
 }
 
@@ -63,5 +63,15 @@ describe('listenForProcoreContext', () => {
     expect(onContext).not.toHaveBeenCalled()
     stop()
     expect(listeners.size).toBe(0)
+  })
+})
+
+describe('listenForProcoreContext: only the window that framed the page (review fix)', () => {
+  it('ignores a Procore-origin message from any window other than the parent', () => {
+    const { win, send } = fakeWindow()
+    const onContext = vi.fn()
+    listenForProcoreContext(win, 'https://app.procore.com/', onContext)
+    send('https://app.procore.com', { type: 'setup', context: { company_id: 42, project_id: 7 } }, { postMessage: vi.fn() })
+    expect(onContext).not.toHaveBeenCalled()
   })
 })

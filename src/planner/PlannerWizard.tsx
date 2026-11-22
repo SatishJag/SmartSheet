@@ -40,7 +40,7 @@ import {
 } from './plannerItems'
 import { codeForType, costCodeOption, optionForCode } from './costCodes'
 import { DATA_CENTRE, defaultDeliverySite, optionForProject, projectOption, projectsFor, siteProjects } from './projects'
-import { insertSheetFromDrafts } from './sheetFromDraft'
+import { insertSheetFromDrafts, sheetNameForDrafts } from './sheetFromDraft'
 import { NO_ITEM_TYPES, planCalendar, withFullPlanFirst } from './fullPlan'
 import {
   DEFAULT_ITEM_LABELS,
@@ -61,8 +61,8 @@ const FOCUSABLE =
 export interface PlannerWizardProps {
   client: SupabaseClient
   userId: string
-  /** Called with the new sheet's id once the approved plan is saved. */
-  onCreated: (sheetId: string) => void
+  /** Called with the new sheet's id (and its name) once the approved plan is saved. */
+  onCreated: (sheetId: string, sheetName?: string) => void
   onClose: () => void
   /** Today's date (YYYY-MM-DD); defaults to the browser's. */
   today?: string
@@ -314,18 +314,35 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   // The project the page was opened on (Procore): chosen once per code, with its project type, unless the
   // planner has already chosen a project.
   const appliedInitial = useRef<{ code: string; applied: string } | null>(null)
+  // Set when the planner changes the project type or schedule type: a late match must not undo it.
+  const typesTouched = useRef(false)
   useEffect(() => {
-    if (!options || !initialProject || appliedInitial.current?.code === initialProject) return
+    // Only while the request is being filled in: a plan in preview or being saved keeps the project it was
+    // drafted for, whatever Procore says later.
+    if (!options || step !== 'request') return
+    if (!initialProject) {
+      // The page lost its project (a later Procore context with no match): drop the one we chose, if it is still ours.
+      const applied = appliedInitial.current?.applied
+      if (applied && project === applied) setProject('')
+      appliedInitial.current = null
+      return
+    }
+    if (appliedInitial.current?.code === initialProject) return
     const previous = appliedInitial.current?.applied ?? ''
     appliedInitial.current = { code: initialProject, applied: previous }
     if (project && project !== previous) return
     const found = options.projects?.find((p) => p.code === initialProject)
     if (!found) return
+    if (typesTouched.current) {
+      // Keep the planner's types; choose the project only where it belongs to the project type on screen.
+      if (found.projectType !== projectType) return
+    } else {
+      setProjectType(found.projectType)
+      setScheduleType(schedulesFor(options, found.projectType)[0]?.id ?? '')
+    }
     appliedInitial.current = { code: initialProject, applied: found.code }
-    setProjectType(found.projectType)
-    setScheduleType(schedulesFor(options, found.projectType)[0]?.id ?? '')
     setProject(found.code)
-  }, [options, initialProject, project])
+  }, [options, initialProject, project, projectType, step])
 
   // Each item's delivery site follows the plan's project when that is a site, until the user picks or clears one.
   useEffect(() => {
@@ -506,7 +523,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
           : undefined
       const sheetCalendar = planCalendar(savedType, calendar)
       const sheetId = await insertSheetFromDrafts(client, drafts, userId, sheetCalendar, { today, costCodes: sheetCostCodes, project: projectColumn, deliverySites })
-      if (mounted.current) onCreated(sheetId)
+      if (mounted.current) onCreated(sheetId, sheetNameForDrafts(drafts))
     } catch (err) {
       if (!mounted.current) return
       setFailure({ message: `Could not create the schedule: ${describe(err, 'unknown error')}`, retry: () => void create() })
@@ -840,7 +857,14 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                         <label htmlFor={ids.project} className="planner-label">
                           Project type
                         </label>
-                        <select id={ids.project} value={projectType} onChange={(e) => chooseProjectType(e.target.value)}>
+                        <select
+                          id={ids.project}
+                          value={projectType}
+                          onChange={(e) => {
+                            typesTouched.current = true
+                            chooseProjectType(e.target.value)
+                          }}
+                        >
                           {options.projectTypes.map((t) => (
                             <option key={t.id} value={t.id} title={t.description}>
                               {t.name}
@@ -855,7 +879,14 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                         <label htmlFor={ids.type} className="planner-label">
                           Schedule type
                         </label>
-                        <select id={ids.type} value={scheduleType} onChange={(e) => setScheduleType(e.target.value)}>
+                        <select
+                          id={ids.type}
+                          value={scheduleType}
+                          onChange={(e) => {
+                            typesTouched.current = true
+                            setScheduleType(e.target.value)
+                          }}
+                        >
                           {visibleSchedules.map((t) => (
                             <option key={t.id} value={t.id} title={t.description}>
                               {t.name}

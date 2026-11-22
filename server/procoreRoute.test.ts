@@ -217,12 +217,12 @@ describe('GET /api/procore/project', () => {
 
   it('says when Procore has no project number', async () => {
     const base = await start({ procore: withProject(null) })
-    expect(await (await get(base, '?company=42&project=7')).json()).toEqual({ code: null, reason: 'not-found' })
+    expect(await (await get(base, '?company=42&project=7')).json()).toEqual({ code: null, reason: 'no-match' })
   })
 
   it('does not match a project the caller cannot read', async () => {
     const base = await start({ procore: withProject('XYZ-99') })
-    expect(await (await get(base, '?company=42&project=7')).json()).toEqual({ code: null, reason: 'not-listed' })
+    expect(await (await get(base, '?company=42&project=7')).json()).toEqual({ code: null, reason: 'no-match' })
   })
 
   it('answers procore-error when Procore fails', async () => {
@@ -233,7 +233,7 @@ describe('GET /api/procore/project', () => {
     })
     const res = await get(base, '?company=42&project=7')
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ code: null, reason: 'procore-error' })
+    expect(await res.json()).toEqual({ code: null, reason: 'no-match' })
   })
 })
 
@@ -248,5 +248,14 @@ describe('GET /api/procore/project: limits (review)', () => {
     expect(res.status).toBe(429)
     expect(res.headers.get('Retry-After')).toMatch(/^\d+$/)
     expect(get).toHaveBeenCalledTimes(60)
+  })
+})
+
+describe('GET /api/procore/project: review fixes', () => {
+  it('matches a project number Procore sends as a number', async () => {
+    const procore = { companyId: '42', getAll: vi.fn(), get: vi.fn(async () => ({ id: 7, project_number: 1234 })) } as unknown as ProcoreClient
+    const base = await start({ procore }, async () => ({ ...OPTIONS, projects: [{ code: '1234', name: 'Numbered', isProgram: false, projectType: 'data-centre', inProcore: true }] }))
+    const res = await fetch(`${base}/api/procore/project?company=42&project=7`, { headers: { Authorization: 'Bearer good-token' } })
+    expect(await res.json()).toEqual({ code: '1234' })
   })
 })

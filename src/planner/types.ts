@@ -341,5 +341,6 @@ export interface CommittedResponse {
  */
 export interface ProjectMatch {
   code: string | null
-  reason?: 'not-configured' | 'other-company' | 'not-found' | 'not-listed' | 'procore-error'
+  /** no-match covers every other case (no project number, not in our list, Procore failed); the server log says which. */
+  reason?: 'not-configured' | 'other-company' | 'no-match'
 }
