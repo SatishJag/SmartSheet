@@ -1,4 +1,7 @@
 /** Builds a PlanDraft for a request: history, then the AI, then the history-only fallback. */
+import { DC_MASTER_TYPE } from '../src/planner/catalogs/dcMaster'
+import { DC_PACKAGES, HISTORY_SCHEDULE_TYPE } from '../src/planner/catalogs/dcPackages'
+import { buildDcMasterDraft } from '../src/planner/dcMasterDraft'
 import { buildHistoryDraft } from '../src/planner/historyDraft'
 import type { CatalogActivity, HistorySource, HistorySummary, PlanDraft, PlanRequest } from '../src/planner/types'
 import { draftWithAi, type AiOutcome, type AnthropicLike } from './ai'
@@ -62,6 +65,25 @@ export async function selectHistory(source: HistorySource, request: PlanRequest)
   return { history, notes }
 }
 
+/**
+ * The Data centre master (docs/superpowers/specs/2026-11-22-full-plan-design.md): the template plus each
+ * package's long-lead history, without the AI. A package whose history cannot be read keeps the template.
+ */
+async function dcMasterDraft(source: HistorySource, request: PlanRequest, catalog: CatalogActivity[], config: PlannerConfig): Promise<PlanDraft> {
+  const types = Object.values(DC_PACKAGES).flatMap((p) => (p.equipmentType ? [p.equipmentType] : []))
+  const results = await Promise.allSettled(types.map((t) => source.summary(HISTORY_SCHEDULE_TYPE, t)))
+  const histories: Record<string, HistorySummary> = {}
+  const unreadable: string[] = []
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') histories[types[i]] = r.value
+    else {
+      unreadable.push(types[i])
+      config.log('planner.dc-master.history-error', { equipmentType: types[i], error: (r.reason as Error)?.message })
+    }
+  })
+  return withCatalogDetails(buildDcMasterDraft({ request, catalog, histories, unreadable }), catalog)
+}
+
 export async function createDraft(source: HistorySource, request: PlanRequest, config: PlannerConfig): Promise<PlanDraft> {
   const options = await source.options()
   const scheduleType = options.scheduleTypes.find((t) => t.id === request.scheduleType)
@@ -69,6 +91,7 @@ export async function createDraft(source: HistorySource, request: PlanRequest, c
 
   const catalog = await source.catalog(request.scheduleType)
   if (catalog.length === 0) throw new PlannerError(422, 'This schedule type has no activity catalog yet.')
+  if (request.scheduleType === DC_MASTER_TYPE.id) return dcMasterDraft(source, request, catalog, config)
   const { history, notes } = await selectHistory(source, request)
 
   const historyOnly = (why: string) => withCatalogDetails(buildHistoryDraft({ request, catalog, history, assumptions: [why, ...notes] }), catalog)

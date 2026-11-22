@@ -1,7 +1,9 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { dcMasterCatalog } from '../src/planner/catalogs/dcMasterCatalog'
 import { CATALOG, HISTORY, REQUEST } from '../src/planner/__fixtures__/lle'
 import type { HistorySource, HistorySummary } from '../src/planner/types'
+import type { AnthropicLike } from './ai'
 import { silentLogger } from './log'
 import { createDraft, selectHistory } from './planner'
 
@@ -43,5 +45,55 @@ describe('createDraft', () => {
     expect(draft.source).toBe('history')
     expect(draft.activities.every((a) => a.basis === 'default')).toBe(true)
     expect(draft.activities.find((a) => a.code === 'FAB')?.durationDays).toBe(120)
+  })
+})
+
+describe('createDraft: Data centre master', () => {
+  const DC_REQUEST = { scheduleType: 'dc-master', equipmentType: 'Data centre', equipmentName: 'Bangkok 3', requiredDate: '2029-06-30' }
+  const real = (equipmentType: string): HistorySummary => ({
+    scheduleType: 'lle-procurement',
+    equipmentType,
+    projectCount: 9,
+    sampleOnly: false,
+    stats: ['SPEC', 'RFQ', 'BIDEVAL', 'AWARD', 'DWGSUB', 'DWGAPP', 'MFG', 'FAT', 'RELEASE', 'SHIP', 'CUSTOMS', 'DELIVER'].map((code) => ({ code, n: 9, p50: 5, p80: 8, min: 3, max: 9 })),
+  })
+
+  function dcSource(summary: HistorySource['summary']) {
+    const s: HistorySource = {
+      options: async () => ({ scheduleTypes: [{ id: 'dc-master', name: 'Data centre master schedule', description: '' }], equipmentTypes: {} }),
+      catalog: vi.fn(async () => dcMasterCatalog()),
+      summary: vi.fn(summary),
+    }
+    return s
+  }
+
+  const throwingAi = () => {
+    const create = vi.fn(async () => {
+      throw new Error('the AI must not be called')
+    })
+    return { client: { beta: { messages: { create } } } as unknown as AnthropicLike, create }
+  }
+
+  it('builds the Data centre master without the AI', async () => {
+    const ai = throwingAi()
+    const source = dcSource(async (_t, eq) => real(eq ?? 'all'))
+    const draft = await createDraft(source, DC_REQUEST, { anthropic: ai.client, model: 'm', aiTimeoutMs: 1000, aiDeadlineMs: 1000, log: silentLogger })
+    expect(draft.activities).toHaveLength(199)
+    expect(draft.source).toBe('history')
+    expect(ai.create).not.toHaveBeenCalled()
+    expect(vi.mocked(source.summary).mock.calls.map((c) => c.join('|')).sort()).toEqual(
+      ['lle-procurement|Chiller', 'lle-procurement|Diesel generator', 'lle-procurement|HV switchgear', 'lle-procurement|Power transformer'],
+    )
+    expect(draft.activities.find((a) => a.code === 'DC_0001')).toMatchObject({ activityId: 'DC-0001' })
+  })
+
+  it('keeps going when a package’s history cannot be read', async () => {
+    const source = dcSource(async (_t, eq) => {
+      if (eq === 'Chiller') throw new Error('rpc failed')
+      return real(eq ?? 'all')
+    })
+    const draft = await createDraft(source, DC_REQUEST, { anthropic: null, model: 'm', aiTimeoutMs: 1000, aiDeadlineMs: 1000, log: silentLogger })
+    expect(draft.activities).toHaveLength(199)
+    expect(draft.assumptions).toContain('Chillers: template durations; the history for Chiller could not be read.')
   })
 })
