@@ -1588,3 +1588,31 @@ describe('PlannerWizard: import templates (PR review)', () => {
     expect(values).toContain('lle-procurement')
   })
 })
+
+describe('PlannerWizard: Data centre All wording', () => {
+  const OPTS: PlannerOptions = {
+    projectTypes: [{ id: 'data-centre', name: 'Data centre', description: 'Halls' }],
+    scheduleTypes: [
+      { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'], itemLabels: { noun: 'plan', typeExample: 'Data centre', nameExample: 'Bangkok 3', heading: 'Which data centre are you planning?', intro: 'Choose the project and its Ready for Service date.', dateLabel: 'RFS date' } },
+    ],
+    equipmentTypes: { 'dc-master': [] },
+    projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
+  }
+
+  it('says days, the RFS date and the template, and shows the intro once', async () => {
+    mockServer({ options: () => json(200, OPTS), draft: (r) => json(200, { ok: true, draft: buildDcMasterDraft({ request: r, catalog: dcMasterCatalog(), histories: {} }) }) })
+    const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    expect(screen.getAllByText('Choose the project and its Ready for Service date.')).toHaveLength(1)
+    await user.type(screen.getByLabelText('RFS date'), '2028-01-31')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent(/^Late by \d+ days/)
+    expect(alert).toHaveTextContent(/the RFS date is at risk/)
+    expect(alert).not.toHaveTextContent(/working day|on-site/)
+    expect(screen.getByText(/bars show duration in days/)).toBeInTheDocument()
+    expect(screen.getByText('Review the plan built from the Data centre master template, then create the schedule.')).toBeInTheDocument()
+    expect(screen.queryByText(/Review the AI's first cut/)).not.toBeInTheDocument()
+  })
+})

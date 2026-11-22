@@ -908,7 +908,6 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                           onChange={(e) => setFullPlanDate(e.target.value)}
                           aria-invalid={submitted && !projectProblem && fullPlanDateProblem ? true : undefined}
                         />
-                        <small>{labels.intro}</small>
                       </div>
                     </section>
                   )}

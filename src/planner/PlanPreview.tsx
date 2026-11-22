@@ -50,7 +50,7 @@ export function ItemPreview({ entry, showSampleWarning, noun = 'equipment', seve
         </span>
         <div className="planner-feasibility-body">
           <p className="planner-feasibility-title">
-            {feasibility.feasible ? 'On time' : `Late by ${plural(feasibility.lateByWorkingDays, 'working day')}`}
+            {feasibility.feasible ? 'On time' : `Late by ${plural(feasibility.lateByWorkingDays, sevenDayWeek ? 'day' : 'working day')}`}
           </p>
           <p>{feasibility.message}</p>
           <p className="planner-feasibility-dates">
@@ -95,7 +95,7 @@ export function ItemPreview({ entry, showSampleWarning, noun = 'equipment', seve
           Activities ({plan.activities.length})
         </p>
         <p className="planner-table-meta">
-          {critical > 0 ? `${critical} on the critical path · ` : ''}bars show duration in working days
+          {critical > 0 ? `${critical} on the critical path · ` : ''}bars show duration in {sevenDayWeek ? 'days' : 'working days'}
         </p>
       </div>
       <div className="planner-table-wrap" tabIndex={0} role="region" aria-label={`Activities of ${entryTitle(entry)}, scrollable`}>
@@ -232,7 +232,11 @@ export function PlanPreview(props: PlanPreviewProps) {
           <h3 ref={headingRef} tabIndex={-1}>
             {heading}
           </h3>
-          <p>Review the AI's first cut, adjust it with an instruction if needed, then create the schedule.</p>
+          <p>
+            {!many && entries[0].request.scheduleType === 'dc-master'
+              ? 'Review the plan built from the Data centre master template, then create the schedule.'
+              : "Review the AI's first cut, adjust it with an instruction if needed, then create the schedule."}
+          </p>
         </div>
 
         {many && (

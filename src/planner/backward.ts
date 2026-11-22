@@ -214,13 +214,19 @@ export function planBackward(draft: PlanDraft, cal: Calendar, today: string): Ba
     projectEnd,
     criticalLinks: critical.criticalDeps,
     links,
-    feasibility: assessFeasibility(cal, today, mustStartBy, targetFinish),
+    // The Data centre master is planned back from its Ready for Service date.
+    feasibility: assessFeasibility(cal, today, mustStartBy, targetFinish, draft.request.scheduleType === 'dc-master' ? 'the RFS date' : undefined),
     iterations,
   }
 }
 
-/** Compares the day work must start with the first day it can start (today, or the next working day). */
-export function assessFeasibility(cal: Calendar, today: string, mustStartBy: string, targetFinish: string): Feasibility {
+/**
+ * Compares the day work must start with the first day it can start (today, or the next working day).
+ * `dateName` is the date at risk in the message ("the on-site date", "the RFS date"); on a 7-day week the
+ * message counts plain days.
+ */
+export function assessFeasibility(cal: Calendar, today: string, mustStartBy: string, targetFinish: string, dateName = 'the on-site date'): Feasibility {
+  const unit = cal.workingWeekdays.length === 7 ? 'day' : 'working day'
   const firstPossible = nextWorkingDay(cal, today)
   const diff = workingDaysFrom(cal, mustStartBy, firstPossible)
   if (diff > 0) {
@@ -231,14 +237,14 @@ export function assessFeasibility(cal: Calendar, today: string, mustStartBy: str
       spareWorkingDays: 0,
       earliestTargetFinish,
       message:
-        `This plan should have started ${plural(diff, 'working day')} ago; the on-site date is at risk. ` +
+        `This plan should have started ${plural(diff, unit)} ago; ${dateName} is at risk. ` +
         `Starting now, the earliest finish is ${earliestTargetFinish}.`,
     }
   }
   const spare = workingDaysFrom(cal, firstPossible, mustStartBy)
   const message =
     spare === 0
-      ? `Work must start ${firstPossible === today ? 'today' : `on ${firstPossible}`} to meet the on-site date; there is no spare time.`
-      : `Work must start by ${mustStartBy}: ${plural(spare, 'working day')} from now.`
+      ? `Work must start ${firstPossible === today ? 'today' : `on ${firstPossible}`} to meet ${dateName}; there is no spare time.`
+      : `Work must start by ${mustStartBy}: ${plural(spare, unit)} from now.`
   return { feasible: true, lateByWorkingDays: 0, spareWorkingDays: spare, earliestTargetFinish: null, message }
 }
