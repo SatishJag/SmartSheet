@@ -41,6 +41,7 @@ import {
 import { codeForType, costCodeOption, optionForCode } from './costCodes'
 import { DATA_CENTRE, defaultDeliverySite, optionForProject, projectOption, projectsFor, siteProjects } from './projects'
 import { insertSheetFromDrafts } from './sheetFromDraft'
+import { NO_ITEM_TYPES, planCalendar, withFullPlanFirst } from './fullPlan'
 import {
   DEFAULT_ITEM_LABELS,
   type CostCode,
@@ -82,11 +83,14 @@ interface Failure {
   retryForm?: boolean
 }
 
-/** The schedule types offered under a project type: those that list it, or list none. */
+/** The schedule types offered under a project type (those that list it, or list none), the full plan first as All. */
 function schedulesFor(options: PlannerOptions, projectType: string) {
-  if (!projectType) return options.scheduleTypes
-  return options.scheduleTypes.filter((t) => !t.projectTypes?.length || t.projectTypes.includes(projectType))
+  if (!projectType) return withFullPlanFirst(options.scheduleTypes)
+  return withFullPlanFirst(options.scheduleTypes.filter((t) => !t.projectTypes?.length || t.projectTypes.includes(projectType)))
 }
+
+/** The one item of a full plan without items (the Data centre master). */
+const FULL_PLAN_KEY = 'full-plan'
 
 const Cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
@@ -166,6 +170,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     title: useId(),
     type: useId(),
     sharedDate: useId(),
+    fullPlanDate: useId(),
     notes: useId(),
     project: useId(),
     chosenProject: useId(),
@@ -195,6 +200,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   /** The project the plan belongs to (a code), or '' while none is chosen. Kept while it stays listed. */
   const [project, setProject] = useState('')
   const [items, setItems] = useState<ItemForm[]>(() => [newItem('')])
+  /** The target date of a full plan without items (the Data centre master's RFS date). */
+  const [fullPlanDate, setFullPlanDate] = useState('')
   const [sameDate, setSameDate] = useState(true)
   const [sharedDate, setSharedDate] = useState('')
   const [notes, setNotes] = useState('')
@@ -365,7 +372,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
         const request = planRequestOf(next, item)
         const draft = await requestDraft(token, request, { signal })
         if (!mounted.current || signal.aborted) return
-        drafted = [readyEntry(item.key, request, draft, calendar, today)]
+        drafted = [readyEntry(item.key, request, draft, planCalendar(next.scheduleType, calendar), today)]
       } else {
         const results = await requestBatch(token, batchRequestOf(next), { signal })
         if (!mounted.current || signal.aborted) return
@@ -374,7 +381,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
           const request = planRequestOf(next, item)
           if (!result.ok) return { key: item.key, status: 'failed', request, error: result.error }
           try {
-            return readyEntry(item.key, request, result.draft, calendar, today)
+            return readyEntry(item.key, request, result.draft, planCalendar(next.scheduleType, calendar), today)
           } catch (err) {
             return { key: item.key, status: 'failed', request, error: describe(err, 'The draft could not be scheduled') }
           }
@@ -412,7 +419,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     try {
       const draft = await requestDraft(await getAccessToken(client), request, { signal: controller.signal })
       if (!mounted.current || controller.signal.aborted) return
-      const entry = readyEntry(key, request, draft, calendar, today)
+      const entry = readyEntry(key, request, draft, planCalendar(nextJob.scheduleType, calendar), today)
       setJob((j) => (j ? { ...j, items: j.items.map((i) => (i.key === key ? changed : i)) } : j))
       update(() => entry)
     } catch (err) {
@@ -453,14 +460,19 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
           : undefined
       const projectColumn =
         listed.length > 0 ? { options: listed.map(projectOption), value: optionForProject(listed, project) } : undefined
+      const fullPlan = NO_ITEM_TYPES.includes(job?.scheduleType ?? '')
       const deliverySites =
         sites.length > 0 && !imported
           ? {
               options: sites.map(projectOption),
-              values: entries.map((e) => optionForProject(sites, items.find((i) => i.key === e.key)?.deliverySite ?? '')),
+              // A full plan's package rows go to the plan's project when it is a site.
+              values: entries.map((e) =>
+                optionForProject(sites, fullPlan ? defaultDeliverySite(sites, project) : (items.find((i) => i.key === e.key)?.deliverySite ?? '')),
+              ),
             }
           : undefined
-      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today, costCodes: sheetCostCodes, project: projectColumn, deliverySites })
+      const sheetCalendar = planCalendar(job?.scheduleType ?? '', calendar)
+      const sheetId = await insertSheetFromDrafts(client, drafts, userId, sheetCalendar, { today, costCodes: sheetCostCodes, project: projectColumn, deliverySites })
       if (mounted.current) onCreated(sheetId)
     } catch (err) {
       if (!mounted.current) return
@@ -600,7 +612,14 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
 
   const form: FormValues = { scheduleType, items, sameDate, sharedDate, notes }
   const errors = validateItems(form, noun)
-  const problem = projectProblem ?? firstProblem(form, errors)
+  // A full plan without items (the Data centre master) needs only the project and its date.
+  const noItems = NO_ITEM_TYPES.includes(scheduleType)
+  const fullPlanDateProblem = !fullPlanDate
+    ? `Enter the ${labels.dateLabel ?? 'date'}`
+    : fullPlanDate < MIN_DATE || fullPlanDate > MAX_DATE
+      ? `The ${labels.dateLabel ?? 'date'} must be between ${MIN_DATE} and ${MAX_DATE}`
+      : null
+  const problem = projectProblem ?? (noItems ? fullPlanDateProblem : firstProblem(form, errors))
   const many = items.length > 1
   const canAdd = items.length < MAX_ITEMS
   const roomForCard = canAdd || items.some(isPristine)
@@ -614,6 +633,12 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   function sendForm() {
     setSubmitted(true)
     if (problem) return
+    if (noItems) {
+      // One whole-project plan, named after the project; no AI, so no notes.
+      const name = listed.find((p) => p.code === project)?.name ?? projectTypeName ?? 'Data centre'
+      void generate({ scheduleType, items: [{ key: FULL_PLAN_KEY, equipmentType: projectTypeName ?? 'Data centre', equipmentName: name, requiredDate: fullPlanDate }] }, 'request')
+      return
+    }
     // The AI is told what kind of project this is, so a data centre and a building are not planned alike.
     const context = projectTypeName ? `Project type: ${projectTypeName}.` : ''
     void generate(jobFromForm(context ? { ...form, notes: appendNote(notes, context) ?? context } : form), 'request')
@@ -864,6 +889,26 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                     )}
                   </section>
 
+                  {noItems && (
+                    <section className="planner-card card" aria-label="Full plan">
+                      <div className="planner-field">
+                        <label htmlFor={ids.fullPlanDate} className="planner-label">
+                          {labels.dateLabel ?? 'Required on site'}
+                        </label>
+                        <input
+                          id={ids.fullPlanDate}
+                          type="date"
+                          min={MIN_DATE}
+                          max={MAX_DATE}
+                          value={fullPlanDate}
+                          onChange={(e) => setFullPlanDate(e.target.value)}
+                          aria-invalid={submitted && !projectProblem && fullPlanDateProblem ? true : undefined}
+                        />
+                        <small>{labels.intro}</small>
+                      </div>
+                    </section>
+                  )}
+                  {!noItems && (
                   <section className="planner-card card" aria-label="Items to plan">
                     <div className="planner-items-head">
                       <h4>
@@ -926,6 +971,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                     </div>
                   </section>
 
+                  )}
+                  {!noItems && (
                   <section className="planner-card card" aria-label="Notes">
                     <div className="planner-field">
                       <label htmlFor={ids.notes} className="planner-label">
@@ -940,6 +987,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                       />
                     </div>
                   </section>
+                  )}
                   <p className="planner-footnote">
                     <PIcon name="info" size={15} />
                     Durations come from your completed projects. Without history, the planner uses the schedule type's catalog or clearly marked sample data.
@@ -1169,7 +1217,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               setFailure(null)
               setStep(imported ? 'imported' : 'request')
             }}
-            allowRegenerate={!imported}
+            allowRegenerate={!imported && !NO_ITEM_TYPES.includes(job?.scheduleType ?? '')}
             onRegenerateAll={regenerateAll}
             onRegenerateOne={(key, extra) => void regenerateOne(key, extra)}
             onRemove={removeEntry}

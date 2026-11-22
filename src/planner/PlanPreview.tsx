@@ -143,7 +143,9 @@ export function ItemPreview({ entry, showSampleWarning, noun = 'equipment' }: { 
           </tbody>
         </table>
       </div>
-      <p className="planner-hint">Dates use a Monday to Friday working week; you can change the calendar in the sheet's schedule settings.</p>
+      <p className="planner-hint">
+        Dates use a {entry.request.scheduleType === 'dc-master' ? '7-day' : 'Monday to Friday'} working week; you can change the calendar in the sheet's schedule settings.
+      </p>
 
       {(draft.assumptions.length > 0 || draft.risks.length > 0) && (
         <div className="planner-lists">
