@@ -87,6 +87,8 @@ export interface SyncSummary {
   shared: { project: string; costCode: string; items: number }[]
   /** Rows the sheet refused to write (e.g. locked by an automation); their items are not counted as updated. */
   failedRows: number
+  /** Rows whose project or cost code changed (or that were deleted) while the sync ran; left as they are. */
+  changedRows: number
 }
 
 /** A sync the sheet cannot take, with a reason fit to show; nothing has been written. */
@@ -144,14 +146,15 @@ export function applySync(store: StoreApi<SheetState>, plan: SyncPlan, response:
     projectsNotFound: response.projects.filter((p) => p.status === 'not-found').map((p) => p.code),
     shared: [],
     failedRows: 0,
+    changedRows: 0,
   }
-  const writes: { rowIds: string[]; committed: number; awarded: boolean; items: number }[] = []
+  const writes: { project: string; costCode: string; rowIds: string[]; committed: number; awarded: boolean; items: number }[] = []
   for (const g of plan.groups) {
     const result = byCode.get(g.project)
     if (!result || result.status !== 'ok') continue
     const cc = result.costCodes.find((c) => c.code === g.costCode)
     if (!cc) continue
-    writes.push({ rowIds: g.rowIds, committed: cc.committed, awarded: cc.awarded, items: g.items })
+    writes.push({ project: g.project, costCode: g.costCode, rowIds: g.rowIds, committed: cc.committed, awarded: cc.awarded, items: g.items })
     if (!cc.known) summary.notFound.push({ project: g.project, costCode: g.costCode })
     if (g.items > 1) summary.shared.push({ project: g.project, costCode: g.costCode, items: g.items })
   }
@@ -172,30 +175,50 @@ export function applySync(store: StoreApi<SheetState>, plan: SyncPlan, response:
   const state = store.getState()
   state.batch(() => {
     const data = store.getState().data!
+    const site = byTitle(data, DELIVERY_SITE_COLUMN_TITLE)
+    const basisIndex = data.columns.findIndex((c) => c === byTitle(data, BASIS_COLUMN_TITLE))
+    // Where new sync columns go: after Delivery site, else just before Basis, else at the end.
+    const anchor = site?.id ?? (basisIndex > 0 ? data.columns[basisIndex - 1].id : data.columns.at(-1)?.id)
     let committedId = existingCommitted?.id
     let awardedId = existingAwarded?.id
+    let awardedAnchor = anchor
     if (!committedId) {
-      const site = byTitle(data, DELIVERY_SITE_COLUMN_TITLE)
-      const basisIndex = data.columns.findIndex((c) => c === byTitle(data, BASIS_COLUMN_TITLE))
-      const anchor = site?.id ?? (basisIndex > 0 ? data.columns[basisIndex - 1].id : data.columns.at(-1)?.id)
       const added = state.addColumn(COMMITTED_COLUMN_TITLE, 'TEXT_NUMBER', undefined, anchor)
       if (!added.ok) throw new SyncError(added.error)
       committedId = (added as { id: string }).id
+      awardedAnchor = committedId
     }
     if (!awardedId) {
-      const added = state.addColumn(AWARDED_COLUMN_TITLE, 'PICKLIST', ['Yes', 'No'], committedId)
+      const added = state.addColumn(AWARDED_COLUMN_TITLE, 'PICKLIST', ['Yes', 'No'], awardedAnchor)
       if (!added.ok) throw new SyncError(added.error)
       awardedId = (added as { id: string }).id
     }
+
+    // A row edited or deleted while Procore was answering no longer belongs to the pair asked about.
+    const now = store.getState().data!
+    const projectCol = projectColumn(now)
+    const costCol = byTitle(now, COST_CODE_COLUMN_TITLE)
+    const rows = new Map(now.rows.map((r) => [r.id, r]))
+    const stillTagged = (rowId: string, project: string, costCode: string) => {
+      const row = rows.get(rowId)
+      return Boolean(row && projectCol && costCol && codeOf(row.cells[projectCol.id]) === project && codeOf(row.cells[costCol.id]).toUpperCase() === costCode)
+    }
+
     for (const w of writes) {
       let failed = 0
+      let changed = 0
       for (const rowId of w.rowIds) {
+        if (!stillTagged(rowId, w.project, w.costCode)) {
+          changed++
+          continue
+        }
         const a = state.setCell(rowId, committedId, String(w.committed))
         const b = state.setCell(rowId, awardedId, w.awarded ? values.yes : values.no)
         if (!a.ok || !b.ok) failed++
       }
       summary.failedRows += failed
-      if (failed === 0) summary.items += w.items
+      summary.changedRows += changed
+      if (failed === 0 && changed < w.rowIds.length) summary.items += w.items
     }
   })
   return summary
@@ -217,6 +240,9 @@ export function syncResultText(summary: SyncSummary, at: Date): string {
   if (summary.notInProcore.length > 0) parts.push(`${listed(summary.notInProcore)} ${summary.notInProcore.length === 1 ? 'is' : 'are'} not in Procore`)
   if (summary.projectsNotFound.length > 0) parts.push(`${listed(summary.projectsNotFound)} ${summary.projectsNotFound.length === 1 ? 'was' : 'were'} not found in Procore`)
   if (summary.failedRows > 0) parts.push(`${plural(summary.failedRows, 'row', 'rows')} could not be updated`)
+  if (summary.changedRows > 0) {
+    parts.push(`${plural(summary.changedRows, 'row', 'rows')} changed during the sync and ${summary.changedRows === 1 ? 'was' : 'were'} left as ${summary.changedRows === 1 ? 'it is' : 'they are'}`)
+  }
   for (const s of summary.shared) parts.push(`${s.costCode} on ${s.project} is shared by ${s.items} items; ${s.items === 2 ? 'both' : 'all'} show the cost code total`)
   return parts.join(' · ')
 }

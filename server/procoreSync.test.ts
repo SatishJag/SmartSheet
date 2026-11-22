@@ -116,3 +116,41 @@ describe('committedForProject', () => {
     await expect(committedForProject(client, 'BKK-03', ['CHL'])).rejects.toEqual(new ProcoreError('Procore is busy; try again in a minute.'))
   })
 })
+
+describe('committedForProject: currencies', () => {
+  const routes = (lines: Record<string, unknown[]>) =>
+    fakeClient({
+      '/rest/v1.1/projects': PROJECT,
+      '/rest/v1.0/work_order_contracts': [{ id: 1, status: 'Approved' }],
+      '/rest/v1.0/purchase_order_contracts': [{ id: 5, status: 'Approved' }],
+      '/rest/v1.0/work_order_contracts/1/line_items': lines.wo,
+      '/rest/v1.0/purchase_order_contracts/5/line_items': lines.po,
+      '/rest/v1.0/cost_codes': [{ code: 'CHL' }, { code: 'GEN' }],
+    })
+
+  it('refuses to add up one cost code’s commitments in different currencies', async () => {
+    const { client } = routes({
+      wo: [{ amount: '100000', cost_code: { code: 'CHL' }, currency_configuration: { currency_iso_code: 'THB' } }],
+      po: [{ amount: '100000', cost_code: { code: 'CHL' }, currency_configuration: { currency_iso_code: 'USD' } }],
+    })
+    await expect(committedForProject(client, 'BKK-03', ['CHL'])).rejects.toEqual(
+      new ProcoreError('CHL on BKK-03 has commitments in more than one currency (THB, USD); the sync can’t add them up.'),
+    )
+  })
+
+  it('adds up one currency, and ignores currencies on cost codes not asked for', async () => {
+    const { client } = routes({
+      wo: [
+        { amount: '100', cost_code: { code: 'CHL' }, currency_configuration: { currency_iso_code: 'USD' } },
+        { amount: '7', cost_code: { code: 'GEN' }, currency_configuration: { currency_iso_code: 'THB' } },
+      ],
+      po: [
+        { amount: '50', cost_code: { code: 'CHL' }, currency_configuration: { currency_iso_code: 'usd' } },
+        { amount: '1', cost_code: { code: 'CHL' } },
+        { amount: '9', cost_code: { code: 'GEN' }, currency_configuration: { currency_iso_code: 'USD' } },
+      ],
+    })
+    const result = await committedForProject(client, 'BKK-03', ['CHL'])
+    expect(result).toEqual({ code: 'BKK-03', status: 'ok', costCodes: [{ code: 'CHL', committed: 151, awarded: true, known: true }] })
+  })
+})

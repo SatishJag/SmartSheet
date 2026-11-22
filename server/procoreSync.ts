@@ -3,7 +3,7 @@
  * a project's counted purchase orders and subcontracts, their line items summed per cost code. Read-only.
  */
 import type { CommittedCostCode, CommittedProject, CommittedRequest } from '../src/planner/types'
-import type { ProcoreClient } from './procore'
+import { ProcoreError, type ProcoreClient } from './procore'
 
 export const MAX_PROJECTS = 5
 export const MAX_COST_CODES = 50
@@ -43,6 +43,8 @@ export function parseCommittedRequest(body: unknown): { ok: true; value: Committ
 export interface ProcoreLineItem {
   amount?: string | number | null
   cost_code?: { code?: string | null } | null
+  /** The contract's currency; amounts are in it. */
+  currency_configuration?: { currency_iso_code?: string | null } | null
 }
 
 /** Line amounts summed per cost code (upper-cased), in cents. Lines without a cost code are ignored. */
@@ -87,6 +89,20 @@ export async function committedForProject(client: ProcoreClient, code: string, c
       lines.push(...items)
       for (const code of sumByCostCode(items).keys()) awarded.add(code)
     }
+  }
+  // Amounts are in each contract's currency: totals across currencies would mean nothing, so refuse them.
+  const currencies = new Map<string, Set<string>>()
+  for (const line of lines) {
+    const cc = line.cost_code?.code
+    const currency = line.currency_configuration?.currency_iso_code?.trim().toUpperCase()
+    if (typeof cc !== 'string' || !currency) continue
+    const key = normCode(cc)
+    if (!currencies.has(key)) currencies.set(key, new Set())
+    currencies.get(key)!.add(currency)
+  }
+  for (const cc of costCodes) {
+    const used = [...(currencies.get(cc) ?? [])].sort()
+    if (used.length > 1) throw new ProcoreError(`${cc} on ${code} has commitments in more than one currency (${used.join(', ')}); the sync can’t add them up.`)
   }
   const sums = sumByCostCode(lines)
   const known = new Set((await client.getAll<{ code?: string | null }>('/rest/v1.0/cost_codes', query, signal)).flatMap((c) => (typeof c.code === 'string' ? [normCode(c.code)] : [])))

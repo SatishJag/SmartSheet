@@ -131,6 +131,7 @@ describe('applySync', () => {
       projectsNotFound: [],
       shared: [{ project: 'BKK-03', costCode: 'CHL', items: 2 }],
       failedRows: 0,
+      changedRows: 0,
     } satisfies SyncSummary)
   })
 
@@ -158,7 +159,7 @@ describe('applySync', () => {
     const { store } = await makeTestStore(FLAT)
     const summary = applySync(store, collectSync(FLAT), { ok: true, projects: [{ code: 'BKK-03', status: 'not-found' }] })
     expect(titles(store)).toEqual(['Task', 'Project', 'Cost code', 'Delivery site', 'Basis'])
-    expect(summary).toEqual({ items: 0, notFound: [], notInProcore: [], projectsNotFound: ['BKK-03'], shared: [], failedRows: 0 })
+    expect(summary).toEqual({ items: 0, notFound: [], notInProcore: [], projectsNotFound: ['BKK-03'], shared: [], failedRows: 0, changedRows: 0 })
   })
 })
 
@@ -174,6 +175,7 @@ describe('syncResultText', () => {
           projectsNotFound: ['BKK-02'],
           shared: [{ project: 'BKK-03', costCode: 'CHL', items: 2 }],
           failedRows: 0,
+      changedRows: 0,
         },
         at,
       ),
@@ -183,7 +185,7 @@ describe('syncResultText', () => {
   })
 
   it('says "all" when more than two items share a cost code', () => {
-    expect(syncResultText({ items: 3, notFound: [], notInProcore: [], projectsNotFound: [], shared: [{ project: 'BKK-03', costCode: 'CHL', items: 3 }], failedRows: 0 }, at)).toBe(
+    expect(syncResultText({ items: 3, notFound: [], notInProcore: [], projectsNotFound: [], shared: [{ project: 'BKK-03', costCode: 'CHL', items: 3 }], failedRows: 0, changedRows: 0 }, at)).toBe(
       'Last synced 14:05 · 3 items updated · CHL on BKK-03 is shared by 3 items; all show the cost code total',
     )
   })
@@ -201,6 +203,7 @@ describe('syncResultText', () => {
           projectsNotFound: [],
           shared: [],
           failedRows: 0,
+      changedRows: 0,
         },
         new Date(2026, 10, 22, 9, 7),
       ),
@@ -261,5 +264,26 @@ describe('review fixes: what the sync can send', () => {
     expect(checkSyncLimits(collectSync(many))).toBe('This sheet has 6 projects; a sync takes up to 5.')
     const codes = sheet(Array.from({ length: 51 }, (_, i) => makeRow(`r${i}`, `a${String(i).padStart(2, '0')}`, tagged('BKK-03', `C${i}`))))
     expect(checkSyncLimits(collectSync(codes))).toBe('This sheet has 51 cost codes; a sync takes up to 50.')
+  })
+})
+
+describe('review fixes (PR): placement and rows changed during the sync', () => {
+  it('adds Awarded at the usual place when Committed already exists elsewhere', async () => {
+    const data = sheet(FLAT.rows, [...BASE_COLUMNS, { id: 'c-cm', title: 'Committed (Procore)', type: 'TEXT_NUMBER' }])
+    const { store } = await makeTestStore(data)
+    applySync(store, collectSync(data), OK_RESPONSE)
+    expect(titles(store)).toEqual(['Task', 'Project', 'Cost code', 'Delivery site', AWARDED_COLUMN_TITLE, 'Basis', 'Committed (Procore)'])
+  })
+
+  it('leaves a row whose project or cost code changed after the sync started', async () => {
+    const { store } = await makeTestStore(FLAT)
+    const plan = collectSync(FLAT)
+    expect(store.getState().setCell('b', C.cost, 'GEN — Generator')).toEqual({ ok: true })
+    store.getState().deleteRow('c')
+    const summary = applySync(store, plan, OK_RESPONSE)
+    expect(cell(store, 'a', AWARDED_COLUMN_TITLE)).toBe('Yes')
+    expect(cell(store, 'b', AWARDED_COLUMN_TITLE)).toBeUndefined()
+    expect(summary).toMatchObject({ items: 1, changedRows: 2, failedRows: 0 })
+    expect(syncResultText(summary, new Date(2026, 10, 22, 14, 5))).toContain('· 2 rows changed during the sync and were left as they are')
   })
 })
