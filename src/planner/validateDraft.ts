@@ -198,6 +198,8 @@ function basisMismatch(
   if (basis === 'default') {
     return days === cat.defaultDays ? null : `${code}: basis default means the catalog default of ${cat.defaultDays} days (got ${days}); otherwise mark it adjusted.`
   }
+  // file / template / estimate belong to imported plans; a drafted plan never uses them.
+  if (basis !== 'p50' && basis !== 'p80') return `${code}: basis ${basis} is not allowed here; use p50, p80, default or adjusted.`
   if (!stats) return `${code}: basis ${basis} cites history, but there is no history for this activity; use default or adjusted.`
   const value = stats[basis]
   // Statistics may be fractional; either neighbouring whole day counts as citing them.

@@ -607,3 +607,15 @@ describe('project column title', () => {
     expect(PROJECT_COLUMN_TITLE).toBe('Project')
   })
 })
+
+describe('imported activities on the sheet', () => {
+  it('writes each activity’s own status', () => {
+    const draft = lleDraft('2027-06-30')
+    draft.activities[0] = { ...draft.activities[0], status: 'In progress' }
+    const plan = planBackward(draft, cal, TODAY)
+    const { columns, rows } = buildSheetFromDraft(draft, plan, 'u', cal)
+    const status = columns.find((c) => c.role === 'status')!.id
+    expect(rows[0].cells[status]).toBe('In progress')
+    expect(rows[1].cells[status]).toBe('Not started')
+  })
+})

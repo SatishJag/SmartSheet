@@ -8,6 +8,9 @@ export const BASIS_LABELS: Record<DurationBasis, string> = {
   p80: 'p80',
   default: 'Default',
   adjusted: 'Adjusted',
+  file: 'From your file',
+  template: 'Template',
+  estimate: 'AI estimate',
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -192,6 +195,8 @@ export interface PlanPreviewProps {
   onRegenerateOne: (key: string, instruction: string) => void
   onRemove: (key: string) => void
   onCreate: () => void
+  /** False for an imported plan: regenerating would redraft it from the catalog and lose the planner's activities. */
+  allowRegenerate?: boolean
 }
 
 /**
@@ -201,7 +206,7 @@ export interface PlanPreviewProps {
  * a sticky footer so "Create schedule" is always in reach.
  */
 export function PlanPreview(props: PlanPreviewProps) {
-  const { entries, headingRef, instruction, instructionId, onInstruction, failure, creating, noun = 'equipment', onBack, onRegenerateAll, onRegenerateOne, onRemove, onCreate } = props
+  const { entries, headingRef, instruction, instructionId, onInstruction, failure, creating, noun = 'equipment', onBack, onRegenerateAll, onRegenerateOne, onRemove, onCreate, allowRegenerate = true } = props
   const many = entries.length > 1
   const info = overview(entries)
   const busy = creating || entries.some((e) => e.status === 'busy')
@@ -317,20 +322,22 @@ export function PlanPreview(props: PlanPreviewProps) {
           <p className="planner-hint">Retry or remove the items that failed before creating the schedule.</p>
         )}
 
-        <div className="planner-card card planner-regenerate">
-          <label htmlFor={instructionId} className="planner-label">
-            {many ? 'Instructions for a new draft of all items (optional)' : 'Instructions for a new draft (optional)'}
-          </label>
-          <textarea
-            id={instructionId}
-            rows={2}
-            value={instruction}
-            onChange={(e) => onInstruction(e.target.value)}
-            placeholder={noun === 'development' ? 'e.g. 40-storey tower: allow 7 working days per typical floor; authority approvals take 4 months' : 'e.g. Use p80 for fabrication; the vendor quotes 16 weeks'}
-            disabled={busy}
-          />
-          <small>Not quite right? Describe what to change and use Regenerate; your other settings stay as they are.</small>
-        </div>
+        {allowRegenerate && (
+          <div className="planner-card card planner-regenerate">
+            <label htmlFor={instructionId} className="planner-label">
+              {many ? 'Instructions for a new draft of all items (optional)' : 'Instructions for a new draft (optional)'}
+            </label>
+            <textarea
+              id={instructionId}
+              rows={2}
+              value={instruction}
+              onChange={(e) => onInstruction(e.target.value)}
+              placeholder={noun === 'development' ? 'e.g. 40-storey tower: allow 7 working days per typical floor; authority approvals take 4 months' : 'e.g. Use p80 for fabrication; the vendor quotes 16 weeks'}
+              disabled={busy}
+            />
+            <small>Not quite right? Describe what to change and use Regenerate; your other settings stay as they are.</small>
+          </div>
+        )}
       </div>
 
       {failure}
@@ -345,10 +352,12 @@ export function PlanPreview(props: PlanPreviewProps) {
           <PIcon name="back" size={16} />
           Back
         </button>
-        <button type="button" className="btn planner-regenerate-all" onClick={onRegenerateAll} disabled={busy}>
-          <PIcon name="refresh" size={16} />
-          {many ? 'Regenerate all' : 'Regenerate'}
-        </button>
+        {allowRegenerate && (
+          <button type="button" className="btn planner-regenerate-all" onClick={onRegenerateAll} disabled={busy}>
+            <PIcon name="refresh" size={16} />
+            {many ? 'Regenerate all' : 'Regenerate'}
+          </button>
+        )}
         <button type="button" className="btn btn-primary planner-approve" onClick={onCreate} disabled={busy || blocked}>
           <PIcon name="check" size={16} />
           Create schedule

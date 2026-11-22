@@ -3,6 +3,7 @@
  * 0004_planner_history.sql), the planning server (server/) and the client (src/planner, the
  * "Plan with AI" wizard). Pure types, shared by all three.
  */
+import type { TableMapping } from './import/table'
 import type { DepType } from '../engine/types'
 
 /** The words the wizard uses for what is being planned (equipment, material, ...). */
@@ -104,7 +105,8 @@ export interface PlanRequest {
   notes?: string
 }
 
-export type DurationBasis = 'p50' | 'p80' | 'default' | 'adjusted'
+/** file / template / estimate: durations of an imported plan (the reason holds the wording). */
+export type DurationBasis = 'p50' | 'p80' | 'default' | 'adjusted' | 'file' | 'template' | 'estimate'
 
 export interface DraftActivity {
   code: string
@@ -119,6 +121,10 @@ export interface DraftActivity {
   activityId?: string
   responsibility?: string
   criteria?: string
+  /** An imported activity's status (one of the sheet's statuses); new plans start Not started. */
+  status?: string
+  /** An imported activity that took the template's links because the file gave it none. */
+  linksFromTemplate?: boolean
 }
 
 export interface DraftLink {
@@ -242,3 +248,54 @@ export interface HistorySource {
   /** equipmentType null: statistics over every equipment type of the schedule type. */
   summary(scheduleType: string, equipmentType: string | null): Promise<HistorySummary>
 }
+
+// ---- Importing a plan from Excel (POST /api/planner/import; docs/superpowers/specs/2026-11-22-plan-import-design.md) ----
+
+/** What the server learns about one copied activity: never its responsibility, criteria or dates. */
+export interface ImportActivityRef {
+  code: string
+  name: string
+  phase: string
+  /** The file gave a duration (or start and finish dates) for it. */
+  hasDuration: boolean
+  /** The file gave predecessors for it. */
+  hasPredecessors: boolean
+}
+
+/** Exactly one of `columns` (map an unknown layout) or `activities` (fill durations). */
+export interface ImportRequest {
+  hints: { fileName: string; sheetNames: string[] }
+  /** Headings and up to 30 sample rows per sheet (max 5 sheets), when the reader found no table. */
+  columns?: { sheet: string; rows: string[][] }[]
+  activities?: ImportActivityRef[]
+  /** The schedule type the planner chose (null: a general schedule); absent: the server matches one. */
+  scheduleType?: string | null
+}
+
+export interface ImportDuration {
+  code: string
+  days: number
+  /** history: a median of past projects; template: the catalog default; estimate: the AI (or its fallback). */
+  basis: 'history' | 'template' | 'estimate'
+  reason: string
+}
+
+/** A template link given to an activity the file left without predecessors. */
+export interface ImportTemplateLink {
+  to: string
+  from: string
+  type: DepType
+  lagDays: number
+}
+
+export interface ImportActivitiesResult {
+  scheduleType: string | null
+  /** The template's target activity (its finish lands on the handover date), when the file has it. */
+  targetCode: string | null
+  durations: ImportDuration[]
+  templateLinks: ImportTemplateLink[]
+  history: HistorySummary | null
+}
+
+export type ImportMappingResponse = { ok: true; mapping: TableMapping | null } | { ok: false; error: string }
+export type ImportActivitiesResponse = ({ ok: true } & ImportActivitiesResult) | { ok: false; error: string }

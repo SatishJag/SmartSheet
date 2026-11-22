@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Calendar } from '../engine/types'
-import { MAX_DATE, MIN_DATE } from '../model/validate'
+import { isAcceptedDate, MAX_DATE, MIN_DATE } from '../model/validate'
 import { projectScheduleTemplate } from '../templates'
 import { todayIso } from './backward'
 import { Icon } from '../ui/Icon'
 import { PlanPreview } from './PlanPreview'
 import { equipmentGlyph, PIcon } from './PIcon'
-import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestDraft } from './plannerApi'
+import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestDraft, requestImport } from './plannerApi'
+import { buildImportDraft, scheduleImport } from './import/importDraft'
+import { findActivityTable, guessProject, readActivities, readBasis, type ImportedActivity, type ImportField, type TableMapping } from './import/table'
+import { readWorkbook, type Workbook } from './import/workbook'
 import {
   appendNote,
   batchRequestOf,
@@ -38,7 +41,15 @@ import {
 import { codeForType, costCodeOption, optionForCode } from './costCodes'
 import { DATA_CENTRE, defaultDeliverySite, optionForProject, projectOption, projectsFor, siteProjects } from './projects'
 import { insertSheetFromDrafts } from './sheetFromDraft'
-import { DEFAULT_ITEM_LABELS, type CostCode, type ItemLabels, type PlannerOptions, type Project } from './types'
+import {
+  DEFAULT_ITEM_LABELS,
+  type CostCode,
+  type ImportActivitiesResult,
+  type ImportActivityRef,
+  type ItemLabels,
+  type PlannerOptions,
+  type Project,
+} from './types'
 import './plannerWizard.css'
 
 export { BASIS_LABELS, sourceLabel } from './PlanPreview'
@@ -58,7 +69,7 @@ export interface PlannerWizardProps {
   calendar?: Calendar
 }
 
-type Step = 'request' | 'drafting' | 'preview' | 'creating'
+type Step = 'request' | 'drafting' | 'preview' | 'creating' | 'importing' | 'imported'
 
 interface Failure {
   message: string
@@ -85,6 +96,59 @@ const describe = (err: unknown, fallback: string) =>
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
+/** An uploaded plan, copied exactly, with the server's durations; confirmed on "What we found". */
+interface ImportState {
+  workbook: Workbook
+  activities: ImportedActivity[]
+  /** Warnings from reading the rows (duplicates, links left out, unknown statuses, dates). */
+  readWarnings: string[]
+  server: ImportActivitiesResult
+  /** The confirmed schedule type; '' is a general schedule. */
+  scheduleType: string
+  /** The planned handover date (ISO), or '' until entered. */
+  handover: string
+  /** The request form as it was before the import, restored by Back. */
+  formBefore: { projectType: string; scheduleType: string; project: string }
+}
+
+const FIELD_LABELS: Record<ImportField, string> = {
+  activityId: 'activity ID',
+  name: 'activity',
+  phase: 'stage',
+  kind: 'type',
+  responsibility: 'responsibility',
+  duration: 'duration',
+  start: 'start',
+  finish: 'finish',
+  status: 'status',
+  predecessors: 'predecessors',
+  criteria: 'criteria',
+}
+
+/** The AI's guess at an unknown layout, spelled out for the planner to check. */
+function mappingWarning(wb: Workbook, map: TableMapping): string {
+  const headings = wb.sheets.find((sh) => sh.name === map.sheet)?.rows[map.headingRow] ?? []
+  const pairs = (Object.entries(map.fields) as [ImportField, number][])
+    .sort((a, b) => a[1] - b[1])
+    .map(([field, col]) => `${headings[col] || `column ${col + 1}`} → ${FIELD_LABELS[field]}`)
+  return `The AI matched the columns on sheet "${map.sheet}" (headings in row ${map.headingRow + 1}): ${pairs.join(', ')}. Check them before you preview.`
+}
+
+const NO_TABLE = 'No list of activities found in this file.'
+/** Rows and sheets of an unknown layout sent for the AI to map. */
+const MAP_SAMPLE_ROWS = 30
+const MAP_SAMPLE_SHEETS = 5
+
+/** What the server learns about an imported activity: never its responsibility, criteria, status or dates. */
+const importRef = (a: ImportedActivity): ImportActivityRef => ({
+  code: a.code,
+  name: a.name,
+  phase: a.phase,
+  hasDuration: a.durationDays !== null && a.durationFrom !== null,
+  hasPredecessors: a.hasPredecessors,
+})
+const importHints = (wb: Workbook) => ({ fileName: wb.fileName, sheetNames: wb.sheets.map((s) => s.name) })
+
 /**
  * "Plan with AI": a modal wizard. Step 1 collects the request: a shared schedule type and notes and
  * one or more equipment items (ticked from the types with history, or added by hand), each with its
@@ -106,11 +170,14 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     project: useId(),
     chosenProject: useId(),
     instruction: useId(),
+    handover: useId(),
+    upload: useId(),
     error: useId(),
     item: useId(),
   }
   const dialogRef = useRef<HTMLDivElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
   const addButtonRef = useRef<HTMLButtonElement>(null)
   const aborter = useRef<AbortController | null>(null)
   const itemAborters = useRef(new Map<string, AbortController>())
@@ -132,6 +199,11 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const [sharedDate, setSharedDate] = useState('')
   const [notes, setNotes] = useState('')
   const [instruction, setInstruction] = useState('')
+
+  /** An imported plan being confirmed on "What we found" (docs/superpowers/specs/2026-11-22-plan-import-design.md). */
+  const [imported, setImported] = useState<ImportState | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
+  const [importProblem, setImportProblem] = useState<string | null>(null)
 
   const [job, setJob] = useState<Job | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
@@ -373,7 +445,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     try {
       // Cost codes come from the form as it is now (they do not affect the plan), by item key.
       const sheetCostCodes =
-        costCodes.length > 0
+        costCodes.length > 0 && !imported
           ? {
               options: costCodes.map(costCodeOption),
               values: entries.map((e) => optionForCode(costCodes, items.find((i) => i.key === e.key)?.costCode ?? '')),
@@ -382,7 +454,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
       const projectColumn =
         listed.length > 0 ? { options: listed.map(projectOption), value: optionForProject(listed, project) } : undefined
       const deliverySites =
-        sites.length > 0
+        sites.length > 0 && !imported
           ? {
               options: sites.map(projectOption),
               values: entries.map((e) => optionForProject(sites, items.find((i) => i.key === e.key)?.deliverySite ?? '')),
@@ -395,6 +467,133 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
       setFailure({ message: `Could not create the schedule: ${describe(err, 'unknown error')}`, retry: () => void create() })
       setStep('preview')
     }
+  }
+
+  // ---- importing a plan from Excel ----
+
+  /** Reads the file, finds its activities (the AI maps an unknown layout), and asks the server for durations. */
+  async function startImport(file: File) {
+    setFailure(null)
+    setImportProblem(null)
+    setStep('importing')
+    const formBefore = { projectType, scheduleType, project }
+    // Closing the wizard aborts this signal: no further request is sent for an abandoned import.
+    const signal = nextSignal()
+    try {
+      const wb = await readWorkbook(file)
+      if (signal.aborted) return
+      const token = await getAccessToken(client)
+      const hints = importHints(wb)
+      let map = findActivityTable(wb)
+      const guessed = !map
+      if (!map) {
+        const columns = wb.sheets
+          .slice(0, MAP_SAMPLE_SHEETS)
+          .map((sh) => ({ sheet: sh.name, rows: sh.rows.slice(0, MAP_SAMPLE_ROWS).map((r) => r.slice(0, 60).map((c) => c.slice(0, 500))) }))
+        map = (await requestImport(token, { hints, columns }, { signal })).mapping
+        if (signal.aborted) return
+      }
+      if (!map) throw new Error(NO_TABLE)
+      const { activities, warnings: rowWarnings } = readActivities(wb, map, calendar)
+      const warnings = guessed ? [mappingWarning(wb, map), ...rowWarnings] : rowWarnings
+      if (activities.length === 0) throw new Error(NO_TABLE)
+      const server = await requestImport(token, { hints, activities: activities.map(importRef) }, { signal })
+      if (!mounted.current || signal.aborted) return
+
+      // The project type follows the detected schedule type; the project and date come from the file.
+      const basis = readBasis(wb)
+      const detected = options?.scheduleTypes.find((t) => t.id === server.scheduleType)
+      const types = detected?.projectTypes ?? []
+      const nextType = typed && types.length > 0 && !types.includes(projectType) ? types[0] : projectType
+      if (nextType !== projectType) setProjectType(nextType)
+      setProject(guessProject(projectsFor(options?.projects ?? NO_PROJECTS, typed ? nextType : ''), wb, basis))
+      setImported({ workbook: wb, activities, readWarnings: warnings, server, scheduleType: server.scheduleType ?? '', handover: basis.handoverDate ?? '', formBefore })
+      setSubmitted(false)
+      setStep('imported')
+    } catch (err) {
+      if (!mounted.current || isAbort(err) || signal.aborted) return
+      setFailure({ message: describe(err, 'Could not read the file'), retry: null })
+      setStep('request')
+    } finally {
+      if (fileInput.current) fileInput.current.value = ''
+    }
+  }
+
+  /** The planner corrected the schedule type: durations, links and target come from the chosen one. */
+  /** `revert`: the project type (and project) to restore if this correction fails, when one forced it. */
+  async function changeImportType(id: string, revert?: { projectType: string; project: string }) {
+    if (!imported) return
+    const current = imported
+    setImported({ ...current, scheduleType: id })
+    setImportBusy(true)
+    setImportProblem(null)
+    const signal = nextSignal()
+    try {
+      const token = await getAccessToken(client)
+      const server = await requestImport(
+        token,
+        { hints: importHints(current.workbook), activities: current.activities.map(importRef), scheduleType: id || null },
+        { signal },
+      )
+      if (mounted.current && !signal.aborted) setImported((prev) => (prev ? { ...prev, server } : prev))
+    } catch (err) {
+      if (!mounted.current || isAbort(err) || signal.aborted) return
+      // The loaded durations, links and target belong to the previous type (and project type): go back to them.
+      setImported((prev) => (prev ? { ...prev, scheduleType: current.scheduleType } : prev))
+      if (revert) {
+        setProjectType(revert.projectType)
+        setProject(revert.project)
+      }
+      setImportProblem(describe(err, 'Could not fetch the durations for that schedule type'))
+    } finally {
+      if (mounted.current) setImportBusy(false)
+    }
+  }
+
+  function chooseImportProjectType(id: string) {
+    // Only the project type: the request form's schedule type (and its equipment) stays as it was for Back.
+    const before = { projectType, project }
+    setProjectType(id)
+    // A schedule type not offered under the new project type becomes a general schedule.
+    if (imported?.scheduleType && options && !schedulesFor(options, id).some((t) => t.id === imported.scheduleType)) void changeImportType('', before)
+  }
+
+  const importDraftFor = (state: ImportState) =>
+    buildImportDraft({
+      activities: state.activities,
+      server: state.server,
+      scheduleType: state.scheduleType || null,
+      projectName: listed.find((p) => p.code === project)?.name ?? state.workbook.fileName.replace(/\.[^.]+$/, ''),
+      requiredDate: state.handover || today,
+      fileName: state.workbook.fileName,
+    })
+
+  function previewImport() {
+    if (!imported) return
+    setSubmitted(true)
+    if (projectProblem) return setImportProblem(projectProblem)
+    if (!imported.handover) return setImportProblem('Enter the planned handover date')
+    if (!isAcceptedDate(imported.handover)) return setImportProblem(`Enter a handover date between ${MIN_DATE} and ${MAX_DATE}`)
+    const { draft } = importDraftFor(imported)
+    const result = scheduleImport(draft, calendar, today)
+    if ('error' in result) return setImportProblem(result.error)
+    setImportProblem(null)
+    setEntries([{ key: 'import', status: 'ready', request: draft.request, draft, plan: result.plan }])
+    setStep('preview')
+  }
+
+  function leaveImport() {
+    if (imported) {
+      const { formBefore } = imported
+      setProjectType(formBefore.projectType)
+      setScheduleType(formBefore.scheduleType)
+      setProject(formBefore.project)
+    }
+    setImported(null)
+    setImportProblem(null)
+    setFailure(null)
+    setSubmitted(false)
+    setStep('request')
   }
 
   // ---- the request form ----
@@ -523,6 +722,28 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                 </h3>
                 <p>{labels.intro ?? `Choose the ${noun} and the date it must be on site. The plan is built backward from that date.`}</p>
               </div>
+              {options && (
+                <div className="planner-import">
+                  <button type="button" className="btn" onClick={() => fileInput.current?.click()}>
+                    <PIcon name="upload" size={16} />
+                    Import from Excel
+                  </button>
+                  <small>Already have a plan? Upload it (.xlsx or .csv): the AI reads it and you confirm what it found.</small>
+                  <input
+                    ref={fileInput}
+                    id={ids.upload}
+                    type="file"
+                    accept=".xlsx,.csv"
+                    className="visually-hidden"
+                    aria-label="Import from Excel file"
+                    tabIndex={-1}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (file) void startImport(file)
+                    }}
+                  />
+                </div>
+              )}
               {!options && !optionsError && (
                 <div className="planner-card card" aria-hidden="true">
                   <span className="planner-skeleton" style={{ width: '30%', height: 14 }} />
@@ -788,6 +1009,152 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
           </div>
         )}
 
+        {step === 'importing' && (
+          <div className="planner-step planner-loading">
+            <div className="planner-body">
+              <div className="planner-card card planner-loading-card">
+                <span className="planner-loading-icon" aria-hidden="true">
+                  <Icon name="sparkles" size={26} />
+                </span>
+                <h3 ref={headingRef} tabIndex={-1}>
+                  Reading your plan
+                </h3>
+                <p role="status">Reading the file and matching it to your templates…</p>
+                <div className="planner-progress progress" aria-hidden="true">
+                  <span />
+                </div>
+              </div>
+            </div>
+            <div className="planner-footer">
+              <button type="button" className="btn" onClick={close}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 'imported' && imported && (
+          <div className="planner-step planner-imported">
+            <div className="planner-body">
+              <div className="planner-intro">
+                <h3 ref={headingRef} tabIndex={-1}>
+                  What we found
+                </h3>
+                <p>
+                  From <strong>{imported.workbook.fileName}</strong>. Check each guess; nothing is created until you approve the preview.
+                </p>
+              </div>
+              <section className="planner-card card" aria-label="What we found">
+                <p className="planner-import-summary">
+                  {(() => {
+                    const fromFile = imported.activities.filter((a) => a.durationDays !== null && a.durationFrom !== null).length
+                    return `${imported.activities.length} activities: ${fromFile} durations from your file, ${imported.activities.length - fromFile} filled in`
+                  })()}
+                </p>
+                {options?.projectTypes && options.projectTypes.length > 0 && (
+                  <div className="planner-field planner-project-type">
+                    <label htmlFor={ids.project} className="planner-label">
+                      Project type
+                    </label>
+                    <select id={ids.project} value={projectType} onChange={(e) => chooseImportProjectType(e.target.value)} disabled={importBusy}>
+                      {options.projectTypes.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="planner-field-pair">
+                  <div className="planner-field planner-schedule-type">
+                    <label htmlFor={ids.type} className="planner-label">
+                      Schedule type
+                    </label>
+                    <select id={ids.type} value={imported.scheduleType} onChange={(e) => void changeImportType(e.target.value)} disabled={importBusy}>
+                      {visibleSchedules.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                      <option value="">General schedule</option>
+                    </select>
+                    <small>{importBusy ? 'Fetching the durations for this schedule type…' : 'Blank durations and missing links come from this template.'}</small>
+                  </div>
+                  {listed.length > 0 && (
+                    <div className="planner-field planner-schedule-type planner-project">
+                      <label htmlFor={ids.chosenProject} className="planner-label">
+                        Project
+                      </label>
+                      <select
+                        id={ids.chosenProject}
+                        value={project}
+                        onChange={(e) => setProject(e.target.value)}
+                        aria-invalid={submitted && projectProblem ? true : undefined}
+                      >
+                        <option value="">Choose a project…</option>
+                        {listed.map((p) => (
+                          <option key={p.code} value={p.code}>
+                            {projectOption(p)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+                <div className="planner-field planner-schedule-type">
+                  <label htmlFor={ids.handover} className="planner-label">
+                    Planned handover
+                  </label>
+                  <input
+                    id={ids.handover}
+                    type="date"
+                    min={MIN_DATE}
+                    max={MAX_DATE}
+                    value={imported.handover}
+                    onChange={(e) => setImported({ ...imported, handover: e.target.value })}
+                    aria-invalid={submitted && !imported.handover ? true : undefined}
+                  />
+                  <small>The plan is built backward so that its last activity finishes on this date.</small>
+                </div>
+              </section>
+              {(() => {
+                const warnings = [...imported.readWarnings, ...importDraftFor(imported).warnings]
+                return (
+                  warnings.length > 0 && (
+                    <section className="planner-card card planner-import-warnings" aria-label="Check these">
+                      <h4>Check these</h4>
+                      <ul>
+                        {warnings.map((w) => (
+                          <li key={w}>{w}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  )
+                )
+              })()}
+            </div>
+            {importProblem && (
+              <div className="planner-bar is-danger">
+                <p role="alert">
+                  <PIcon name="alertCircle" size={18} />
+                  {importProblem}
+                </p>
+              </div>
+            )}
+            {failureBlock}
+            <div className="planner-footer">
+              <button type="button" className="btn planner-back" onClick={leaveImport} disabled={importBusy}>
+                <PIcon name="back" size={16} />
+                Back
+              </button>
+              <button type="button" className="btn btn-primary" onClick={previewImport} disabled={importBusy}>
+                <Icon name="sparkles" size={16} />
+                Preview
+              </button>
+            </div>
+          </div>
+        )}
+
         {(step === 'preview' || step === 'creating') && entries.length > 0 && (
           <PlanPreview
             entries={entries}
@@ -800,8 +1167,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
             noun={noun}
             onBack={() => {
               setFailure(null)
-              setStep('request')
+              setStep(imported ? 'imported' : 'request')
             }}
+            allowRegenerate={!imported}
             onRegenerateAll={regenerateAll}
             onRegenerateOne={(key, extra) => void regenerateOne(key, extra)}
             onRemove={removeEntry}

@@ -678,3 +678,65 @@ describe('anti-framing headers', () => {
     }
   })
 })
+
+describe('POST /api/planner/import', () => {
+  const LIMITS = { perUserPerHour: 1, perUserInFlight: 1, globalInFlight: 8 }
+  const hints = { fileName: 'plan.xlsx', sheetNames: ['Plan'] }
+  const known = CATALOG.slice(0, 3).map((a) => ({ code: a.code, name: a.name, phase: a.phase, hasDuration: false, hasPredecessors: true }))
+  const postImport = (base: string, body: unknown, headers: Record<string, string> = auth) =>
+    fetch(`${base}/api/planner/import`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })
+
+  it('needs a signed-in user', async () => {
+    const base = await start()
+    expect((await postImport(base, { hints, activities: known }, {})).status).toBe(401)
+  })
+
+  it('matches the template and fills durations without the AI, costing no draft', async () => {
+    const base = await start({ draftLimits: LIMITS })
+    for (let i = 0; i < 2; i++) {
+      const res = await postImport(base, { hints, activities: known })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { ok: boolean; scheduleType: string; durations: unknown[] }
+      expect(body).toMatchObject({ ok: true, scheduleType: 'lle-procurement' })
+      expect(body.durations).toHaveLength(3)
+    }
+    // The hourly draft is still there.
+    expect((await postDraft(base, REQUEST)).status).toBe(200)
+  })
+
+  it('counts one draft when it asks the AI, and refuses over the hourly limit', async () => {
+    const estimate = { type: 'tool_use', id: 'toolu_1', name: 'estimate_durations', input: { estimates: [{ code: 'NEW', days: 7, reason: 'x' }] } }
+    const { client } = fakeAnthropic(message([estimate]), message([estimate]))
+    const base = await start({ draftLimits: LIMITS, anthropic: client })
+    const extra = [...known, { code: 'NEW', name: 'Something new', phase: '', hasDuration: false, hasPredecessors: false }]
+    const first = await postImport(base, { hints, activities: extra })
+    expect(first.status).toBe(200)
+    expect(((await first.json()) as { durations: unknown[] }).durations).toContainEqual({ code: 'NEW', days: 7, basis: 'estimate', reason: 'x' })
+    expect((await postImport(base, { hints, activities: extra })).status).toBe(429)
+  })
+
+  it('accepts a large file on this route only', async () => {
+    const base = await start()
+    const many = Array.from({ length: 400 }, (_, i) => ({ code: `A${i}`, name: `Activity number ${i} with a longer name`, phase: 'Stage', hasDuration: true, hasPredecessors: true }))
+    expect(JSON.stringify({ hints, activities: many }).length).toBeGreaterThan(16 * 1024)
+    expect((await postImport(base, { hints, activities: many, scheduleType: null })).status).toBe(200)
+    const big = { ...REQUEST, notes: 'x'.repeat(17 * 1024) }
+    expect((await postDraft(base, big)).status).toBe(413)
+  })
+
+  it('answers 400 for a malformed body or an unknown chosen type', async () => {
+    const base = await start()
+    expect((await postImport(base, { hints })).status).toBe(400)
+    expect((await postImport(base, { hints, activities: known, scheduleType: 'nope' })).status).toBe(400)
+  })
+
+  it('maps an unknown layout with the AI, or answers null without it', async () => {
+    const columns = [{ sheet: 'Plan', rows: [['Ref', 'What'], ['1', 'Dig']] }]
+    let base = await start()
+    expect(await (await postImport(base, { hints, columns })).json()).toEqual({ ok: true, mapping: null })
+    await new Promise((r) => server!.close(r))
+    const reply = { type: 'tool_use', id: 'toolu_1', name: 'map_columns', input: { found: true, sheet: 'Plan', headingRow: 0, fields: { activityId: 0, name: 1 } } }
+    base = await start({ anthropic: fakeAnthropic(message([reply])).client })
+    expect(await (await postImport(base, { hints, columns })).json()).toEqual({ ok: true, mapping: { sheet: 'Plan', headingRow: 0, fields: { activityId: 0, name: 1 } } })
+  })
+})
