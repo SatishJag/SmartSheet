@@ -774,3 +774,28 @@
 .planner-import-warnings h4 { margin: 0 0 8px; font-size: 0.9375rem; }
 .planner-import-warnings ul { margin: 0; padding-left: 20px; color: var(--ink-2); }
 .planner-import-warnings li + li { margin-top: 4px; }
+
+/* Inside Procore (/procore): the wizard is the page, in a 400-px side panel or the full-screen area. */
+.planner-page {
+  min-height: 100dvh;
+  display: flex;
+  background: var(--surface, #fff);
+}
+
+.planner-wizard.is-embedded {
+  max-width: none;
+  min-height: 100dvh;
+  max-height: none;
+  height: 100dvh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+}
+
+/* A narrow panel: the activity table keeps its columns and scrolls sideways inside its card. */
+@media (max-width: 480px) {
+  .planner-wizard.is-embedded .planner-table-wrap {
+    overflow-x: auto;
+  }
+}
