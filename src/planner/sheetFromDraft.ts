@@ -94,8 +94,17 @@ export function basisText(activity: DraftActivity, history: HistorySummary): str
       return 'default (no history)'
     case 'adjusted':
       return `adjusted: ${activity.reason}${sample}`
+    case 'file':
+    case 'template':
+      return activity.reason + linksNote(activity)
+    case 'estimate': {
+      const text = activity.reason.startsWith('default:') ? activity.reason : `AI estimate: ${activity.reason}`
+      return text + linksNote(activity)
+    }
   }
 }
+
+const linksNote = (activity: DraftActivity) => (activity.linksFromTemplate ? '; links from the template' : '')
 
 /** The Basis text of an item's summary row: where its whole draft came from. */
 function itemSourceText(draft: PlanDraft): string {
@@ -220,7 +229,7 @@ function activityRows(
       [cols.task]: a.name,
       [cols.phase]: a.phase,
       [cols.duration]: formatDuration({ minutes: daysToMinutes(a.durationDays, calendar), elapsed: false }, calendar.hoursPerDay),
-      [cols.status]: 'Not started',
+      [cols.status]: a.status ?? 'Not started',
       [cols.basis]: basisText(a, draft.history),
     }
     if (cols.activityId && a.activityId) cells[cols.activityId] = a.activityId

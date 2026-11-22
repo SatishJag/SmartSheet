@@ -8,6 +8,9 @@ export const BASIS_LABELS: Record<DurationBasis, string> = {
   p80: 'p80',
   default: 'Default',
   adjusted: 'Adjusted',
+  file: 'From your file',
+  template: 'Template',
+  estimate: 'AI estimate',
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`

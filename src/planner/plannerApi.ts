@@ -1,5 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { BatchItemResult, BatchPlanRequest, DraftResponse, PlanDraft, PlannerOptions, PlanRequest } from './types'
+import type {
+  BatchItemResult,
+  BatchPlanRequest,
+  DraftResponse,
+  ImportActivitiesResponse,
+  ImportMappingResponse,
+  ImportRequest,
+  PlanDraft,
+  PlannerOptions,
+  PlanRequest,
+} from './types'
 
 /**
  * Client for the planning server (same origin, `/api/planner/...`). Every call carries the user's
@@ -138,6 +148,24 @@ export async function requestDraft(token: string, request: PlanRequest, opts: Ca
     throw new PlannerApiError(UNEXPECTED_MESSAGE, 'response', 200)
   }
   return body.draft
+}
+
+/**
+ * POST /api/planner/import: maps an unknown layout's columns (`columns`), or matches the schedule type
+ * and fills blank durations (`activities`). See docs/superpowers/specs/2026-11-22-plan-import-design.md.
+ */
+export async function requestImport(token: string, request: ImportRequest & { columns: NonNullable<ImportRequest['columns']> }, opts?: CallOptions): Promise<Extract<ImportMappingResponse, { ok: true }>>
+export async function requestImport(token: string, request: ImportRequest, opts?: CallOptions): Promise<Extract<ImportActivitiesResponse, { ok: true }>>
+export async function requestImport(token: string, request: ImportRequest, opts: CallOptions = {}): Promise<unknown> {
+  const body = await call('import', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }, opts)
+  if (isObject(body) && body.ok === false) {
+    throw new PlannerApiError(serverMessage(body) ?? 'The import could not be read.', 'server', 200)
+  }
+  const valid = request.columns
+    ? isObject(body) && body.ok === true && 'mapping' in body && (body.mapping === null || isObject(body.mapping))
+    : isObject(body) && body.ok === true && Array.isArray(body.durations) && Array.isArray(body.templateLinks) && 'scheduleType' in body
+  if (!valid) throw new PlannerApiError(UNEXPECTED_MESSAGE, 'response', 200)
+  return body
 }
 
 /** Checks one entry of a batch response; a malformed one becomes that item's failure, not the whole batch's. */

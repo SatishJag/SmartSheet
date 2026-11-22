@@ -105,7 +105,8 @@ export interface PlanRequest {
   notes?: string
 }
 
-export type DurationBasis = 'p50' | 'p80' | 'default' | 'adjusted'
+/** file / template / estimate: durations of an imported plan (the reason holds the wording). */
+export type DurationBasis = 'p50' | 'p80' | 'default' | 'adjusted' | 'file' | 'template' | 'estimate'
 
 export interface DraftActivity {
   code: string
@@ -120,6 +121,10 @@ export interface DraftActivity {
   activityId?: string
   responsibility?: string
   criteria?: string
+  /** An imported activity's status (one of the sheet's statuses); new plans start Not started. */
+  status?: string
+  /** An imported activity that took the template's links because the file gave it none. */
+  linksFromTemplate?: boolean
 }
 
 export interface DraftLink {

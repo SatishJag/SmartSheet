@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { lleDraft } from '../test/plannerFixtures'
-import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestDraft, SESSION_EXPIRED_MESSAGE } from './plannerApi'
+import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestDraft, requestImport, SESSION_EXPIRED_MESSAGE } from './plannerApi'
 import type { BatchPlanRequest, PlannerOptions } from './types'
 
 const OPTIONS: PlannerOptions = {
@@ -177,5 +177,28 @@ describe('getAccessToken', () => {
   it('no session is a session error', async () => {
     expect((await failure(getAccessToken(client(null)))).kind).toBe('session')
     expect((await failure(getAccessToken(client({ access_token: 'x' }, { message: 'boom' })))).kind).toBe('session')
+  })
+})
+
+describe('requestImport', () => {
+  const body = { hints: { fileName: 'plan.xlsx', sheetNames: ['Plan'] }, activities: [{ code: 'A', name: 'Dig', phase: '', hasDuration: false, hasPredecessors: false }] }
+
+  it('posts the request and returns the server’s answer', async () => {
+    const answer = { ok: true, scheduleType: null, targetCode: null, durations: [{ code: 'A', days: 5, basis: 'estimate', reason: 'x' }], templateLinks: [], history: null }
+    const fetch = mockFetch(() => reply(200, answer))
+    expect(await requestImport('tok', body)).toEqual(answer)
+    expect(fetch).toHaveBeenCalledWith('/api/planner/import', expect.objectContaining({ method: 'POST', body: JSON.stringify(body) }))
+  })
+
+  it('returns a mapping answer as it is', async () => {
+    mockFetch(() => reply(200, { ok: true, mapping: null }))
+    expect(await requestImport('tok', { hints: body.hints, columns: [{ sheet: 'Plan', rows: [] }] })).toEqual({ ok: true, mapping: null })
+  })
+
+  it('turns a refusal or a malformed answer into an error', async () => {
+    mockFetch(() => reply(429, { ok: false, error: 'You have reached the limit of 10 drafts per hour. Try again later.' }))
+    expect((await failure(requestImport('tok', body))).message).toBe('You have reached the limit of 10 drafts per hour. Try again later.')
+    mockFetch(() => reply(200, { ok: true }))
+    expect((await failure(requestImport('tok', body))).kind).toBe('response')
   })
 })
