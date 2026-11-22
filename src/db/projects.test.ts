@@ -63,6 +63,12 @@ describe('projects (0020, 0021, 0022)', () => {
     await expect(db.query(`insert into projects (code, name, project_type) values ('X', 'X', 'moon')`)).rejects.toThrow()
   })
 
+  it('0022 renames the key and checks to match the table', async () => {
+    await as.asSuperuser()
+    const r = await db.query<{ conname: string }>(`select conname from pg_constraint where conrelid = 'projects'::regclass and contype in ('p', 'c') order by conname`)
+    expect(r.rows.map((x) => x.conname)).toEqual(['projects_code_check', 'projects_name_check', 'projects_pkey'])
+  })
+
   it('procore_projects is gone', async () => {
     await as.asSuperuser()
     await expect(db.query(`select * from procore_projects`)).rejects.toThrow()

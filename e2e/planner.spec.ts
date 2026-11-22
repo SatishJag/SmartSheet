@@ -400,7 +400,7 @@ test('Plan with AI: a property plan needs a project, from the sample property pr
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
   await dialog.getByLabel('Project type').selectOption('properties')
   const project = dialog.getByLabel('Project', { exact: true })
-  await expect(project.locator('option')).toHaveText(['None', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower'])
+  await expect(project.locator('option')).toHaveText(['Choose a project…', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower'])
   await expect(dialog.getByLabel('Cost code')).toHaveCount(0)
   await dialog.getByLabel('Equipment name').fill('Lift for tower A')
   await dialog.getByLabel('Required on site').fill(REQUIRED)

@@ -591,7 +591,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                             aria-invalid={submitted && projectProblem ? true : undefined}
                             aria-describedby={submitted && projectProblem ? `${ids.chosenProject}-error` : undefined}
                           >
-                            <option value="">None</option>
+                            <option value="">Choose a project…</option>
                             {listed.map((p) => (
                               <option key={p.code} value={p.code}>
                                 {projectOption(p)}

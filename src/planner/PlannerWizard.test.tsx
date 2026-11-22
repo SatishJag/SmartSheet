@@ -899,12 +899,12 @@ describe('PlannerWizard: Procore project', () => {
   }
   const withProjects = (options: PlannerOptions = OPTIONS_P) => mockServer({ options: () => json(200, options) })
 
-  it('offers the projects after the schedule type, starting on None', async () => {
+  it('offers the projects after the schedule type, starting on Choose a project…', async () => {
     withProjects()
     setup()
     const project = await screen.findByLabelText('Project')
     expect(project).toHaveValue('')
-    expect(within(project).getAllByRole('option').map((o) => o.textContent)).toEqual(['None', 'BKK-03 — Bangkok 3'])
+    expect(within(project).getAllByRole('option').map((o) => o.textContent)).toEqual(['Choose a project…', 'BKK-03 — Bangkok 3'])
     // Right after the schedule type in reading order.
     const schedule = screen.getByLabelText('Schedule type')
     expect(schedule.compareDocumentPosition(project) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -1154,9 +1154,9 @@ describe('PlannerWizard: projects for both businesses', () => {
   it('lists only the chosen project type’s projects, under the label Project', async () => {
     withBoth()
     const { user } = setup()
-    expect(optionTexts(await screen.findByLabelText('Project'))).toEqual(['None', 'PRG-DC-01 — Data centre programme', 'BKK-03 — Bangkok 3'])
+    expect(optionTexts(await screen.findByLabelText('Project'))).toEqual(['Choose a project…', 'PRG-DC-01 — Data centre programme', 'BKK-03 — Bangkok 3'])
     await user.selectOptions(screen.getByLabelText('Project type'), 'properties')
-    expect(optionTexts(screen.getByLabelText('Project'))).toEqual(['None', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower'])
+    expect(optionTexts(screen.getByLabelText('Project'))).toEqual(['Choose a project…', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower'])
   })
 
   it('clears a project that does not belong to the new project type, and the sites that followed it', async () => {

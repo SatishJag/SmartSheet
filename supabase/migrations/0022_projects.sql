@@ -19,6 +19,9 @@
 
 alter table procore_projects rename to projects;
 alter policy procore_projects_read on projects rename to projects_read;
+alter index procore_projects_pkey rename to projects_pkey;
+alter table projects rename constraint procore_projects_code_check to projects_code_check;
+alter table projects rename constraint procore_projects_name_check to projects_name_check;
 
 alter table projects
   add column project_type text not null default 'data-centre' references project_types (id),
