@@ -42,7 +42,8 @@ async function offered(projectType: string): Promise<string[]> {
 
 describe('0013_more_schedule_types', () => {
   it('offers different schedule types under Data centre and Properties, each opening on its main one', async () => {
-    expect(await offered('data-centre')).toEqual(['lle-procurement', 'other-equipment-procurement', 'subcontract-procurement', 'consultant-appointment'])
+    // 0023 puts the Data centre master schedule first under Data centre.
+    expect(await offered('data-centre')).toEqual(['dc-master', 'lle-procurement', 'other-equipment-procurement', 'subcontract-procurement', 'consultant-appointment'])
     // 0018 puts the property development master schedule first under Properties.
     expect(await offered('properties')).toEqual(['property-development', 'materials-procurement', 'lle-procurement', 'subcontract-procurement', 'consultant-appointment'])
   })
@@ -50,14 +51,15 @@ describe('0013_more_schedule_types', () => {
   it('lists only project types that exist, and every type says that its durations are placeholders', async () => {
     const unknown = await db.query(`select s.id, p from schedule_types s, unnest(s.project_types) p where p not in (select id from project_types)`)
     expect(unknown.rows).toEqual([])
-    const r = await db.query<{ id: string; description: string }>(`select id, description from schedule_types where id <> 'lle-procurement' order by id`)
+    // The Data centre master's durations are the owner's template, not placeholders (0023).
+    const r = await db.query<{ id: string; description: string }>(`select id, description from schedule_types where id not in ('lle-procurement', 'dc-master') order by id`)
     expect(r.rows).toHaveLength(5)
     for (const t of r.rows) expect(t.description, t.id).toMatch(/placeholders/)
   })
 
   it('gives every schedule type a coherent catalog: sequence 1..n, one target, links to real codes, no loops', async () => {
     const types = (await db.query<{ id: string }>(`select id from schedule_types order by id`)).rows.map((x) => x.id)
-    expect(types).toHaveLength(6)
+    expect(types).toHaveLength(7)
     for (const type of types) {
       const rows = await catalog(type)
       expect(rows.length, type).toBeGreaterThanOrEqual(7)
@@ -79,7 +81,7 @@ describe('0013_more_schedule_types', () => {
           expect(l.from).not.toBe(r.code)
           expect(['FS', 'SS', 'FF', 'SF']).toContain(l.type)
         }
-        if (!r.is_target || r.default_days > 0) expect(r.default_days, `${type}: ${r.code}`).toBeGreaterThanOrEqual(type === 'property-development' ? 0 : 1)
+        if (!r.is_target || r.default_days > 0) expect(r.default_days, `${type}: ${r.code}`).toBeGreaterThanOrEqual(['property-development', 'dc-master'].includes(type) ? 0 : 1)
       }
       // Kahn's algorithm: every activity is reachable in topological order.
       const done = new Set<string>()
