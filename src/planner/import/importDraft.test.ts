@@ -138,3 +138,29 @@ describe('buildImportDraft: fallback estimates', () => {
     expect(build(acts, server).warnings).toContain('2 durations could not be estimated; they are set to 5 days. Check them in Basis.')
   })
 })
+
+describe('buildImportDraft: links the sheet cannot hold', () => {
+  it('keeps one of two different links between the same pair, and says so', () => {
+    const acts = [
+      act('A', { durationDays: 8, durationFrom: 'file' }),
+      act('B', { durationDays: 3, durationFrom: 'file', links: [{ from: 'A', type: 'SS', lagDays: 0 }, { from: 'A', type: 'FF', lagDays: 0 }], hasPredecessors: true }),
+    ]
+    const { draft, warnings } = build(acts, { ...SERVER, scheduleType: null, targetCode: null, templateLinks: [], durations: [], history: null })
+    expect(draft.links).toEqual([{ from: 'A', to: 'B', type: 'SS', lagDays: 0 }])
+    expect(warnings).toContain('B has two links from A (SS and FF); a schedule holds one link per pair, so only SS is kept.')
+  })
+
+  it('leaves out a template link that would close a loop with the file’s links', () => {
+    // The file says P010 follows P020; the template would add P020 after P010.
+    const acts = [
+      act('P020', { durationDays: 2, durationFrom: 'file' }),
+      act('P010', { durationDays: 2, durationFrom: 'file', links: [{ from: 'P020', type: 'FS', lagDays: 0 }], hasPredecessors: true }),
+    ]
+    const server: ImportActivitiesResult = { ...SERVER, targetCode: null, durations: [], templateLinks: [{ to: 'P020', from: 'P010', type: 'FS', lagDays: 0 }] }
+    const { draft, warnings } = build(acts, server)
+    expect(draft.links).toEqual([{ from: 'P020', to: 'P010', type: 'FS', lagDays: 0 }])
+    expect(draft.activities.find((a) => a.code === 'P020')?.linksFromTemplate).toBeUndefined()
+    expect(warnings).toContain('The template link P010 → P020 is left out: it would make a loop with the links in your file.')
+    expect(scheduleImport(draft, defaultCalendar, TODAY)).toHaveProperty('plan')
+  })
+})

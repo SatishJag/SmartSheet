@@ -53,11 +53,58 @@ export function buildImportDraft(input: ImportDraftInput): { draft: PlanDraft; w
     return { ...base, durationDays: d.days, basis: d.basis, reason: d.reason }
   })
 
-  const links: DraftLink[] = [
-    ...activities.flatMap((a) => a.links.map((l) => ({ from: l.from, to: a.code, type: l.type, lagDays: l.lagDays }))),
-    ...server.templateLinks.map((l) => ({ from: l.from, to: l.to, type: l.type, lagDays: l.lagDays })),
-  ]
-  for (const code of templateTargets) warnings.push(`${code} has no predecessors in the file; it uses the template’s links.`)
+  // The file's links. A schedule holds one link per pair: a second, different one is left out and named.
+  const links: DraftLink[] = []
+  const byPair = new Map<string, DraftLink>()
+  for (const a of activities) {
+    for (const l of a.links) {
+      const key = `${l.from}>${a.code}`
+      const kept = byPair.get(key)
+      if (kept) {
+        if (kept.type !== l.type || kept.lagDays !== l.lagDays) {
+          warnings.push(`${a.code} has two links from ${l.from} (${kept.type} and ${l.type}); a schedule holds one link per pair, so only ${kept.type} is kept.`)
+        }
+        continue
+      }
+      const link = { from: l.from, to: a.code, type: l.type, lagDays: l.lagDays }
+      byPair.set(key, link)
+      links.push(link)
+    }
+  }
+
+  // Template links, one at a time, skipping any that would close a loop with the links so far.
+  const successors = new Map<string, string[]>()
+  const addEdge = (from: string, to: string) => successors.set(from, [...(successors.get(from) ?? []), to])
+  links.forEach((l) => addEdge(l.from, l.to))
+  const reaches = (start: string, goal: string) => {
+    const seen = new Set<string>()
+    const stack = [start]
+    while (stack.length > 0) {
+      const at = stack.pop()!
+      if (at === goal) return true
+      if (seen.has(at)) continue
+      seen.add(at)
+      stack.push(...(successors.get(at) ?? []))
+    }
+    return false
+  }
+  const accepted = new Set<string>()
+  for (const l of server.templateLinks) {
+    if (byPair.has(`${l.from}>${l.to}`)) continue
+    if (reaches(l.to, l.from)) {
+      warnings.push(`The template link ${l.from} → ${l.to} is left out: it would make a loop with the links in your file.`)
+      continue
+    }
+    const link = { from: l.from, to: l.to, type: l.type, lagDays: l.lagDays }
+    byPair.set(`${l.from}>${l.to}`, link)
+    links.push(link)
+    addEdge(l.from, l.to)
+    accepted.add(l.to)
+  }
+  for (const code of accepted) warnings.push(`${code} has no predecessors in the file; it uses the template’s links.`)
+  for (const a of draftActivities) {
+    if (a.linksFromTemplate && !accepted.has(a.code)) delete a.linksFromTemplate
+  }
   const fallbacks = draftActivities.filter((a) => a.basis === 'estimate' && a.reason.startsWith('default:')).length
   if (fallbacks > 0) {
     warnings.push(`${fallbacks} duration${fallbacks === 1 ? '' : 's'} could not be estimated; ${fallbacks === 1 ? 'it is' : 'they are'} set to 5 days. Check them in Basis.`)

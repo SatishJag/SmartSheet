@@ -1366,6 +1366,49 @@ describe('PlannerWizard: import a plan from Excel', () => {
     expect(screen.getByText('The AI matched the columns on sheet "odd" (headings in row 1): Ref → activity ID, What → activity, Days → duration. Check them before you preview.')).toBeInTheDocument()
   })
 
+  it('changing the project type on What we found does not touch the request form', async () => {
+    // Under Properties the first schedule type is property development, which has no equipment.
+    mockServer({
+      options: () => json(200, { ...OPTIONS_IMPORT, scheduleTypes: [OPTIONS_IMPORT.scheduleTypes[1], OPTIONS_IMPORT.scheduleTypes[0]] }),
+      importPlan: (req) => json(200, { ok: true, ...FOUND, ...(req.scheduleType === null ? { scheduleType: null } : {}) }),
+    })
+    const { user } = setup()
+    await user.click(await card('Switchgear'))
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.selectOptions(screen.getByLabelText('Project type'), 'data-centre')
+    await waitFor(() => expect(screen.getByLabelText('Schedule type')).not.toBeDisabled())
+    await user.selectOptions(screen.getByLabelText('Project type'), 'properties')
+    await waitFor(() => expect(screen.getByLabelText('Schedule type')).not.toBeDisabled())
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await card('Switchgear')).toBeChecked()
+  })
+
+  it('a project-type change whose re-fetch fails puts the project type back too', async () => {
+    let calls = 0
+    withImport(() => (++calls === 1 ? json(200, { ok: true, ...FOUND }) : json(429, { ok: false, error: 'You have reached the limit of 10 drafts per hour. Try again later.' })))
+    const { user } = setup()
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.selectOptions(screen.getByLabelText('Project type'), 'data-centre')
+    expect(await screen.findByRole('alert')).toHaveTextContent('limit of 10 drafts per hour')
+    expect(screen.getByLabelText('Project type')).toHaveValue('properties')
+    expect(screen.getByLabelText('Schedule type')).toHaveValue('property-development')
+  })
+
+  it('closing the wizard while it reads a file stops the import', async () => {
+    let release: (r: Response) => void = () => {}
+    const { imports } = withImport((req) => (req.columns ? new Promise<Response>((r) => (release = r)) : json(200, { ok: true, ...FOUND })))
+    const { user, onClose } = setup()
+    await upload(user, new File(['Ref,What,Days\nR1,Dig,\n'], 'odd.csv', { type: 'text/csv' }))
+    await screen.findByRole('heading', { name: 'Reading your plan' })
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onClose).toHaveBeenCalled()
+    release(json(200, { ok: true, mapping: { sheet: 'odd', headingRow: 0, fields: { activityId: 0, name: 1, duration: 2 } } }))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(imports).toHaveLength(1) // the mapping only: no duration request after Cancel
+  })
+
   it('a file with no activity table says so and creates nothing', async () => {
     withImport((req) => json(200, req.columns ? { ok: true, mapping: null } : { ok: true, ...FOUND }))
     const { user } = setup()

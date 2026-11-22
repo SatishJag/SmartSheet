@@ -183,3 +183,43 @@ describe('readActivities: duplicate IDs', () => {
     expect(warnings).toEqual(['P010 appears more than once; the later row is P010-3.'])
   })
 })
+
+describe('review fixes: durations and predecessors', () => {
+  it('keeps fractional durations as they are; only 0 makes a milestone', () => {
+    const wb = sheet([
+      ['Activity', 'Duration', 'Status'],
+      ['Quarter day', '0.25', ''],
+      ['Day and a bit', '1.25', ''],
+    ])
+    const { activities } = readActivities(wb, findActivityTable(wb)!, defaultCalendar)
+    expect(activities.map((a) => [a.durationDays, a.milestone])).toEqual([
+      [0.25, false],
+      [1.25, false],
+    ])
+  })
+
+  it('reads compact lags and IDs that look like link types, using the file’s IDs', () => {
+    const codes = new Set(['P010', 'HV-FF', 'P010-2'])
+    expect(parsePredecessors('P010+5; HV-FF; P010-2; P010 SS-2', codes)).toEqual([
+      { from: 'P010', type: 'FS', lagDays: 5 },
+      { from: 'HV-FF', type: 'FS', lagDays: 0 },
+      { from: 'P010-2', type: 'FS', lagDays: 0 },
+      { from: 'P010', type: 'SS', lagDays: -2 },
+    ])
+  })
+
+  it('applies that inside readActivities', () => {
+    const wb = sheet([
+      ['Activity ID', 'Activity', 'Duration', 'Predecessors'],
+      ['P010', 'First', '2', ''],
+      ['HV-FF', 'Second', '2', ''],
+      ['P020', 'Third', '2', 'P010+5; HV-FF'],
+    ])
+    const { activities, warnings } = readActivities(wb, findActivityTable(wb)!, defaultCalendar)
+    expect(activities[2].links).toEqual([
+      { from: 'P010', type: 'FS', lagDays: 5 },
+      { from: 'HV-FF', type: 'FS', lagDays: 0 },
+    ])
+    expect(warnings).toEqual([])
+  })
+})

@@ -106,12 +106,22 @@ export function findActivityTable(wb: Workbook): TableMapping | null {
   return best?.map ?? null
 }
 
-/** `P080 FS; P090 SS+5; P100FF-2d` → links ("Project start" and blanks → none). Lags in working days. */
-export function parsePredecessors(text: string): ImportedLink[] {
+/**
+ * `P080 FS; P090 SS+5; P100FF-2d; P010+5` → links ("Project start" and blanks → none). Lags in working
+ * days. Given the file's IDs, an exact ID wins first, so IDs such as `HV-FF` or `P010-2` are not split.
+ */
+export function parsePredecessors(text: string, codes?: ReadonlySet<string>): ImportedLink[] {
   const links: ImportedLink[] = []
   for (const raw of text.split(/[;,]/)) {
     const token = raw.trim()
     if (!token || /^project start$/i.test(token)) continue
+    if (codes) {
+      const known = resolveWithCodes(token, codes)
+      if (known) {
+        links.push(known)
+        continue
+      }
+    }
     const typed = /^(.+?)\s*(FS|SS|FF|SF)\s*(?:([+-])\s*(\d+))?\s*d?$/i.exec(token)
     if (typed) {
       const lag = typed[4] ? Number(typed[4]) * (typed[3] === '-' ? -1 : 1) : 0
@@ -126,6 +136,18 @@ export function parsePredecessors(text: string): ImportedLink[] {
     links.push({ from: token, type: 'FS', lagDays: 0 })
   }
   return links
+}
+
+/** A token read against the file's IDs: exact, `ID TYPE[±lag]` or `ID±lag`; null when no ID fits. */
+function resolveWithCodes(token: string, codes: ReadonlySet<string>): ImportedLink | null {
+  if (codes.has(token)) return { from: token, type: 'FS', lagDays: 0 }
+  const typed = /^(.+?)\s*(FS|SS|FF|SF)\s*(?:([+-])\s*(\d+))?\s*d?$/i.exec(token)
+  if (typed && codes.has(typed[1].trim())) {
+    return { from: typed[1].trim(), type: typed[2].toUpperCase() as DepType, lagDays: typed[4] ? Number(typed[4]) * (typed[3] === '-' ? -1 : 1) : 0 }
+  }
+  const lagged = /^(.+?)\s*([+-])\s*(\d+)\s*d?$/i.exec(token)
+  if (lagged && codes.has(lagged[1].trim())) return { from: lagged[1].trim(), type: 'FS', lagDays: Number(lagged[3]) * (lagged[2] === '-' ? -1 : 1) }
+  return null
 }
 
 const STATUS_WORDS: Record<string, string> = {
@@ -202,7 +224,8 @@ export function readActivities(wb: Workbook, map: TableMapping, cal: Calendar): 
     const finish = date('finish')
 
     const rawDuration = cell(row, 'duration').replace(/\s*d(ays)?$/i, '')
-    const given = /^\d+(\.\d+)?$/.test(rawDuration) ? Math.round(Number(rawDuration)) : null
+    // Kept as written: a quarter day stays 0.25 (only 0 makes a milestone).
+    const given = /^\d+(\.\d+)?$/.test(rawDuration) ? Number(rawDuration) : null
     const milestone = /milestone/i.test(cell(row, 'kind')) || (given === 0 && !(start && finish && start !== finish))
     let durationDays: number | null = given
     let durationFrom: ImportedActivity['durationFrom'] = given === null ? null : 'file'
@@ -217,7 +240,7 @@ export function readActivities(wb: Workbook, map: TableMapping, cal: Calendar): 
       }
     }
 
-    const links = parsePredecessors(cell(row, 'predecessors'))
+    const links = parsePredecessors(cell(row, 'predecessors'), taken)
     const responsibility = cell(row, 'responsibility')
     const criteria = cell(row, 'criteria')
     return {

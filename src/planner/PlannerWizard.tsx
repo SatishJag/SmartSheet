@@ -477,8 +477,11 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     setImportProblem(null)
     setStep('importing')
     const formBefore = { projectType, scheduleType, project }
+    // Closing the wizard aborts this signal: no further request is sent for an abandoned import.
+    const signal = nextSignal()
     try {
       const wb = await readWorkbook(file)
+      if (signal.aborted) return
       const token = await getAccessToken(client)
       const hints = importHints(wb)
       let map = findActivityTable(wb)
@@ -487,14 +490,15 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
         const columns = wb.sheets
           .slice(0, MAP_SAMPLE_SHEETS)
           .map((sh) => ({ sheet: sh.name, rows: sh.rows.slice(0, MAP_SAMPLE_ROWS).map((r) => r.slice(0, 60).map((c) => c.slice(0, 500))) }))
-        map = (await requestImport(token, { hints, columns })).mapping
+        map = (await requestImport(token, { hints, columns }, { signal })).mapping
+        if (signal.aborted) return
       }
       if (!map) throw new Error(NO_TABLE)
       const { activities, warnings: rowWarnings } = readActivities(wb, map, calendar)
       const warnings = guessed ? [mappingWarning(wb, map), ...rowWarnings] : rowWarnings
       if (activities.length === 0) throw new Error(NO_TABLE)
-      const server = await requestImport(token, { hints, activities: activities.map(importRef) })
-      if (!mounted.current) return
+      const server = await requestImport(token, { hints, activities: activities.map(importRef) }, { signal })
+      if (!mounted.current || signal.aborted) return
 
       // The project type follows the detected schedule type; the project and date come from the file.
       const basis = readBasis(wb)
@@ -507,7 +511,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
       setSubmitted(false)
       setStep('imported')
     } catch (err) {
-      if (!mounted.current) return
+      if (!mounted.current || isAbort(err) || signal.aborted) return
       setFailure({ message: describe(err, 'Could not read the file'), retry: null })
       setStep('request')
     } finally {
@@ -516,20 +520,30 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   }
 
   /** The planner corrected the schedule type: durations, links and target come from the chosen one. */
-  async function changeImportType(id: string) {
+  /** `revert`: the project type (and project) to restore if this correction fails, when one forced it. */
+  async function changeImportType(id: string, revert?: { projectType: string; project: string }) {
     if (!imported) return
     const current = imported
     setImported({ ...current, scheduleType: id })
     setImportBusy(true)
     setImportProblem(null)
+    const signal = nextSignal()
     try {
       const token = await getAccessToken(client)
-      const server = await requestImport(token, { hints: importHints(current.workbook), activities: current.activities.map(importRef), scheduleType: id || null })
-      if (mounted.current) setImported((prev) => (prev ? { ...prev, server } : prev))
+      const server = await requestImport(
+        token,
+        { hints: importHints(current.workbook), activities: current.activities.map(importRef), scheduleType: id || null },
+        { signal },
+      )
+      if (mounted.current && !signal.aborted) setImported((prev) => (prev ? { ...prev, server } : prev))
     } catch (err) {
-      if (!mounted.current) return
-      // The loaded durations, links and target belong to the previous type: go back to it.
+      if (!mounted.current || isAbort(err) || signal.aborted) return
+      // The loaded durations, links and target belong to the previous type (and project type): go back to them.
       setImported((prev) => (prev ? { ...prev, scheduleType: current.scheduleType } : prev))
+      if (revert) {
+        setProjectType(revert.projectType)
+        setProject(revert.project)
+      }
       setImportProblem(describe(err, 'Could not fetch the durations for that schedule type'))
     } finally {
       if (mounted.current) setImportBusy(false)
@@ -537,9 +551,11 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   }
 
   function chooseImportProjectType(id: string) {
-    chooseProjectType(id)
+    // Only the project type: the request form's schedule type (and its equipment) stays as it was for Back.
+    const before = { projectType, project }
+    setProjectType(id)
     // A schedule type not offered under the new project type becomes a general schedule.
-    if (imported?.scheduleType && options && !schedulesFor(options, id).some((t) => t.id === imported.scheduleType)) void changeImportType('')
+    if (imported?.scheduleType && options && !schedulesFor(options, id).some((t) => t.id === imported.scheduleType)) void changeImportType('', before)
   }
 
   const importDraftFor = (state: ImportState) =>
