@@ -317,7 +317,9 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   // Set when the planner changes the project type or schedule type: a late match must not undo it.
   const typesTouched = useRef(false)
   useEffect(() => {
-    if (!options) return
+    // Only while the request is being filled in: a plan in preview or being saved keeps the project it was
+    // drafted for, whatever Procore says later.
+    if (!options || step !== 'request') return
     if (!initialProject) {
       // The page lost its project (a later Procore context with no match): drop the one we chose, if it is still ours.
       const applied = appliedInitial.current?.applied
@@ -340,7 +342,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     }
     appliedInitial.current = { code: initialProject, applied: found.code }
     setProject(found.code)
-  }, [options, initialProject, project, projectType])
+  }, [options, initialProject, project, projectType, step])
 
   // Each item's delivery site follows the plan's project when that is a site, until the user picks or clears one.
   useEffect(() => {

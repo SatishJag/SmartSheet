@@ -1770,3 +1770,35 @@ describe('PlannerWizard: embedded review fixes', () => {
     await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue(''))
   })
 })
+
+describe('PlannerWizard: embedded, project kept after the request (Devin review)', () => {
+  const OPTS: PlannerOptions = {
+    projectTypes: [{ id: 'data-centre', name: 'Data centre', description: 'Halls' }],
+    scheduleTypes: [
+      { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'], itemLabels: { noun: 'plan', typeExample: 'Data centre', nameExample: 'Bangkok 3', heading: 'Which data centre are you planning?', intro: 'Choose the project and its Ready for Service date.', dateLabel: 'RFS date' } },
+    ],
+    equipmentTypes: { 'dc-master': [] },
+    projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
+  }
+
+  it('does not drop the matched project once the plan is in preview', async () => {
+    mockServer({ options: () => json(200, OPTS), draft: (r) => json(200, { ok: true, draft: buildDcMasterDraft({ request: r, catalog: dcMasterCatalog(), histories: {} }) }) })
+    const { client, userId } = fakeClient()
+    const onCreated = vi.fn()
+    const props = { client, userId, onClose: vi.fn(), onCreated, today: TODAY, embedded: true }
+    const { rerender } = render(<PlannerWizard {...props} initialProject="BKK-03" />)
+    const user = userEvent.setup()
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue('BKK-03'))
+    await user.type(screen.getByLabelText('RFS date'), '2030-06-28')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByRole('table')
+    // Procore moves the panel to a project with no match while the plan is being reviewed.
+    rerender(<PlannerWizard {...props} initialProject={undefined} />)
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const columns = (await client.from('columns').select('id,title')).data as { id: string; title: string }[]
+    const projectCol = columns.find((c) => c.title === 'Project')!.id
+    const rows = (await client.from('rows').select('cells')).data as { cells: Record<string, unknown> }[]
+    expect(rows.every((r) => r.cells[projectCol] === 'BKK-03 — Bangkok 3')).toBe(true)
+  })
+})
