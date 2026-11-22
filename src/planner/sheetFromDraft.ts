@@ -91,7 +91,8 @@ export function basisText(activity: DraftActivity, history: HistorySummary): str
       return `${activity.basis} of ${n} project${n === 1 ? '' : 's'}${sample}`
     }
     case 'default':
-      return 'default (no history)'
+      // Catalogs give 0 days only to milestones: say what it is rather than that history is missing.
+      return activity.durationDays === 0 ? 'milestone' : 'default (no history)'
     case 'adjusted':
       return `adjusted: ${activity.reason}${sample}`
     case 'file':

@@ -99,3 +99,11 @@ describe('buildDcMasterDraft', () => {
     expect(draft.history).toMatchObject({ scheduleType: 'dc-master', equipmentType: null, projectCount: 8, sampleOnly: false, stats: [] })
   })
 })
+
+describe('buildDcMasterDraft: milestone Basis', () => {
+  it('shows "milestone" in Basis for the template’s milestones', () => {
+    const draft = build()
+    const rfs = draft.activities.find((a) => a.code === 'DC_0192')!
+    expect(basisText(rfs, draft.history)).toBe('milestone')
+  })
+})

@@ -56,6 +56,8 @@ describe('basisText', () => {
   })
   it('marks defaults, adjustments and sample data', () => {
     expect(basisText(activity('X', 5, { basis: 'default' }), history)).toBe('default (no history)')
+    // A milestone takes no time: its Basis says what it is, not that history is missing.
+    expect(basisText(activity('M', 0, { basis: 'default', reason: 'Milestone: takes no time.' }), history)).toBe('milestone')
     expect(basisText(activity('X', 5, { basis: 'adjusted', reason: 'Raised for winter shipping.' }), history)).toBe(
       'adjusted: Raised for winter shipping.',
     )
