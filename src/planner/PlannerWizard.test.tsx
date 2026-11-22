@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -8,7 +10,7 @@ import { defaultCalendar } from '../engine/calendar'
 import { catalogDraft } from '../test/plannerFixtures'
 import { planBackward } from './backward'
 import { PlannerWizard } from './PlannerWizard'
-import type { BatchPlanRequest, PlanDraft, PlannerOptions, PlanRequest } from './types'
+import type { BatchPlanRequest, ImportActivitiesResult, ImportRequest, PlanDraft, PlannerOptions, PlanRequest } from './types'
 
 const TODAY = '2026-11-16' // a Monday
 
@@ -33,6 +35,7 @@ interface Server {
   options?: () => Response | Promise<Response>
   draft?: (request: PlanRequest) => Response | Promise<Response>
   batch?: (request: BatchPlanRequest) => Response | Promise<Response>
+  importPlan?: (request: ImportRequest) => Response | Promise<Response>
 }
 
 /** The batch reply a server gives: each item drafted from the catalog, echoing its request. */
@@ -51,6 +54,7 @@ function batchReply(request: BatchPlanRequest, failing: number[] = []): Response
 function mockServer(server: Server = {}) {
   const drafts: PlanRequest[] = []
   const batches: BatchPlanRequest[] = []
+  const imports: ImportRequest[] = []
   const headers: Record<string, string>[] = []
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     headers.push(init.headers as Record<string, string>)
@@ -65,10 +69,15 @@ function mockServer(server: Server = {}) {
       batches.push(request)
       return (server.batch ?? ((r) => batchReply(r)))(request)
     }
+    if (url === '/api/planner/import') {
+      const request = JSON.parse(init.body as string) as ImportRequest
+      imports.push(request)
+      return (server.importPlan ?? (() => json(404, { ok: false, error: 'not found' })))(request)
+    }
     return json(404, { error: 'not found' })
   })
   vi.stubGlobal('fetch', fetch)
-  return { fetch, drafts, batches, headers }
+  return { fetch, drafts, batches, headers, imports }
 }
 
 /** The catalog draft echoing the request (as the server does). */
@@ -1199,5 +1208,130 @@ describe('PlannerWizard: projects for both businesses', () => {
     await requestTwo(user)
     await screen.findByText(/2 items · earliest required start/)
     expect(batches).toHaveLength(1)
+  })
+})
+
+describe('PlannerWizard: import a plan from Excel', () => {
+  const OPTIONS_IMPORT: PlannerOptions = {
+    projectTypes: [
+      { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+      { id: 'properties', name: 'Properties', description: 'Villas and towers' },
+    ],
+    scheduleTypes: [
+      { id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] },
+      { id: 'property-development', name: 'Property development master schedule', description: 'Property', projectTypes: ['properties'] },
+    ],
+    equipmentTypes: { 'lle-procurement': ['Power transformer', 'Switchgear'], 'property-development': [] },
+    costCodes: [{ code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' }],
+    projects: [
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+      { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+      { code: 'TWR-01', name: 'Sample tower', isProgram: false, projectType: 'properties', inProcore: false },
+    ],
+  }
+  const FOUND: ImportActivitiesResult = {
+    scheduleType: 'property-development',
+    targetCode: 'P420',
+    durations: [{ code: 'P035', days: 12, basis: 'estimate', reason: 'Similar to a site survey.' }],
+    templateLinks: [],
+    history: { scheduleType: 'property-development', equipmentType: null, projectCount: 0, sampleOnly: false, stats: [] },
+  }
+  const fixtureFile = () => new File([readFileSync(resolve(__dirname, 'import/__fixtures__/plan-template.xlsx'))], 'Plan template.xlsx')
+  const withImport = (importPlan: Server['importPlan'] = () => json(200, { ok: true, ...FOUND })) =>
+    mockServer({ options: () => json(200, OPTIONS_IMPORT), importPlan })
+
+  async function upload(user: ReturnType<typeof userEvent.setup>, file: File = fixtureFile()) {
+    await user.upload(await screen.findByLabelText('Import from Excel file'), file)
+  }
+
+  it('imports a plan: What we found shows the detected project, handover and counts', async () => {
+    withImport()
+    const { user } = setup()
+    await upload(user)
+    expect(await screen.findByRole('heading', { name: 'What we found' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Project type')).toHaveValue('properties')
+    expect(screen.getByLabelText('Schedule type')).toHaveValue('property-development')
+    expect(screen.getByLabelText('Project')).toHaveValue('VIL-01')
+    expect(screen.getByLabelText('Planned handover')).toHaveValue('2028-06-30')
+    expect(screen.getByText('6 activities: 5 durations from your file, 1 filled in')).toBeInTheDocument()
+  })
+
+  it('sends only codes, names, stages and flags to the server', async () => {
+    const { imports } = withImport()
+    const { user } = setup()
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    expect(imports).toHaveLength(1)
+    expect(imports[0].activities![0]).toEqual({ code: 'P010', name: 'Define development brief and feasibility', phase: '01 Feasibility', hasDuration: true, hasPredecessors: false })
+    const sent = JSON.stringify(imports)
+    expect(sent).not.toContain('Product mix') // criteria
+    expect(sent).not.toContain('Investment / Client') // responsibility
+    expect(sent).not.toContain('2027-01-04') // dates
+  })
+
+  it('requires the project and handover before Preview', async () => {
+    withImport()
+    const { user } = setup()
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.selectOptions(screen.getByLabelText('Project'), '')
+    await user.clear(screen.getByLabelText('Planned handover'))
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Choose the project')
+    await user.selectOptions(screen.getByLabelText('Project'), 'VIL-01')
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter the planned handover date')
+  })
+
+  it('changing the schedule type fetches durations again', async () => {
+    const { imports } = withImport()
+    const { user } = setup()
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.selectOptions(screen.getByLabelText('Schedule type'), '')
+    await waitFor(() => expect(imports).toHaveLength(2))
+    expect(imports[1].scheduleType).toBeNull()
+  })
+
+  it('the preview of an import has no Regenerate controls, and Back returns to What we found', async () => {
+    withImport()
+    const { user } = setup()
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByRole('button', { name: 'Create schedule' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Regenerate/ })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Instructions for a new draft/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await screen.findByRole('heading', { name: 'What we found' })).toBeInTheDocument()
+  })
+
+  it('Create makes one sheet with the file’s activities, IDs, statuses and Basis notes', async () => {
+    withImport()
+    const { client, user, onCreated } = setup()
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    await user.click(await screen.findByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const columns = (await client.from('columns').select('id,title')).data as { id: string; title: string }[]
+    const col = (title: string) => columns.find((c) => c.title === title)!.id
+    expect(columns.map((c) => c.title)).not.toContain('Cost code')
+    const rows = (await client.from('rows').select('cells')).data as { cells: Record<string, unknown> }[]
+    expect(rows).toHaveLength(6)
+    const byId = (id: string) => rows.find((r) => r.cells[col('Activity ID')] === id)!.cells
+    expect(byId('P010')[col('Task')]).toBe('Define development brief and feasibility')
+    expect(byId('P010')[col('Basis')]).toBe('from your file')
+    expect(byId('P030')[col('Status')]).toBe('In progress')
+    expect(byId('P035')[col('Basis')]).toBe('AI estimate: Similar to a site survey.')
+    expect(byId('P010')[col('Project')]).toBe('VIL-01 — Sample villa')
+  })
+
+  it('a file with no activity table says so and creates nothing', async () => {
+    withImport((req) => json(200, req.columns ? { ok: true, mapping: null } : { ok: true, ...FOUND }))
+    const { user } = setup()
+    await upload(user, new File(['Alpha,Beta\n1,2\n'], 'notes.csv', { type: 'text/csv' }))
+    expect(await screen.findByText('No list of activities found in this file.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'What we found' })).not.toBeInTheDocument()
   })
 })

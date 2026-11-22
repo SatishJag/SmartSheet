@@ -410,3 +410,61 @@ test('Plan with AI: a property plan needs a project, from the sample property pr
   await dialog.getByRole('button', { name: 'Generate' }).click()
   await expect(dialog.getByRole('table')).toBeVisible()
 })
+
+test('Plan with AI: import a plan from Excel, confirm what was found, and create it', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(`${TODAY}T10:00:00`))
+  const imports: unknown[] = []
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        projectTypes: [
+          { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+          { id: 'properties', name: 'Properties', description: 'Villas and towers' },
+        ],
+        scheduleTypes: [
+          ...OPTIONS.scheduleTypes.map((t) => ({ ...t, projectTypes: ['data-centre', 'properties'] })),
+          { id: 'property-development', name: 'Property development master schedule', description: 'Property', projectTypes: ['properties'] },
+        ],
+        projects: [
+          { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+          { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+        ],
+      } satisfies PlannerOptions,
+    }),
+  )
+  await page.route('**/api/planner/import', (route) => {
+    imports.push(route.request().postDataJSON())
+    return route.fulfill({
+      json: {
+        ok: true,
+        scheduleType: 'property-development',
+        targetCode: 'P420',
+        durations: [{ code: 'P035', days: 12, basis: 'estimate', reason: 'Similar to a site survey.' }],
+        templateLinks: [],
+        history: { scheduleType: 'property-development', equipmentType: null, projectCount: 0, sampleOnly: false, stats: [] },
+      },
+    })
+  })
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  await expect(dialog.getByRole('button', { name: 'Import from Excel', exact: true })).toBeVisible()
+  await dialog.getByLabel('Import from Excel file').setInputFiles('src/planner/import/__fixtures__/plan-template.xlsx')
+
+  await expect(dialog.getByRole('heading', { name: 'What we found' })).toBeVisible()
+  await expect(dialog.getByText('6 activities: 5 durations from your file, 1 filled in')).toBeVisible()
+  await expect(dialog.getByLabel('Project', { exact: true })).toHaveValue('VIL-01')
+  await expect(dialog.getByLabel('Planned handover')).toHaveValue('2028-06-30')
+  expect(imports).toHaveLength(1)
+
+  await dialog.getByRole('button', { name: 'Preview' }).click()
+  await expect(dialog.getByRole('button', { name: /Regenerate/ })).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Create schedule' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('grid')).toBeVisible()
+  await expect(await gridCell(page, 1, 'Activity ID')).toHaveText('P010')
+  await expect(await gridCell(page, 1, 'Basis')).toHaveText('from your file')
+  await expect(await gridCell(page, 3, 'Status')).toContainText('In progress')
+  await expect(await gridCell(page, 4, 'Basis')).toHaveText('AI estimate: Similar to a site survey.')
+})

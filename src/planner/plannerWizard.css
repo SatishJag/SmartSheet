@@ -763,3 +763,14 @@
   .planner-tile-check,
   .planner-accordion-chevron { transition: none; }
 }
+
+/* ---------- import a plan from Excel ---------- */
+.planner-import { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 16px; }
+.planner-import small { color: var(--ink-3); flex: 1 1 240px; }
+.planner-import-summary { margin: 0 0 14px; font-weight: 600; }
+.planner-imported .planner-card .planner-field + .planner-field,
+.planner-imported .planner-card .planner-field-pair + .planner-field,
+.planner-imported .planner-card .planner-field + .planner-field-pair { margin-top: 16px; }
+.planner-import-warnings h4 { margin: 0 0 8px; font-size: 0.9375rem; }
+.planner-import-warnings ul { margin: 0; padding-left: 20px; color: var(--ink-2); }
+.planner-import-warnings li + li { margin-top: 4px; }
