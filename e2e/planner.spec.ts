@@ -573,3 +573,51 @@ test('Data centre All: full plan from the master template, package rows coded', 
   await expect(chiller).toHaveText('CHL — Chiller')
   await expect(await gridCell(page, 82, 'Delivery site')).toHaveText('BKK-03 — Bangkok 3')
 })
+
+test('Plan with AI in a Procore side panel: /procore on the Procore project, then Open in SmartSheet', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(`${TODAY}T10:00:00`))
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        scheduleTypes: [
+          { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'], itemLabels: { noun: 'plan', typeExample: 'Data centre', nameExample: 'Bangkok 3', heading: 'Which data centre are you planning?', intro: 'Choose the project and its Ready for Service date.', dateLabel: 'RFS date' } },
+          ...OPTIONS.scheduleTypes,
+        ],
+        projects: [
+          { code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true, projectType: 'data-centre', inProcore: true },
+          { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+        ],
+      } satisfies PlannerOptions,
+    }),
+  )
+  const matches: string[] = []
+  await page.route('**/api/procore/project**', (route) => {
+    matches.push(new URL(route.request().url()).search)
+    return route.fulfill({ json: { code: 'BKK-03' } })
+  })
+  await page.route('**/api/planner/draft', (route) => {
+    const request = route.request().postDataJSON() as PlanRequest
+    return route.fulfill({ json: { ok: true, draft: buildDcMasterDraft({ request, catalog: dcMasterCatalog(), histories: {} }) } })
+  })
+
+  await openApp(page) // signed in, as a planner would be after signing in once inside Procore
+  await page.setViewportSize({ width: 400, height: 900 })
+  await page.goto('/procore?company=42&project=7')
+
+  const panel = page.getByRole('region', { name: 'Plan with AI' })
+  await expect(panel).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Close' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Your sheets' })).toHaveCount(0)
+  await expect(panel.getByLabel('Project', { exact: true })).toHaveValue('BKK-03')
+  expect(matches).toEqual(['?company=42&project=7'])
+  const width = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }))
+  expect(width.scroll, 'page width vs panel width').toBeLessThanOrEqual(width.client + 1)
+
+  await panel.getByLabel('RFS date').fill('2030-06-28')
+  await panel.getByRole('button', { name: 'Generate' }).click()
+  await expect(panel.getByRole('table')).toBeVisible()
+  await panel.getByRole('button', { name: 'Create schedule' }).click()
+  await expect(page.getByRole('heading', { name: 'Schedule created' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Open in SmartSheet' })).toHaveAttribute('href', /\/\?sheet=[0-9a-f-]{36}$/)
+})
