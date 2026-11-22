@@ -127,6 +127,28 @@ Body (only what the AI needs; never the whole file):
   draft, Project column as today; no cost code or delivery site columns for imports.
 - A new upload replaces the previous import. Leaving the import (Back) returns to the normal form.
 
+## Answers after the builder check
+- **Schedule type corrected on "What we found"** (directly, or because the project type changed):
+  the browser calls `/api/planner/import` again with `scheduleType: <chosen id> | null` in the body;
+  the server then uses that type instead of matching. Durations, target and Basis always come from the
+  confirmed type. *(Coordinator's call.)*
+- **Preview for imports**: the per-item and "Regenerate all" controls are hidden (they would redraft
+  from the catalog and replace the planner's activities). Back from the preview returns to "What we
+  found". *(Coordinator's call.)*
+- **Hourly limit**: a server call counts one draft only when it actually calls the AI (column mapping,
+  or estimating added activities). A known layout costs at most one draft; an unknown layout can cost
+  two. Every call takes an in-flight slot. *(Coordinator's call; keeps file content from reaching the
+  AI without a cap.)*
+- **No predecessors** (owner, Q26 = a): activities whose code matches the confirmed template, and have
+  no predecessors in the file, get the template's default links; Basis and the warnings say "links from
+  the template". Added activities without predecessors stay unlinked, with a warning. A file that does
+  give predecessors for an activity always wins.
+- **Request size**: `/api/planner/import` accepts bodies up to 1 MB (500 activities); the other planner
+  routes keep their limit.
+- Status strings other than the mapped ones (e.g. "On hold") carry over only when the sheet's Status
+  column offers them; otherwise Not started with a warning. Duplicate activity IDs: the first row keeps
+  the ID, later duplicates get `<ID>-2`, `<ID>-3` with a warning.
+
 ## Left to the builder
 File/module layout; exact synonym lists beyond those above; the AI prompt wording; the warnings' wording;
 UI styling within the existing wizard look.
