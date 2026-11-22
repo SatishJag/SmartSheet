@@ -376,6 +376,41 @@ describe('SheetView', () => {
       expect(screen.queryByRole('button', { name: /Schedule settings/ })).not.toBeInTheDocument()
     })
 
+    it('shows Sync with Procore to owners and editors of a Plan with AI sheet, not to viewers', async () => {
+      const planSheet = () =>
+        makeSheetData({
+          columns: [
+            ...makeSheetData().columns,
+            { id: 'c-project', title: 'Project', type: 'PICKLIST', options: ['BKK-03 — Bangkok 3'] },
+            { id: 'c-cost', title: 'Cost code', type: 'PICKLIST', options: ['CHL — Chiller'] },
+          ],
+        })
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const owner = await makeTestStore(planSheet())
+      const { unmount } = render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} store={owner.store} />)
+      expect(await screen.findByRole('button', { name: 'Sync with Procore' })).toBeInTheDocument()
+      unmount()
+
+      const editor = await makeTestStore(planSheet())
+      const view = render(<SheetView client={memberClient('editor').client} userId="someone-else" sheetId="sheet-1" onBack={() => {}} store={editor.store} />)
+      await screen.findByText(/can edit/)
+      expect(screen.getByRole('button', { name: 'Sync with Procore' })).toBeInTheDocument()
+      view.unmount()
+
+      const viewer = await makeTestStore(planSheet())
+      render(<SheetView client={memberClient('viewer').client} userId="someone-else" sheetId="sheet-1" onBack={() => {}} store={viewer.store} />)
+      await screen.findByText('View only')
+      expect(screen.queryByRole('button', { name: 'Sync with Procore' })).not.toBeInTheDocument()
+    })
+
+    it('shows no Sync with Procore on an ordinary sheet', async () => {
+      vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
+      const { store } = await makeTestStore()
+      render(<SheetView client={client} userId="user-1" sheetId="sheet-1" onBack={() => {}} store={store} />)
+      await screen.findByRole('grid')
+      expect(screen.queryByRole('button', { name: 'Sync with Procore' })).not.toBeInTheDocument()
+    })
+
     it('stays read-only when the role lookup finds nothing', async () => {
       vi.mocked(supabasePersistence).mockReturnValue(makeFakePersistence())
       const { store } = await makeTestStore()
