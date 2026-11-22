@@ -57,7 +57,7 @@ function fakeClient(routes: Record<string, unknown[] | (() => never)>) {
       if (typeof r === 'function') r()
       if (!r) throw new Error(`unexpected ${path}`)
       return r as T[]
-    }),
+    }) as unknown as ProcoreClient['getAll'],
   }
   return { client, calls }
 }
