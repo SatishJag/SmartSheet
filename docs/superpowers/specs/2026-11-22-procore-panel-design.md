@@ -1,6 +1,6 @@
 # Plan with AI inside Procore (side panel and full screen): design
 
-Date: 2026-11-22. Status: decisions agreed with the owner; awaiting approval of this text.
+Date: 2026-11-22. Status: decisions agreed with the owner; builder check done (no owner questions); awaiting approval of this text.
 
 ## Why
 Planners work in Procore. Opening a separate app to plan breaks their flow. The owner wants **Plan with AI
@@ -64,17 +64,21 @@ centre All), opening on the project they are already in. The SmartSheet app keep
   `sidepanel:app:visible|hidden|destroy` (no behaviour needed beyond not erroring).
 - **Trusted origins** (messages from any other origin are ignored; `targetOrigin` is always the exact
   origin): `https://app.procore.com`, `https://us02.procore.com`, `https://uk01.procore.com`,
-  `https://sandbox.procore.com`, `https://login-sandbox.procore.com` — one list in code, shared with the
-  server's frame rule.
+  `https://sandbox.procore.com` (the Developer Sandbox's browser and API host) — one list in code, shared
+  with the server's frame rule.
 - **Matching the project:** the page sends the Procore company and project ids to a new endpoint,
   `GET /api/procore/project?company=<id>&project=<id>` (signed-in users; uses the Procore client from the
-  sync). The server reads the Procore project (`GET /rest/v1.0/projects/{id}?company_id=…`), takes its
+  sync, which gains a single-object `get`). The server reads the Procore project
+  (`GET /rest/v1.0/projects/{id}?company_id=…&view=minimal`), takes its
   `project_number`, and answers with our project code if a project with that code is listed and readable
   by the caller (`{ code: 'BKK-03' }`), else `{ code: null, reason }`. Not configured → `{ code: null,
   reason: 'not-configured' }` (200, not an error: the page just leaves the project unchosen). The company
   id must equal `PROCORE_COMPANY_ID`; otherwise `{ code: null, reason: 'other-company' }`.
 - The wizard gets the matched code as its initial project, and the project type that project belongs to
-  (Data centre or Properties). The planner can still change both.
+  (Data centre or Properties), both from the caller's `options().projects` as `procoreCommitted` already
+  reads them. The planner can still change both.
+- "Open in SmartSheet" uses the existing `/?sheet=<id>` address, which the full app already opens after
+  sign-in.
 
 ### Framing (server)
 - `server/static.ts` sends `X-Frame-Options: DENY` and `frame-ancestors 'none'` on every page today. For
@@ -96,7 +100,12 @@ Developer Portal → app → Create Version → Components: add **Side Panel** (
 Supported Side Panel Views: the Schedule views, the commitments detail views, and the Budget views) and
 **Full Screen** (External URL with the company and project parameters); save; install the version in the
 Developer Sandbox; open a project's Schedule, a commitment and the Budget, and the Apps menu, to check.
-The doc lists the exact view keys and URLs.
+The doc lists the exact view keys and URLs, and two sandbox facts:
+- Add the components as a **new version of the same app** whose credentials the sync uses: each app has
+  its own Developer Sandbox and company id, and a different app makes every project lookup answer
+  `other-company`.
+- The sandbox's starter project is numbered "1234": renumber a sandbox project to one of our codes (e.g.
+  BKK-03) to see the project pre-selected.
 
 ## Testing
 - Unit: context parsing (address and `setup` message), origin allow-list (messages from other origins
@@ -107,6 +116,12 @@ The doc lists the exact view keys and URLs.
   "Schedule created" with Open in SmartSheet; storage-blocked fallback.
 - e2e: open `/procore?company=…&project=…` in a 400-px-wide viewport, sign in, plan, create; no sideways
   scroll of the page; a parent page on another origin cannot frame `/` (headers).
+
+## Checks for the sandbox (cannot be settled from the docs)
+- Procore's frame accepts our `frame-ancestors` list (it applies to every ancestor frame, not only the
+  parent).
+- Pop-ups are allowed from Procore's frame ("Open in SmartSheet" and the new-tab fallback). If not, the
+  setup doc says so and the buttons fall back to a copyable link.
 
 ## Calls left to the builder
 - Exact view keys listed in the setup doc (from Procore's Side Panel View Key Reference).
