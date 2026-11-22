@@ -141,9 +141,9 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
   await expect(dialog.getByLabel('Schedule type')).toHaveValue('lle-procurement')
-  // The plan is bought against one Procore project: none until the user picks one.
-  await expect(dialog.getByLabel('Procore project')).toHaveValue('')
-  await dialog.getByLabel('Procore project').selectOption('BKK-03')
+  // The plan belongs to one project: none until the user picks one.
+  await expect(dialog.getByLabel('Project', { exact: true })).toHaveValue('')
+  await dialog.getByLabel('Project', { exact: true }).selectOption('BKK-03')
 
   // Tick two equipment types: each adds an item.
   await dialog.getByRole('checkbox', { name: 'Power transformer · 8 projects' }).check()
@@ -215,8 +215,8 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   await expect(await gridCell(page, 9, 'Task')).toContainText('Manufacturing')
   await expect(await gridCell(page, 9, 'Start')).toHaveText(mfg.start)
   // The cost code sits on each item's summary row, not on its activities.
-  await expect(await gridCell(page, 1, 'Procore project')).toHaveText('BKK-03 — Bangkok 3')
-  await expect(await gridCell(page, 2, 'Procore project')).toHaveText('')
+  await expect(await gridCell(page, 1, 'Project')).toHaveText('BKK-03 — Bangkok 3')
+  await expect(await gridCell(page, 2, 'Project')).toHaveText('')
   await expect(await gridCell(page, 1, 'Cost code')).toHaveText('TRF — Transformer')
   await expect(await gridCell(page, 2, 'Cost code')).toHaveText('')
   await expect(await gridCell(page, 9, 'Basis')).toHaveText('adjusted: p80 is 110 days; raised 10 days because the vendor is at capacity.')
@@ -224,7 +224,7 @@ test('Plan with AI: several equipment items become one sheet with a summary row 
   await expect(await gridCell(page, 16, 'Task')).toContainText('Switchgear — 132 kV GIS')
   await expect(rowAt(16)).toHaveAttribute('aria-level', '1')
   await expect(await gridCell(page, 16, 'Cost code')).toHaveText('HVS — HV SiwtchGear')
-  await expect(await gridCell(page, 16, 'Procore project')).toHaveText('BKK-03 — Bangkok 3')
+  await expect(await gridCell(page, 16, 'Project')).toHaveText('BKK-03 — Bangkok 3')
   // The delivery site is on every row of each item, so the site team's filter keeps whole items.
   for (const row of [1, 2, 16, 17]) await expect(await gridCell(page, row, 'Delivery site')).toHaveText('BKK-03 — Bangkok 3')
   await expect(await gridCell(page, 16, 'Start')).toHaveText(switchgear.mustStartBy)
@@ -269,7 +269,7 @@ test('Plan with AI on a phone: item rows with a Cost code field do not scroll si
   await openApp(page)
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
-  await expect(dialog.getByLabel('Procore project')).toBeVisible()
+  await expect(dialog.getByLabel('Project', { exact: true })).toBeVisible()
   await expect(dialog.getByLabel('Delivery site').first()).toBeVisible()
   await dialog.getByRole('checkbox', { name: /^Power transformer/ }).check()
   await dialog.getByRole('checkbox', { name: /^Switchgear/ }).check()
@@ -283,7 +283,7 @@ test('Plan with AI on a phone: item rows with a Cost code field do not scroll si
   expect(body.scrollWidth, 'wizard body content width vs body width').toBeLessThanOrEqual(body.clientWidth + 1)
 })
 
-test('Plan with AI: the Procore project sits beside the schedule type, and below it on a phone', async ({ page }) => {
+test('Plan with AI: the project sits beside the schedule type, and below it on a phone', async ({ page }) => {
   await page.route('**/api/planner/options', (route) =>
     route.fulfill({ json: { ...OPTIONS, projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }] } satisfies PlannerOptions }),
   )
@@ -291,7 +291,7 @@ test('Plan with AI: the Procore project sits beside the schedule type, and below
   await page.getByRole('button', { name: 'Plan with AI' }).click()
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
   const schedule = dialog.getByLabel('Schedule type')
-  const project = dialog.getByLabel('Procore project')
+  const project = dialog.getByLabel('Project', { exact: true })
   await expect(project).toBeVisible()
   const s = (await schedule.boundingBox())!
   const p = (await project.boundingBox())!
@@ -323,11 +323,11 @@ test('Plan with AI: the top fields have room between them', async ({ page }) => 
   const label = (await dialog.locator('label', { hasText: 'Schedule type' }).boundingBox())!
   expect(label.y - (hint.y + hint.height), 'space between the project type hint and the schedule type label').toBeGreaterThanOrEqual(12)
 
-  // On a phone the Procore project stacks under the schedule type, with room between them too.
+  // On a phone the project stacks under the schedule type, with room between them too.
   await page.setViewportSize({ width: 375, height: 800 })
   const scheduleHint = (await dialog.locator('.planner-schedule-type small').first().boundingBox())!
-  const projectLabel = (await dialog.locator('label', { hasText: 'Procore project' }).boundingBox())!
-  expect(projectLabel.y - (scheduleHint.y + scheduleHint.height), 'space between the schedule type hint and the Procore project label').toBeGreaterThanOrEqual(12)
+  const projectLabel = (await dialog.locator('label', { hasText: /^Project$/ }).boundingBox())!
+  expect(projectLabel.y - (scheduleHint.y + scheduleHint.height), 'space between the schedule type hint and the project label').toBeGreaterThanOrEqual(12)
 })
 
 test('Plan with AI: the equipment name stays wide enough to read beside the cost code, at any window width', async ({ page }) => {
@@ -369,4 +369,44 @@ test('Plan with AI: an item row without cost codes or sites stays on one line', 
   // Below the date there is only its hint and the row's padding: no second line.
   expect(row.y + row.height - (date.y + date.height), 'row space below the date field').toBeLessThan(45)
   await expect(group.locator('.planner-item-tags')).toHaveCount(0)
+})
+
+test('Plan with AI: a property plan needs a project, from the sample property projects', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(`${TODAY}T10:00:00`))
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        projectTypes: [
+          { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+          { id: 'properties', name: 'Properties', description: 'Villas and towers' },
+        ],
+        scheduleTypes: OPTIONS.scheduleTypes.map((t) => ({ ...t, projectTypes: ['data-centre', 'properties'] })),
+        costCodes: [{ code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' }],
+        projects: [
+          { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+          { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+          { code: 'TWR-01', name: 'Sample tower', isProgram: false, projectType: 'properties', inProcore: false },
+        ],
+      } satisfies PlannerOptions,
+    }),
+  )
+  await page.route('**/api/planner/draft', (route) => {
+    const request = route.request().postDataJSON() as PlanRequest
+    return route.fulfill({ json: { ok: true, draft: { ...catalogDraft(request.requiredDate), request } } })
+  })
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  await dialog.getByLabel('Project type').selectOption('properties')
+  const project = dialog.getByLabel('Project', { exact: true })
+  await expect(project.locator('option')).toHaveText(['None', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower'])
+  await expect(dialog.getByLabel('Cost code')).toHaveCount(0)
+  await dialog.getByLabel('Equipment name').fill('Lift for tower A')
+  await dialog.getByLabel('Required on site').fill(REQUIRED)
+  await dialog.getByRole('button', { name: 'Generate' }).click()
+  await expect(dialog.getByRole('alert')).toContainText('Choose the project')
+  await project.selectOption('VIL-01')
+  await dialog.getByRole('button', { name: 'Generate' }).click()
+  await expect(dialog.getByRole('table')).toBeVisible()
 })

@@ -902,7 +902,7 @@ describe('PlannerWizard: Procore project', () => {
   it('offers the projects after the schedule type, starting on None', async () => {
     withProjects()
     setup()
-    const project = await screen.findByLabelText('Procore project')
+    const project = await screen.findByLabelText('Project')
     expect(project).toHaveValue('')
     expect(within(project).getAllByRole('option').map((o) => o.textContent)).toEqual(['None', 'BKK-03 — Bangkok 3'])
     // Right after the schedule type in reading order.
@@ -918,15 +918,15 @@ describe('PlannerWizard: Procore project', () => {
       equipmentTypes: { ...OPTIONS.equipmentTypes, 'switchgear-only': ['Switchgear'] },
     })
     const { user } = setup()
-    await user.selectOptions(await screen.findByLabelText('Procore project'), 'BKK-03')
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
     await user.selectOptions(screen.getByLabelText('Schedule type'), 'switchgear-only')
-    expect(screen.getByLabelText('Procore project')).toHaveValue('BKK-03')
+    expect(screen.getByLabelText('Project')).toHaveValue('BKK-03')
   })
 
   it('does not send the project to the planning server', async () => {
     const { batches } = withProjects()
     const { user } = setup()
-    await user.selectOptions(await screen.findByLabelText('Procore project'), 'BKK-03')
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
     await requestTwo(user)
     await screen.findByText(/2 items · earliest required start/)
     expect(JSON.stringify(batches)).not.toMatch(/BKK-03|Bangkok/)
@@ -934,7 +934,7 @@ describe('PlannerWizard: Procore project', () => {
 
   async function createTwo(pick: string) {
     const { client, user, onCreated } = setup()
-    await user.selectOptions(await screen.findByLabelText('Procore project'), pick)
+    await user.selectOptions(await screen.findByLabelText('Project'), pick)
     await requestTwo(user)
     await screen.findByText(/2 items · earliest required start/)
     await user.click(screen.getByRole('button', { name: 'Create schedule' }))
@@ -947,7 +947,7 @@ describe('PlannerWizard: Procore project', () => {
       position: number
     }[]
     const ordered = [...columns].sort((a, b) => a.position - b.position)
-    const project = ordered.find((c) => c.title === 'Procore project')!
+    const project = ordered.find((c) => c.title === 'Project')!
     const rows = (await client.from('rows').select('parent_id,cells')).data as { parent_id: string | null; cells: Record<string, unknown> }[]
     return { ordered, project, parents: rows.filter((r) => r.parent_id === null) }
   }
@@ -961,24 +961,30 @@ describe('PlannerWizard: Procore project', () => {
     expect(parents.map((r) => r.cells[project.id])).toEqual(['BKK-03 — Bangkok 3', 'BKK-03 — Bangkok 3'])
   })
 
-  it('None leaves the cells empty but adds the column', async () => {
-    withProjects()
-    const { project, parents } = await createTwo('')
-    expect(project).toBeDefined()
-    expect(parents.map((r) => r.cells[project.id])).toEqual([undefined, undefined])
+  it('requires a project before Generate', async () => {
+    const { batches } = withProjects()
+    const { user } = setup()
+    await requestTwo(user)
+    expect(await screen.findByText('Choose the project', { selector: '[role="alert"] *, [role="alert"]' })).toBeInTheDocument()
+    expect(batches).toHaveLength(0)
+    expect(screen.getByLabelText('Project')).toHaveAttribute('aria-invalid', 'true')
+    await user.selectOptions(screen.getByLabelText('Project'), 'BKK-03')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText(/2 items · earliest required start/)
+    expect(batches).toHaveLength(1)
   })
 
   it('hides the field and adds no column when there are no projects', async () => {
     mockServer()
     const { client, user, onCreated } = setup()
     await fillRequest(user)
-    expect(screen.queryByLabelText('Procore project')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Project')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Generate' }))
     await screen.findByRole('table')
     await user.click(screen.getByRole('button', { name: 'Create schedule' }))
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
     const titles = ((await client.from('columns').select('title')).data as { title: string }[]).map((c) => c.title)
-    expect(titles).not.toContain('Procore project')
+    expect(titles).not.toContain('Project')
   })
 })
 
@@ -1047,10 +1053,10 @@ describe('PlannerWizard: delivery site', () => {
     withSites()
     const { user } = setup()
     await tickTwo(user)
-    await user.selectOptions(screen.getByLabelText('Procore project'), 'BKK-03')
+    await user.selectOptions(screen.getByLabelText('Project'), 'BKK-03')
     await waitFor(() => expect(site(1)).toHaveValue('BKK-03'))
     expect(site(2)).toHaveValue('BKK-03')
-    await user.selectOptions(screen.getByLabelText('Procore project'), 'PRG-DC-01')
+    await user.selectOptions(screen.getByLabelText('Project'), 'PRG-DC-01')
     await waitFor(() => expect(site(1)).toHaveValue(''))
     expect(site(2)).toHaveValue('')
   })
@@ -1060,7 +1066,7 @@ describe('PlannerWizard: delivery site', () => {
     const { user } = setup()
     await tickTwo(user)
     await user.selectOptions(site(1), 'SIN-01')
-    await user.selectOptions(screen.getByLabelText('Procore project'), 'BKK-03')
+    await user.selectOptions(screen.getByLabelText('Project'), 'BKK-03')
     await waitFor(() => expect(site(2)).toHaveValue('BKK-03'))
     expect(site(1)).toHaveValue('SIN-01')
   })
@@ -1069,7 +1075,7 @@ describe('PlannerWizard: delivery site', () => {
     withSites()
     const { user } = setup()
     await user.click(await card('Power transformer'))
-    await user.selectOptions(screen.getByLabelText('Procore project'), 'BKK-03')
+    await user.selectOptions(screen.getByLabelText('Project'), 'BKK-03')
     await user.click(await card('Switchgear'))
     await waitFor(() => expect(site(2)).toHaveValue('BKK-03'))
   })
@@ -1077,6 +1083,7 @@ describe('PlannerWizard: delivery site', () => {
   it('does not send the site to the planning server', async () => {
     const { batches } = withSites()
     const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'PRG-DC-01')
     await tickTwo(user)
     await user.selectOptions(site(1), 'BKK-03')
     await user.selectOptions(site(2), 'SIN-01')
@@ -1084,12 +1091,13 @@ describe('PlannerWizard: delivery site', () => {
     await fillItem(user, 2, '132 kV GIS', '2027-03-31')
     await user.click(screen.getByRole('button', { name: 'Generate' }))
     await screen.findByText(/2 items · earliest required start/)
-    expect(JSON.stringify(batches)).not.toMatch(/BKK-03|SIN-01|Bangkok|Singapore/)
+    expect(JSON.stringify(batches)).not.toMatch(/BKK-03|SIN-01|Bangkok|Singapore|PRG-DC-01/)
   })
 
   it('creates the sheet with the site on every row of each item', async () => {
     withSites()
     const { client, user, onCreated } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'PRG-DC-01')
     await tickTwo(user)
     await user.selectOptions(site(1), 'SIN-01')
     await fillItem(user, 1, '400 MVA transformer, Substation B', '2028-03-31')
@@ -1118,5 +1126,78 @@ describe('PlannerWizard: delivery site', () => {
     setup()
     expect(await screen.findByLabelText('Cost code')).toBeInTheDocument()
     expect(screen.queryByLabelText('Delivery site')).not.toBeInTheDocument()
+  })
+})
+
+describe('PlannerWizard: projects for both businesses', () => {
+  const OPTIONS_BOTH: PlannerOptions = {
+    projectTypes: [
+      { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+      { id: 'properties', name: 'Properties', description: 'Villas and towers' },
+    ],
+    scheduleTypes: [{ id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] }],
+    equipmentTypes: { 'lle-procurement': ['Power transformer', 'Switchgear'] },
+    costCodes: [
+      { code: 'HVS', description: 'HV SiwtchGear', equipmentType: 'Switchgear' },
+      { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
+    ],
+    projects: [
+      { code: 'PRG-DC-01', name: 'Data centre programme', isProgram: true, projectType: 'data-centre', inProcore: true },
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+      { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+      { code: 'TWR-01', name: 'Sample tower', isProgram: false, projectType: 'properties', inProcore: false },
+    ],
+  }
+  const withBoth = (options: PlannerOptions = OPTIONS_BOTH) => mockServer({ options: () => json(200, options) })
+  const optionTexts = (el: HTMLElement) => within(el).getAllByRole('option').map((o) => o.textContent)
+
+  it('lists only the chosen project type’s projects, under the label Project', async () => {
+    withBoth()
+    const { user } = setup()
+    expect(optionTexts(await screen.findByLabelText('Project'))).toEqual(['None', 'PRG-DC-01 — Data centre programme', 'BKK-03 — Bangkok 3'])
+    await user.selectOptions(screen.getByLabelText('Project type'), 'properties')
+    expect(optionTexts(screen.getByLabelText('Project'))).toEqual(['None', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower'])
+  })
+
+  it('clears a project that does not belong to the new project type, and the sites that followed it', async () => {
+    withBoth()
+    const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    await user.click(await card('Power transformer'))
+    await waitFor(() => expect(screen.getByLabelText('Delivery site')).toHaveValue('BKK-03'))
+    await user.selectOptions(screen.getByLabelText('Project type'), 'properties')
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue(''))
+    expect(screen.queryByLabelText('Delivery site')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Cost code')).not.toBeInTheDocument()
+  })
+
+  it('shows no cost code or delivery site for property plans, and the sheet has neither column', async () => {
+    withBoth()
+    const { client, user, onCreated } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project type'), 'properties')
+    await user.selectOptions(screen.getByLabelText('Project'), 'VIL-01')
+    expect(screen.queryByLabelText('Cost code')).not.toBeInTheDocument()
+    await requestTwo(user)
+    await screen.findByText(/2 items · earliest required start/)
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const columns = (await client.from('columns').select('id,title')).data as { id: string; title: string }[]
+    const titles = columns.map((c) => c.title)
+    expect(titles).toContain('Project')
+    expect(titles).not.toContain('Cost code')
+    expect(titles).not.toContain('Delivery site')
+    const project = columns.find((c) => c.title === 'Project')!.id
+    const rows = (await client.from('rows').select('parent_id,cells')).data as { parent_id: string | null; cells: Record<string, unknown> }[]
+    expect(rows.filter((r) => r.parent_id === null).map((r) => r.cells[project])).toEqual(['VIL-01 — Sample villa', 'VIL-01 — Sample villa'])
+  })
+
+  it('does not require a project when the list did not load', async () => {
+    const { batches } = withBoth({ ...OPTIONS_BOTH, projects: undefined })
+    const { user } = setup()
+    await screen.findByLabelText('Project type')
+    expect(screen.queryByLabelText('Project')).not.toBeInTheDocument()
+    await requestTwo(user)
+    await screen.findByText(/2 items · earliest required start/)
+    expect(batches).toHaveLength(1)
   })
 })

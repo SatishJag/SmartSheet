@@ -36,7 +36,7 @@ import {
   type ItemForm,
 } from './plannerItems'
 import { codeForType, costCodeOption, optionForCode } from './costCodes'
-import { defaultDeliverySite, optionForProject, projectOption, siteProjects } from './projects'
+import { DATA_CENTRE, defaultDeliverySite, optionForProject, projectOption, projectsFor, siteProjects } from './projects'
 import { insertSheetFromDrafts } from './sheetFromDraft'
 import { DEFAULT_ITEM_LABELS, type CostCode, type ItemLabels, type PlannerOptions, type Project } from './types'
 import './plannerWizard.css'
@@ -104,7 +104,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     sharedDate: useId(),
     notes: useId(),
     project: useId(),
-    procoreProject: useId(),
+    chosenProject: useId(),
     instruction: useId(),
     error: useId(),
     item: useId(),
@@ -125,8 +125,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
 
   const [projectType, setProjectType] = useState('')
   const [scheduleType, setScheduleType] = useState('')
-  /** The Procore project the plan is bought against (a code), or '' for none. Kept across type changes. */
-  const [procoreProject, setProcoreProject] = useState('')
+  /** The project the plan belongs to (a code), or '' while none is chosen. Kept while it stays listed. */
+  const [project, setProject] = useState('')
   const [items, setItems] = useState<ItemForm[]>(() => [newItem('')])
   const [sameDate, setSameDate] = useState(true)
   const [sharedDate, setSharedDate] = useState('')
@@ -191,9 +191,13 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const equipmentTypes = options?.equipmentTypes[scheduleType] ?? []
   const projectCounts = options?.projectCounts?.[scheduleType] ?? {}
   const defaultChoice = equipmentTypes[0] ?? OTHER
-  const costCodes = options?.costCodes ?? NO_COST_CODES
-  const procoreProjects = options?.projects ?? NO_PROJECTS
-  const sites = useMemo(() => siteProjects(procoreProjects), [procoreProjects])
+  // With project types, a type's projects only; cost codes and delivery sites belong to data centre plans.
+  const typed = Boolean(options?.projectTypes?.length)
+  const dataCentre = !typed || projectType === DATA_CENTRE
+  const listed = useMemo(() => projectsFor(options?.projects ?? NO_PROJECTS, typed ? projectType : ''), [options, typed, projectType])
+  const costCodes = (dataCentre && options?.costCodes) || NO_COST_CODES
+  const sites = useMemo(() => (dataCentre ? siteProjects(listed) : NO_PROJECTS), [dataCentre, listed])
+  const projectProblem = listed.length > 0 && !project ? 'Choose the project' : null
   // Items whose type is not on offer for the schedule type (or not chosen yet) get the first type with history.
   useEffect(() => {
     if (!options) return
@@ -211,11 +215,16 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
     setItems((prev) => syncCostCodes(prev, (type) => codeForType(costCodes, type)))
   }, [items, costCodes])
 
+  // A chosen project that is not listed under the project type now (it changed) is cleared.
+  useEffect(() => {
+    if (project && !listed.some((p) => p.code === project)) setProject('')
+  }, [listed, project])
+
   // Each item's delivery site follows the plan's project when that is a site, until the user picks or clears one.
   useEffect(() => {
     if (sites.length === 0) return
-    setItems((prev) => syncDeliverySites(prev, defaultDeliverySite(sites, procoreProject)))
-  }, [items, sites, procoreProject])
+    setItems((prev) => syncDeliverySites(prev, defaultDeliverySite(sites, project)))
+  }, [items, sites, project])
 
   // Each step's heading takes focus, so keyboard and screen-reader users land on the new content.
   useEffect(() => {
@@ -370,8 +379,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               values: entries.map((e) => optionForCode(costCodes, items.find((i) => i.key === e.key)?.costCode ?? '')),
             }
           : undefined
-      const project =
-        procoreProjects.length > 0 ? { options: procoreProjects.map(projectOption), value: optionForProject(procoreProjects, procoreProject) } : undefined
+      const projectColumn =
+        listed.length > 0 ? { options: listed.map(projectOption), value: optionForProject(listed, project) } : undefined
       const deliverySites =
         sites.length > 0
           ? {
@@ -379,7 +388,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
               values: entries.map((e) => optionForProject(sites, items.find((i) => i.key === e.key)?.deliverySite ?? '')),
             }
           : undefined
-      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today, costCodes: sheetCostCodes, project, deliverySites })
+      const sheetId = await insertSheetFromDrafts(client, drafts, userId, calendar, { today, costCodes: sheetCostCodes, project: projectColumn, deliverySites })
       if (mounted.current) onCreated(sheetId)
     } catch (err) {
       if (!mounted.current) return
@@ -392,7 +401,7 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
 
   const form: FormValues = { scheduleType, items, sameDate, sharedDate, notes }
   const errors = validateItems(form, noun)
-  const problem = firstProblem(form, errors)
+  const problem = projectProblem ?? firstProblem(form, errors)
   const many = items.length > 1
   const canAdd = items.length < MAX_ITEMS
   const roomForCard = canAdd || items.some(isPristine)
@@ -570,20 +579,29 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                         </select>
                         {scheduleDescription && <small>{scheduleDescription}</small>}
                       </div>
-                      {procoreProjects.length > 0 && (
-                        <div className="planner-field planner-schedule-type planner-procore-project">
-                          <label htmlFor={ids.procoreProject} className="planner-label">
-                            Procore project
+                      {listed.length > 0 && (
+                        <div className="planner-field planner-schedule-type planner-project">
+                          <label htmlFor={ids.chosenProject} className="planner-label">
+                            Project
                           </label>
-                          <select id={ids.procoreProject} value={procoreProject} onChange={(e) => setProcoreProject(e.target.value)}>
+                          <select
+                            id={ids.chosenProject}
+                            value={project}
+                            onChange={(e) => setProject(e.target.value)}
+                            aria-invalid={submitted && projectProblem ? true : undefined}
+                            aria-describedby={submitted && projectProblem ? `${ids.chosenProject}-error` : undefined}
+                          >
                             <option value="">None</option>
-                            {procoreProjects.map((p) => (
+                            {listed.map((p) => (
                               <option key={p.code} value={p.code}>
                                 {projectOption(p)}
                               </option>
                             ))}
                           </select>
-                          <small>What the plan is bought against: a program project for batch buying, or a site.</small>
+                          <small>
+                            {dataCentre ? 'What the plan is bought against: a program project for batch buying, or a site.' : 'The project this plan is for.'}
+                          </small>
+                          {submitted && projectProblem && <FieldError id={`${ids.chosenProject}-error`}>{projectProblem}</FieldError>}
                         </div>
                       )}
                     </div>
