@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { lleDraft } from '../test/plannerFixtures'
-import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestCommitted, requestDraft, requestImport, SESSION_EXPIRED_MESSAGE } from './plannerApi'
+import { getAccessToken, getOptions, PlannerApiError, requestBatch, requestCommitted, requestDraft, requestImport, requestProjectMatch, SESSION_EXPIRED_MESSAGE } from './plannerApi'
 import type { BatchPlanRequest, PlannerOptions } from './types'
 
 const OPTIONS: PlannerOptions = {
@@ -219,5 +219,21 @@ describe('requestCommitted', () => {
   it('a reply without projects is an unexpected response', async () => {
     mockFetch(() => reply(200, { ok: true }))
     expect((await failure(requestCommitted('tok', { projects: [] }))).kind).toBe('response')
+  })
+})
+
+describe('requestProjectMatch', () => {
+  it('GETs the Procore project match with the bearer token', async () => {
+    const fetch = mockFetch(() => reply(200, { code: 'BKK-03' }))
+    expect(await requestProjectMatch('tok', { companyId: '42', projectId: '7' })).toEqual({ code: 'BKK-03' })
+    const [url, init] = fetch.mock.calls[0]
+    expect(url).toBe('/api/procore/project?company=42&project=7')
+    expect(init.method).toBe('GET')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok')
+  })
+
+  it('a reply without code is an unexpected response', async () => {
+    mockFetch(() => reply(200, { reason: 'x' }))
+    expect((await failure(requestProjectMatch('tok', { companyId: '42', projectId: '7' }))).kind).toBe('response')
   })
 })

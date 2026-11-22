@@ -1,3 +1,4 @@
+import type { ProcoreContext } from '../procore/context'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   BatchItemResult,
@@ -11,6 +12,7 @@ import type {
   PlanDraft,
   PlannerOptions,
   PlanRequest,
+  ProjectMatch,
 } from './types'
 
 /**
@@ -207,4 +209,14 @@ export async function requestCommitted(token: string, request: CommittedRequest,
     throw new PlannerApiError(UNEXPECTED_MESSAGE, 'response', 200)
   }
   return body as unknown as CommittedResponse
+}
+
+/** GET /api/procore/project: our project code for the Procore project a Procore page was opened on. */
+export async function requestProjectMatch(token: string, ctx: ProcoreContext, opts: CallOptions = {}): Promise<ProjectMatch> {
+  const query = new URLSearchParams({ company: ctx.companyId, project: ctx.projectId }).toString()
+  const body = await call(`procore/project?${query}`, token, { method: 'GET' }, opts)
+  if (!isObject(body) || !('code' in body) || (body.code !== null && typeof body.code !== 'string')) {
+    throw new PlannerApiError(UNEXPECTED_MESSAGE, 'response', 200)
+  }
+  return body as unknown as ProjectMatch
 }
