@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test'
 import { defaultCalendar } from '../src/engine/calendar'
 import { planBackward } from '../src/planner/backward'
 import type { BatchPlanRequest, PlannerOptions, PlanRequest } from '../src/planner/types'
+import { dcMasterCatalog } from '../src/planner/catalogs/dcMasterCatalog'
+import { buildDcMasterDraft } from '../src/planner/dcMasterDraft'
 import { catalogDraft } from '../src/test/plannerFixtures'
 import { ganttBar, gridCell, openTab, openApp } from './support/app'
 
@@ -514,4 +516,60 @@ test('Sync with Procore fills Committed and Awarded', async ({ page }) => {
   await expect(await gridCell(page, 1, 'Committed (Procore)')).toHaveText('1250000')
   await expect(await gridCell(page, 1, 'Awarded')).toHaveText('Yes')
   await expect(await gridCell(page, 14, 'Awarded')).toHaveText('Yes')
+})
+
+test('Data centre All: full plan from the master template, package rows coded', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(`${TODAY}T10:00:00`))
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        scheduleTypes: [
+          { id: 'dc-master', name: 'Data centre master schedule', description: 'Full DC plan', projectTypes: ['data-centre'], itemLabels: { noun: 'plan', typeExample: '', nameExample: '', heading: 'Which data centre are you planning?', intro: 'Choose the project and its Ready for Service date. The full plan is built backward from that date.', dateLabel: 'RFS date' } },
+          ...OPTIONS.scheduleTypes,
+        ],
+        projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
+        costCodes: [
+          { code: 'CHL', description: 'Chiller', equipmentType: 'Chiller' },
+          { code: 'GEN', description: 'Generator', equipmentType: 'Diesel generator' },
+          { code: 'TRF', description: 'Transformer', equipmentType: 'Power transformer' },
+          { code: 'HVS', description: 'HV SwitchGear', equipmentType: 'HV switchgear' },
+        ],
+      } satisfies PlannerOptions,
+    }),
+  )
+  const requests: PlanRequest[] = []
+  await page.route('**/api/planner/draft', (route) => {
+    const request = route.request().postDataJSON() as PlanRequest
+    requests.push(request)
+    return route.fulfill({ json: { ok: true, draft: buildDcMasterDraft({ request, catalog: dcMasterCatalog(), histories: {} }) } })
+  })
+
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  await expect(dialog.getByLabel('Schedule type')).toHaveValue('dc-master')
+  await expect(dialog.getByLabel('Schedule type').locator('option').first()).toHaveText('All (full project plan)')
+  await dialog.getByLabel('Project', { exact: true }).selectOption('BKK-03')
+  await dialog.getByLabel('RFS date').fill('2030-06-28')
+  await dialog.getByRole('button', { name: 'Generate' }).click()
+  await expect(dialog.getByRole('table')).toBeVisible()
+  expect(requests).toEqual([{ scheduleType: 'dc-master', equipmentType: 'Data centre', equipmentName: 'Bangkok 3', requiredDate: '2030-06-28' }])
+  await expect(dialog.getByText(/Dates use a 7-day working week/)).toBeVisible()
+
+  await dialog.getByRole('button', { name: 'Create schedule' }).click()
+  await expect(page.getByRole('heading', { name: 'Full plan – Bangkok 3' })).toBeVisible()
+  await expect(await gridCell(page, 1, 'Activity ID')).toHaveText('DC-0001')
+  await expect(await gridCell(page, 1, 'Basis')).toHaveText('template')
+  await expect(await gridCell(page, 1, 'Project')).toHaveText('BKK-03 — Bangkok 3')
+
+  // Chillers step 1 (DC-0082) is row 82: scroll the grid to it.
+  const chiller = await gridCell(page, 82, 'Cost code')
+  for (let i = 0; i < 60 && (await chiller.count()) === 0; i++) {
+    await page.getByRole('grid').hover()
+    await page.mouse.wheel(0, 400)
+  }
+  await expect(await gridCell(page, 82, 'Activity ID')).toHaveText('DC-0082')
+  await expect(chiller).toHaveText('CHL — Chiller')
+  await expect(await gridCell(page, 82, 'Delivery site')).toHaveText('BKK-03 — Bangkok 3')
 })
