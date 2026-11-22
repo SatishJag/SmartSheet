@@ -57,8 +57,12 @@ Both show the page `https://smartsheet-web-production.up.railway.app/procore`. I
 - **Procore's frame must accept our page.** We only allow `app.procore.com`, `us02.procore.com`, `uk01.procore.com` and `sandbox.procore.com` to show `/procore`. If the panel stays blank, tell me the Procore address you were on so I can add it.
 - **Procore must let the panel open new tabs.** If "Open in SmartSheet" does nothing, tell me and I'll change it to a link you can copy.
 
-## Safari
-Safari may refuse to keep a sign-in inside Procore's frame. The panel then says "Your browser blocks sign-in inside Procore" and offers **Open Plan with AI in a new tab**. Chrome and Edge keep the sign-in.
+## Browsers that block sign-in inside Procore
+Some browsers refuse to keep a sign-in inside another site's frame:
+- Safari;
+- Chrome or Edge with third-party cookies blocked, which includes Incognito and InPrivate windows by default.
+
+The panel then says "Your browser blocks sign-in inside Procore" and offers **Open Plan with AI in a new tab**. The new tab opens on the same Procore project. Chrome and Edge in normal windows, with default settings, keep the sign-in.
 
 ## Promote to production
 When the sandbox version works, promote it ([Procore guide](https://developers.procore.com/documentation/building-apps-promote-manifest)) and install it in your company. Switch the Railway variables to the production app's values and `PROCORE_ENV=production`.
