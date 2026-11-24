@@ -61,6 +61,20 @@ describe('KeepSheetsBanner', () => {
     expect(await screen.findByText('Manual linking is disabled')).toBeInTheDocument()
   })
 
+  it('recovers when the request itself fails (review)', async () => {
+    const updateUser = vi.fn(async () => {
+      throw new Error('Failed to fetch')
+    })
+    const client = { auth: { updateUser } } as unknown as SupabaseClient
+    render(<KeepSheetsBanner client={client} user={{ id: 'u1', app_metadata: {}, user_metadata: {}, aud: '', created_at: '', is_anonymous: true } as User} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Keep my sheets' }))
+    await user.type(screen.getByLabelText('Email'), 'planner@example.com')
+    await user.click(screen.getByRole('button', { name: 'Send link' }))
+    expect(await screen.findByText('Failed to fetch')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Send link' })).toBeEnabled()
+  })
+
   it('once the email is confirmed, asks for a password and saves it', async () => {
     const { updateUser, user } = setup({
       is_anonymous: false,

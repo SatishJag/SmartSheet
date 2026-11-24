@@ -44,9 +44,11 @@ function AddEmail({ client, sentTo }: { client: SupabaseClient; sentTo: string |
     busyRef.current = true
     setBusy(true)
     setError(null)
-    const { error: err } = await client.auth.updateUser(
-      { email: address, data: { keep_sheets_email: address, keep_sheets_password_pending: true } },
-      { emailRedirectTo: window.location.origin },
+    const err = await attempt(() =>
+      client.auth.updateUser(
+        { email: address, data: { keep_sheets_email: address, keep_sheets_password_pending: true } },
+        { emailRedirectTo: window.location.origin },
+      ),
     )
     busyRef.current = false
     setBusy(false)
@@ -86,6 +88,15 @@ function AddEmail({ client, sentTo }: { client: SupabaseClient; sentTo: string |
   )
 }
 
+/** The request's error, including one it throws (e.g. no network), or null when it worked. */
+async function attempt(request: () => Promise<{ error: { message: string } | null }>): Promise<{ message: string } | null> {
+  try {
+    return (await request()).error
+  } catch (err) {
+    return { message: err instanceof Error ? err.message : 'Something went wrong' }
+  }
+}
+
 function SetPassword({ client, onSaved }: { client: SupabaseClient; onSaved: () => void }) {
   const id = useId()
   const [password, setPassword] = useState('')
@@ -102,7 +113,7 @@ function SetPassword({ client, onSaved }: { client: SupabaseClient; onSaved: () 
     busyRef.current = true
     setBusy(true)
     setError(null)
-    const { error: err } = await client.auth.updateUser({ password, data: { keep_sheets_password_pending: false } })
+    const err = await attempt(() => client.auth.updateUser({ password, data: { keep_sheets_password_pending: false } }))
     busyRef.current = false
     setBusy(false)
     if (err) return setError(err.message)
