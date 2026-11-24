@@ -1,0 +1,16 @@
+/* The guest-account strip at the top of the app (KeepSheetsBanner). */
+.keep-sheets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 16px;
+  font-size: 0.875rem;
+  color: var(--ink);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--line);
+}
+.keep-sheets-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.keep-sheets-form label { font-weight: 600; }
+.keep-sheets-form .input { width: 220px; max-width: 100%; }
+.keep-sheets-form p { flex-basis: 100%; margin: 0; color: var(--danger); }
