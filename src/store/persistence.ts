@@ -30,6 +30,11 @@ export interface Persistence {
   loadSheet(id: string): Promise<SheetData>
   saveCell(rowId: string, colId: string, value: unknown, version: number): Promise<{ version: number }>
   insertRow(sheetId: string, row: RowRecord): Promise<void>
+  /**
+   * Several new rows in one request (parents before children), each with its cells and place. Optional:
+   * without it the store inserts rows one by one. Used for the rows a paste adds.
+   */
+  insertRows?(sheetId: string, rows: RowRecord[]): Promise<void>
   /** Only the rows whose parentId/position changed. */
   saveRowTree(rows: RowNode[]): Promise<void>
   /** Replace-all semantics for that sheet (one dependency per predecessor/successor pair). */
@@ -338,6 +343,13 @@ export function supabasePersistence(client: SupabaseClient): Persistence {
     async insertRow(sheetId, row) {
       const owner = await ownerOf(sheetId)
       check(await client.from('rows').upsert(rowToDb(row, owner), { onConflict: 'id' }))
+    },
+
+    /** One upsert on id for all of them (safe to retry, like insertRow). */
+    async insertRows(sheetId, rows) {
+      if (rows.length === 0) return
+      const owner = await ownerOf(sheetId)
+      check(await client.from('rows').upsert(rows.map((row) => rowToDb(row, owner)), { onConflict: 'id' }))
     },
 
     async saveRowTree(rows) {

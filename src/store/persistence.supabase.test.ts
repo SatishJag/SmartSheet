@@ -174,6 +174,22 @@ describe('supabasePersistence.insertRow', () => {
   })
 })
 
+describe('supabasePersistence.insertRows', () => {
+  it('saves several new rows, parent first, with their cells, in one upsert that is safe to retry', async () => {
+    const { client, sheetId } = seeded(1, 0)
+    const p = supabasePersistence(client)
+    const parent = { id: crypto.randomUUID(), parentId: null, position: 'b0', cells: { x: 'P' }, version: 0 }
+    const child = { id: crypto.randomUUID(), parentId: parent.id, position: 'a0', cells: { x: 'C' }, version: 0 }
+    await p.insertRows!(sheetId, [parent, child])
+    await p.insertRows!(sheetId, [parent, { ...child, cells: { x: 'C2' } }])
+    const { data } = await client.from('rows').select('id, parent_id, cells').in('id', [parent.id, child.id]).order('position')
+    expect(data).toEqual([
+      { id: child.id, parent_id: parent.id, cells: { x: 'C2' } },
+      { id: parent.id, parent_id: null, cells: { x: 'P' } },
+    ])
+  })
+})
+
 describe('supabasePersistence.loadSheet paging', () => {
   it('loads every row and dependency past the 1000-row response cap', async () => {
     const { client, sheetId, rowIds } = seeded(2500, 1200)

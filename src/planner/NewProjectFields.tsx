@@ -64,7 +64,6 @@ export function NewProjectFields({ client, userId, projectType, onAdded, onCance
         <input
           id={`${id}-code`}
           value={code}
-          maxLength={20}
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => setCode(e.target.value.toUpperCase())}

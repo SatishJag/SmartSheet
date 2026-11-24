@@ -289,7 +289,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const listed = useMemo(() => projectsFor(options?.projects ?? NO_PROJECTS, typed ? projectType : ''), [options, typed, projectType])
   const costCodes = (dataCentre && options?.costCodes) || NO_COST_CODES
   const sites = useMemo(() => (dataCentre ? siteProjects(listed) : NO_PROJECTS), [dataCentre, listed])
-  const projectProblem = listed.length > 0 && !project ? 'Choose the project' : null
+  // While the New project fields are open (or saving), the plan's project is not settled: nothing is drafted.
+  const projectProblem = addingProject ? 'Add the new project or cancel it' : listed.length > 0 && !project ? 'Choose the project' : null
 
   /** The Project list's choice: a project, or "+ New project…", which opens the New project fields. */
   function chooseProject(value: string) {

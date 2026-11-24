@@ -1921,6 +1921,34 @@ describe('PlannerWizard: new project', () => {
     expect(insert.mock.calls.filter(([t]) => t === 'projects')).toHaveLength(1)
   })
 
+  it('refuses a pasted code over 20 characters instead of shortening it (Devin review)', async () => {
+    withNew()
+    const { client, user } = setup()
+    const group = await openNew(user)
+    await user.click(within(group).getByLabelText('Code'))
+    await user.paste('ABCDEFGHIJKLMNOPQRSTU')
+    expect(within(group).getByLabelText('Code')).toHaveValue('ABCDEFGHIJKLMNOPQRSTU')
+    await user.type(within(group).getByLabelText('Name'), 'Long code')
+    await user.click(within(group).getByRole('button', { name: 'Add project' }))
+    expect(within(group).getByText('Use capitals, digits and hyphens (up to 20)')).toBeInTheDocument()
+    expect(await saved(client)).toEqual([])
+  })
+
+  it('does not draft while the New project fields are open, so the plan cannot change project midway (Devin review)', async () => {
+    const { batches, drafts } = withNew()
+    const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    await openNew(user)
+    await requestTwo(user)
+    expect(await screen.findAllByText('Add the new project or cancel it')).not.toHaveLength(0)
+    expect(batches).toHaveLength(0)
+    expect(drafts).toHaveLength(0)
+    await user.click(within(newProject()).getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText(/2 items · earliest required start/)
+    expect(batches).toHaveLength(1)
+  })
+
   it('Cancel closes the fields without saving', async () => {
     withNew()
     const { client, user } = setup()

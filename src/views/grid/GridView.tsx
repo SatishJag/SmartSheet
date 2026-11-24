@@ -291,35 +291,55 @@ export function GridView({ viewportHeight }: GridViewProps) {
   function pasteValues(values: string[][], selection: CellRange) {
     const needed = pasteRowsNeeded(values, selection, rows.length)
     const canAddRows = !viewOnly && !filterActive && effectiveSort(columns, view.sort) === null
-    let target = rows
-    if (needed > 0 && canAddRows) {
-      api.getState().batch(() => {
-        // The first goes last among the top-level rows; each next one right after it (no sibling scan per row).
-        let last: string | null = null
-        for (let i = 0; i < needed; i++) last = api.getState().addRow(last, null)
-      })
-      const { data: grown, scheduled: grownSchedule } = api.getState()
-      target = viewRows(grown, grownSchedule, view)
-    }
-    const plan = planPaste(values, selection, target.length, columns.length)
     const rejected: Rejection[] = []
-    // One reschedule for the whole paste instead of one per cell.
-    api.getState().batch(() => {
-      for (const { row: r, col: c, value } of plan.cells) {
-        const row = target[r]
-        const col = columns[c]
-        const where = `row ${row.rowNumber} ${col.title}`
-        if (!canEdit(col, row)) {
-          // Pasting a block back over itself is not an error for its calculated cells.
-          if (value !== copyText(col, row)) rejected.push({ where, reason: viewOnly ? READ_ONLY_MESSAGE : (readOnlyReason(col, row) ?? 'read-only') })
-          continue
-        }
-        if (value === editString(col, row) && !errorByCell.has(`${row.id}:${col.id}`)) continue
-        const result = api.getState().setCell(row.id, col.id, value)
-        if (!result.ok) rejected.push({ where, reason: result.error })
+    // Saving waits until the new rows hold their values: each is then inserted with its cells, and many
+    // new rows go in a few requests, instead of an insert per row and a save per cell.
+    const { target, plan, added } = api.getState().deferSaves(() => {
+      let target = rows
+      let addedIds: string[] = []
+      if (needed > 0 && canAddRows) {
+        api.getState().batch(() => {
+          // The first goes last among the top-level rows; each next one right after it (no sibling scan per row).
+          let last: string | null = null
+          for (let i = 0; i < needed; i++) addedIds.push((last = api.getState().addRow(last, null)))
+        })
+        const { data: grown, scheduled: grownSchedule } = api.getState()
+        target = viewRows(grown, grownSchedule, view)
       }
+      let plan = planPaste(values, selection, target.length, columns.length)
+      /** Whether any new row took a value (a blank line between filled ones counts). */
+      let filled = false
+      // One reschedule for the whole paste instead of one per cell.
+      api.getState().batch(() => {
+        for (const { row: r, col: c, value } of plan.cells) {
+          const row = target[r]
+          const col = columns[c]
+          const where = `row ${row.rowNumber} ${col.title}`
+          const isNew = r >= rows.length
+          if (!canEdit(col, row)) {
+            // Pasting a block back over itself is not an error for its calculated cells.
+            if (value !== copyText(col, row)) rejected.push({ where, reason: viewOnly ? READ_ONLY_MESSAGE : (readOnlyReason(col, row) ?? 'read-only') })
+            continue
+          }
+          if (value === editString(col, row) && !errorByCell.has(`${row.id}:${col.id}`)) {
+            if (isNew) filled = true
+            continue
+          }
+          const result = api.getState().setCell(row.id, col.id, value)
+          if (!result.ok) rejected.push({ where, reason: result.error })
+          else if (isNew) filled = true
+        }
+      })
+      // Rows that took nothing (e.g. dates pasted down the calculated End column) are not kept.
+      if (addedIds.length > 0 && !filled) {
+        api.getState().batch(() => addedIds.forEach((id) => api.getState().deleteRow(id)))
+        addedIds = []
+        target = rows
+        plan = planPaste(values, selection, rows.length, columns.length)
+      }
+      return { target, plan, added: addedIds.length }
     })
-    if (target !== rows) notify(`Added ${needed} ${needed === 1 ? 'row' : 'rows'} for the paste`)
+    if (added > 0) notify(`Added ${added} ${added === 1 ? 'row' : 'rows'} for the paste`)
     const blocked = describeRejections(rejected, plan.clipped)
     notify(blocked && needed > 0 && !canAddRows && !viewOnly ? `${blocked}. Clear the sort or filter to add rows.` : blocked)
     // Nothing to select when no row could take the paste (an empty sheet with a sort or filter on).

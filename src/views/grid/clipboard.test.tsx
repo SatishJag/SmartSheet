@@ -274,6 +274,24 @@ describe('paste', () => {
     expect(selectedCells()).toHaveLength(3)
   })
 
+  it('adds no rows for a paste that only meets read-only cells past the end (Devin review)', async () => {
+    const { user, store } = await renderGrid()
+    await user.click(cell(4, 'End'))
+    await user.paste('2026-12-01\n2026-12-02\n2026-12-03')
+    expect(store.getState().data!.rows).toHaveLength(4)
+    expect(store.getState().notices.some((n) => n.startsWith('Added'))).toBe(false)
+    expect(store.getState().notices.at(-1)).toMatch(/not pasted/)
+  })
+
+  it('holds saving until the rows and their cells are in, so each new row is saved with its values', async () => {
+    const { user, store } = await renderGrid()
+    const deferSaves = vi.spyOn(store.getState(), 'deferSaves')
+    await user.click(cell(4, 'Task'))
+    await user.paste('A\nB\nC')
+    expect(deferSaves).toHaveBeenCalledTimes(1)
+    expect(store.getState().data!.rows).toHaveLength(6)
+  })
+
   it('adds rows to a one-row sheet', async () => {
     const { user, store } = await renderGrid(makeSheetData({ rows: [makeRow('r1', 'a0', {})], dependencies: [] }))
     await user.click(cell(1, 'Task'))
