@@ -11,6 +11,9 @@
 -- planner. Nobody but the service role changes or deletes projects: Sync with Procore marks a planner
 -- project as in Procore once Procore has a project with that number. The codes and names keep the
 -- dropdown rules (no commas) and gain length limits.
+--
+-- Deploy note: the app works before and after this migration (without created_by it lists projects
+-- without the "(new)" label), but "+ New project…" fails until it is applied.
 
 alter table projects
   add column created_by uuid references auth.users (id) on delete set null,

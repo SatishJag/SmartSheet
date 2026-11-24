@@ -284,6 +284,8 @@ export function GridView({ viewportHeight }: GridViewProps) {
     if (viewOnly || columns.length === 0 || !Array.from(e.clipboardData.types ?? []).includes('text/plain')) return
     e.preventDefault()
     pasteValues(parseTsv(e.clipboardData.getData('text/plain')), { top: 0, left: 0, bottom: 0, right: 0 })
+    // This line goes once the sheet has rows: the keyboard moves to the pasted block's first cell.
+    focusRequest.current = true
   }
 
   function pasteValues(values: string[][], selection: CellRange) {
@@ -292,7 +294,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
     let target = rows
     if (needed > 0 && canAddRows) {
       api.getState().batch(() => {
-        for (let i = 0; i < needed; i++) api.getState().addRow(null, null)
+        // The first goes last among the top-level rows; each next one right after it (no sibling scan per row).
+        let last: string | null = null
+        for (let i = 0; i < needed; i++) last = api.getState().addRow(last, null)
       })
       const { data: grown, scheduled: grownSchedule } = api.getState()
       target = viewRows(grown, grownSchedule, view)
@@ -318,6 +322,8 @@ export function GridView({ viewportHeight }: GridViewProps) {
     if (target !== rows) notify(`Added ${needed} ${needed === 1 ? 'row' : 'rows'} for the paste`)
     const blocked = describeRejections(rejected, plan.clipped)
     notify(blocked && needed > 0 && !canAddRows && !viewOnly ? `${blocked}. Clear the sort or filter to add rows.` : blocked)
+    // Nothing to select when no row could take the paste (an empty sheet with a sort or filter on).
+    if (target.length === 0) return
     // The pasted block becomes the selection; the active cell stays at its top-left.
     const { top, left, bottom, right } = plan.range
     setActive({ rowId: target[top].id, colId: columns[left].id })

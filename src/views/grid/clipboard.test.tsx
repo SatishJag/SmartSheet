@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { SheetData } from '../../store/persistence'
@@ -293,6 +293,26 @@ describe('paste', () => {
     expect(cell(2, 'Duration')).toHaveTextContent('5d')
     expect(cell(2, 'Predecessors')).toHaveTextContent('1')
     expect(store.getState().notices).toEqual(['Added 2 rows for the paste'])
+  })
+
+  it('a paste into an empty sheet with a sort on adds nothing and says why, without failing (review)', async () => {
+    const { user, store } = await renderGrid(makeSheetData({ rows: [], dependencies: [] }))
+    await user.click(within(header('Start')).getByRole('button', { name: 'Start' }))
+    const empty = screen.getByText(/^No rows yet\./)
+    expect(() =>
+      fireEvent.paste(empty, { clipboardData: { types: ['text/plain'], getData: () => 'Mobilise\nExcavate' } }),
+    ).not.toThrow()
+    expect(store.getState().data!.rows).toHaveLength(0)
+    expect(store.getState().notices).toEqual(['2 cells were not pasted: 2 past the end of the sheet. Clear the sort or filter to add rows.'])
+  })
+
+  it('keeps the keyboard in the grid after a paste into an empty sheet (review)', async () => {
+    await renderGrid(makeSheetData({ rows: [], dependencies: [] }))
+    const empty = screen.getByText(/^No rows yet\./)
+    empty.focus()
+    fireEvent.paste(empty, { clipboardData: { types: ['text/plain'], getData: () => 'Mobilise' } })
+    expect(await screen.findByText('Mobilise')).toBeInTheDocument()
+    await waitFor(() => expect(cell(1, 'Task')).toHaveFocus())
   })
 
   it('offers no paste line to a viewer of an empty sheet', async () => {

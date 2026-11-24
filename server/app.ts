@@ -319,8 +319,9 @@ export function createApp(deps: AppDeps): Server {
   }
 
   /**
-   * The Procore sync: committed totals per cost code for the sheet's projects. Only projects the caller
-   * can read in `projects` and marked in Procore are looked up; a Procore failure fails the whole sync.
+   * The Procore sync: committed totals per cost code for the sheet's projects. Every project the caller
+   * can read in `projects` is looked up, marked in Procore or not (a planner-added project is found once
+   * Procore has its number, and then marked); a Procore failure fails the whole sync.
    */
   async function procoreCommitted(req: IncomingMessage, res: ServerResponse) {
     const { userId, history: source } = await authorize(req)

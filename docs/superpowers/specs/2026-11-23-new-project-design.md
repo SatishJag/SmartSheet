@@ -96,3 +96,7 @@ project needs a migration from a developer. The owner wants **any planner** to b
 ## Risks
 - Any planner can add projects, so the list can collect typos; renaming and deleting are deferred.
 - Planner-added projects stay labelled "(new)" if the service-role key is not configured.
+- A planner can add a code that matches any Procore project the app's Procore account can see; the sync then
+  reads its commitments and marks it, keeping the name the planner typed. Seeded sample projects are now looked
+  up too (answered "not found" rather than "not in Procore").
+- `created_by` (a user id) is readable by every signed-in user, like the rest of the project list.
