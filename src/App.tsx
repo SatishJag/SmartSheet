@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { AuthGate } from './auth/AuthGate'
+import { KeepSheetsBanner } from './auth/KeepSheetsBanner'
 import { SheetList } from './auth/SheetList'
 import { createSupabaseClient, getSupabaseConfig } from './lib/supabase'
 import { CreateAppPage } from './apps/CreateAppPage'
@@ -41,7 +42,10 @@ function ConfiguredApp({ url, anonKey }: { url: string; anonKey: string }) {
   return (
     <AuthGate client={client}>
       {(session) => (
-        <Shell client={client} userId={session.user.id} email={session.user.email ?? ''} />
+        <>
+          <KeepSheetsBanner client={client} user={session.user} />
+          <Shell client={client} userId={session.user.id} email={session.user.email ?? ''} />
+        </>
       )}
     </AuthGate>
   )
