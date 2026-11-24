@@ -62,6 +62,7 @@ describe('createSupabaseHistorySource', () => {
           { code: 'PRG-1', name: 'Programme', is_program: true, project_type: 'data-centre', in_procore: true },
           { code: 'BKK-03', name: 'Bangkok 3', is_program: false, project_type: 'data-centre', in_procore: true },
           { code: 'VIL-01', name: 'Sample villa', is_program: false, project_type: 'properties', in_procore: false },
+          { code: 'VIL-02', name: 'Villa two', is_program: false, project_type: 'properties', in_procore: false, created_by: 'user-1' },
         ]),
       })
       const options = await createSupabaseHistorySource(client).options()
@@ -87,6 +88,8 @@ describe('createSupabaseHistorySource', () => {
           { code: 'PRG-1', name: 'Programme', isProgram: true, projectType: 'data-centre', inProcore: true },
           { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
           { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+          // Added by a planner from the wizard (created_by set).
+          { code: 'VIL-02', name: 'Villa two', isProgram: false, projectType: 'properties', inProcore: false, addedByPlanner: true },
         ],
       })
       expect(calls.filter((c) => c.method === 'select').map((c) => c.target).sort()).toEqual([

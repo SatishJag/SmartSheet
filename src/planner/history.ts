@@ -23,7 +23,7 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
         client.from('cost_codes').select('code, description, equipment_type').eq('in_planner', true).order('code', { ascending: true }),
         client
           .from('projects')
-          .select('code, name, is_program, project_type, in_procore')
+          .select('code, name, is_program, project_type, in_procore, created_by')
           .eq('in_planner', true)
           .order('is_program', { ascending: false })
           .order('code', { ascending: true }),
@@ -56,6 +56,7 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
               isProgram: r.is_program === true,
               projectType: r.project_type,
               inProcore: r.in_procore === true,
+              ...(r.created_by ? { addedByPlanner: true } : {}),
             }),
           )
       return {
@@ -137,6 +138,8 @@ interface ProjectRow {
   is_program: boolean
   project_type: string
   in_procore: boolean
+  /** Null for projects seeded by migrations. */
+  created_by?: string | null
 }
 
 interface CostCodeRow {
