@@ -19,7 +19,7 @@ const T2_AFTER_4D = 'Task 2: 2026-11-13 to 2026-11-16, 2 days, 0% complete'
 test('predecessors drive the Gantt chart, invalid input is flagged, and everything persists', async ({ page }) => {
   await openApp(page)
   await createScheduleSheet(page)
-  await expect(page.getByText('No rows yet')).toBeVisible()
+  await expect(page.getByText(/^No rows yet/)).toBeVisible()
 
   const addRow = page.getByRole('button', { name: 'Add row' })
   await addRow.click()

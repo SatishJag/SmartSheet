@@ -11,6 +11,7 @@ import { CellEditor, CheckboxCell, type CommitReason } from './cellEditors'
 import {
   describeRejections,
   parseTsv,
+  pasteRowsNeeded,
   planPaste,
   rangeCells,
   rangeContains,
@@ -40,7 +41,9 @@ import { PredecessorCell } from './PredecessorCell'
 import { useGridViewState } from './useGridViewState'
 import { useColumnManagement } from './useColumnManagement'
 import { useRowDrag } from './useRowDrag'
-import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow } from './viewModel'
+import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow, type ViewState } from './viewModel'
+import type { ScheduleResult } from '../../engine/schedule'
+import type { SheetData } from '../../store/persistence'
 import { fixedViewport, measuredViewport } from './viewport'
 import { useDensity } from '../density'
 import { formulaDisplay } from '../../formula/sheetFormulas'
@@ -86,12 +89,11 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const critical = useCriticalPath(useShowCriticalPath())
 
   const allRows = useMemo(() => buildGridRows(data, scheduled), [data, scheduled])
-  const rows = useMemo<ViewRow[]>(() => {
-    const byId = new Map(allRows.map((r) => [r.id, r]))
-    return buildDisplayRows(data, scheduled, view, allRows).map((d) => ({ ...byId.get(d.id)!, ...d }))
-  }, [data, scheduled, view, allRows])
+  const rows = useMemo(() => viewRows(data, scheduled, view, allRows), [data, scheduled, view, allRows])
   const parentById = useMemo(() => new Map(data?.rows.map((r) => [r.id, r.parentId])), [data])
   const parentOf = (id: string) => parentById.get(id)
+  /** The sheet itself has no rows (not just none shown by the filter). */
+  const noRows = (data?.rows.length ?? 0) === 0
   const filterActive = effectiveFilter(columns, view.filter) !== null
   const rowDrag = useRowDrag({
     enabled: !viewOnly && !filterActive && effectiveSort(columns, view.sort) === null,
@@ -266,18 +268,41 @@ export function GridView({ viewportHeight }: GridViewProps) {
   /**
    * Pastes TSV from the top-left selected cell (filling the selection when it is a multiple of
    * the pasted block), one `setCell` per cell. Read-only cells and values `setCell` rejects keep
-   * their old value; one notice sums them up.
+   * their old value; one notice sums them up. A paste longer than the sheet first adds the rows it
+   * needs at the end, as Excel does, unless a sort or filter is on (a new row would not show under
+   * the pasted block) or the sheet is view-only.
    */
   function onGridPaste(e: ClipboardEvent<HTMLDivElement>) {
     if (!isCellClipboardEvent(e) || !selection) return
     if (!Array.from(e.clipboardData.types ?? []).includes('text/plain')) return
     e.preventDefault()
-    const plan = planPaste(parseTsv(e.clipboardData.getData('text/plain')), selection, rows.length, columns.length)
+    pasteValues(parseTsv(e.clipboardData.getData('text/plain')), selection)
+  }
+
+  /** A paste into a sheet with no rows (no cell to select): it starts at row 1, first column. */
+  function onEmptyPaste(e: ClipboardEvent<HTMLElement>) {
+    if (viewOnly || columns.length === 0 || !Array.from(e.clipboardData.types ?? []).includes('text/plain')) return
+    e.preventDefault()
+    pasteValues(parseTsv(e.clipboardData.getData('text/plain')), { top: 0, left: 0, bottom: 0, right: 0 })
+  }
+
+  function pasteValues(values: string[][], selection: CellRange) {
+    const needed = pasteRowsNeeded(values, selection, rows.length)
+    const canAddRows = !viewOnly && !filterActive && effectiveSort(columns, view.sort) === null
+    let target = rows
+    if (needed > 0 && canAddRows) {
+      api.getState().batch(() => {
+        for (let i = 0; i < needed; i++) api.getState().addRow(null, null)
+      })
+      const { data: grown, scheduled: grownSchedule } = api.getState()
+      target = viewRows(grown, grownSchedule, view)
+    }
+    const plan = planPaste(values, selection, target.length, columns.length)
     const rejected: Rejection[] = []
     // One reschedule for the whole paste instead of one per cell.
     api.getState().batch(() => {
       for (const { row: r, col: c, value } of plan.cells) {
-        const row = rows[r]
+        const row = target[r]
         const col = columns[c]
         const where = `row ${row.rowNumber} ${col.title}`
         if (!canEdit(col, row)) {
@@ -290,11 +315,13 @@ export function GridView({ viewportHeight }: GridViewProps) {
         if (!result.ok) rejected.push({ where, reason: result.error })
       }
     })
-    notify(describeRejections(rejected, plan.clipped))
+    if (target !== rows) notify(`Added ${needed} ${needed === 1 ? 'row' : 'rows'} for the paste`)
+    const blocked = describeRejections(rejected, plan.clipped)
+    notify(blocked && needed > 0 && !canAddRows && !viewOnly ? `${blocked}. Clear the sort or filter to add rows.` : blocked)
     // The pasted block becomes the selection; the active cell stays at its top-left.
     const { top, left, bottom, right } = plan.range
-    setActive({ rowId: rows[top].id, colId: columns[left].id })
-    setAnchor(rangeSize(plan.range) > 1 ? { rowId: rows[bottom].id, colId: columns[right].id } : null)
+    setActive({ rowId: target[top].id, colId: columns[left].id })
+    setAnchor(rangeSize(plan.range) > 1 ? { rowId: target[bottom].id, colId: columns[right].id } : null)
   }
 
   /** Clears every editable cell in the range; read-only cells are skipped silently. */
@@ -623,7 +650,15 @@ export function GridView({ viewportHeight }: GridViewProps) {
           </div>
         </div>
         {!viewOnly && columnUi.addColumnButton}
-        {rows.length === 0 && <p className="grid-empty">No rows yet</p>}
+        {rows.length === 0 &&
+          (noRows && !viewOnly ? (
+            // Focusable so a paste (Ctrl/Cmd+V) has somewhere to land before the sheet has a cell.
+            <p className="grid-empty" tabIndex={0} onPaste={onEmptyPaste}>
+              No rows yet. Select this line and paste rows copied from Excel, or add a row.
+            </p>
+          ) : (
+            <p className="grid-empty">No rows yet</p>
+          ))}
       </div>
       <div className="grid-toolbar">
         <button type="button" disabled={viewOnly} onClick={addRow}>
@@ -663,3 +698,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
 }
 
 const clamp = (i: number, length: number) => Math.max(0, Math.min(length - 1, i))
+
+/** The grid's rows as shown: tree order, sorted, filtered and collapsed per the view, with row numbers. */
+function viewRows(data: SheetData | null, scheduled: ScheduleResult, view: ViewState, allRows = buildGridRows(data, scheduled)): ViewRow[] {
+  const byId = new Map(allRows.map((r) => [r.id, r]))
+  return buildDisplayRows(data, scheduled, view, allRows).map((d) => ({ ...byId.get(d.id)!, ...d }))
+}

@@ -85,6 +85,27 @@ test('range selection, copy, paste and clear in the grid', async ({ page }) => {
   await expect(await gridCell(page, 1, 'Phase')).toHaveText('')
 })
 
+test('a paste from Excel fills an empty sheet, adding the rows it needs', async ({ page }) => {
+  await openApp(page)
+  await createScheduleSheet(page)
+  const empty = page.getByText(/^No rows yet\. Select this line and paste/)
+  await empty.click()
+  await pasteText(page, 'Mobilise\tSite\r\nExcavate\tSite\r\n')
+  await expect(page.getByRole('grid').getByRole('row')).toHaveCount(3) // header + 2 rows
+  await expect(await gridCell(page, 2, 'Task')).toHaveText('Excavate')
+  await expect(page.getByRole('status').filter({ hasText: 'Added 2 rows for the paste' })).toBeVisible()
+
+  // A longer paste from the last row adds more rows.
+  await (await gridCell(page, 2, 'Task')).click()
+  await pasteText(page, 'Excavate\nPour footings\nFrame walls')
+  await expect(await gridCell(page, 4, 'Task')).toHaveText('Frame walls')
+
+  await expectSaved(page)
+  await page.reload()
+  await page.getByRole('button', { name: /^Project schedule/ }).click()
+  await expect(await gridCell(page, 4, 'Task')).toHaveText('Frame walls')
+})
+
 test('the keyboard shortcuts use the real clipboard', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await openApp(page)

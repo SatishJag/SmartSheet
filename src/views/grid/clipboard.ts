@@ -144,21 +144,35 @@ export interface PastePlan {
 }
 
 /**
- * Where pasted values go. The block starts at the selection's top-left cell. When the
- * selection is larger than the block and a whole multiple of it in both directions (e.g. one
- * value into many cells), the block is repeated to fill the selection, as spreadsheets do.
- * Values past the last row or column are dropped, never added as new rows.
+ * The rectangle a block of `h` × `w` values fills from the selection: the block itself, or the
+ * whole selection when that is larger and a whole multiple of the block in both directions.
  */
-export function planPaste(values: string[][], selection: CellRange, rowCount: number, colCount: number): PastePlan {
+function pasteSize(values: string[][], selection: CellRange): { h: number; w: number; outH: number; outW: number } {
   const h = values.length
   const w = Math.max(0, ...values.map((r) => r.length))
-  if (h === 0 || w === 0) return { cells: [], range: { ...selection, bottom: selection.top, right: selection.left }, clipped: 0 }
-
+  if (h === 0 || w === 0) return { h, w, outH: 0, outW: 0 }
   const selH = rangeHeight(selection)
   const selW = rangeWidth(selection)
   const tile = (selH > h || selW > w) && selH % h === 0 && selW % w === 0
-  const outH = tile ? selH : h
-  const outW = tile ? selW : w
+  return { h, w, outH: tile ? selH : h, outW: tile ? selW : w }
+}
+
+/** How many rows a paste runs past the last of `rowCount` rows (the grid adds these first). */
+export function pasteRowsNeeded(values: string[][], selection: CellRange, rowCount: number): number {
+  const { outH } = pasteSize(values, selection)
+  return outH === 0 ? 0 : Math.max(0, selection.top + outH - rowCount)
+}
+
+/**
+ * Where pasted values go. The block starts at the selection's top-left cell. When the
+ * selection is larger than the block and a whole multiple of it in both directions (e.g. one
+ * value into many cells), the block is repeated to fill the selection, as spreadsheets do.
+ * Values past the last row or column are dropped here; the grid adds the rows a paste needs
+ * (see `pasteRowsNeeded`) before planning it.
+ */
+export function planPaste(values: string[][], selection: CellRange, rowCount: number, colCount: number): PastePlan {
+  const { h, w, outH, outW } = pasteSize(values, selection)
+  if (h === 0 || w === 0) return { cells: [], range: { ...selection, bottom: selection.top, right: selection.left }, clipped: 0 }
 
   const cells: PasteCell[] = []
   let clipped = 0

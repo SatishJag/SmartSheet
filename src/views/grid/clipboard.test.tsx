@@ -257,13 +257,75 @@ describe('paste', () => {
     expect(store.getState().notices).toEqual(['1 cell was not pasted: row 1 Duration (read-only)'])
   })
 
-  it('drops rows past the end of the sheet instead of adding rows', async () => {
+  it('adds rows when the paste runs past the last row, and says how many', async () => {
     const { user, store } = await renderGrid()
     await user.click(cell(4, 'Task'))
     await user.paste('A\nB\nC')
+    const rows = store.getState().data!.rows
+    expect(rows).toHaveLength(6)
     expect(cell(4, 'Task')).toHaveTextContent('A')
+    expect(cell(5, 'Task')).toHaveTextContent('B')
+    expect(cell(6, 'Task')).toHaveTextContent('C')
+    // New rows are top-level rows at the end of the sheet.
+    const added = rows.filter((r) => !['r-site', 'r-survey', 'r-clear', 'r-found'].includes(r.id))
+    expect(added.every((r) => r.parentId === null)).toBe(true)
+    expect(store.getState().notices).toEqual(['Added 2 rows for the paste'])
+    // The pasted block, new rows included, becomes the selection.
+    expect(selectedCells()).toHaveLength(3)
+  })
+
+  it('adds rows to a one-row sheet', async () => {
+    const { user, store } = await renderGrid(makeSheetData({ rows: [makeRow('r1', 'a0', {})], dependencies: [] }))
+    await user.click(cell(1, 'Task'))
+    await user.paste('Mobilise\nExcavate\r\n')
+    expect(store.getState().data!.rows).toHaveLength(2)
+    expect(cell(2, 'Task')).toHaveTextContent('Excavate')
+    expect(store.getState().notices).toEqual(['Added 1 row for the paste'])
+  })
+
+  it('pastes into a sheet with no rows from the empty-sheet line', async () => {
+    const { store } = await renderGrid(makeSheetData({ rows: [], dependencies: [] }))
+    const empty = screen.getByText(/No rows yet\. Select this line and paste/)
+    empty.focus()
+    fireEvent.paste(empty, { clipboardData: { types: ['text/plain'], getData: () => 'Mobilise\t\t\t3d\r\nExcavate\t\t\t5d\t1\r\n' } })
+    expect(store.getState().data!.rows).toHaveLength(2)
+    expect(cell(1, 'Task')).toHaveTextContent('Mobilise')
+    expect(cell(2, 'Duration')).toHaveTextContent('5d')
+    expect(cell(2, 'Predecessors')).toHaveTextContent('1')
+    expect(store.getState().notices).toEqual(['Added 2 rows for the paste'])
+  })
+
+  it('offers no paste line to a viewer of an empty sheet', async () => {
+    const { store } = await renderGrid(makeSheetData({ rows: [], dependencies: [] }))
+    store.setState({ readOnly: true })
+    expect(await screen.findByText('No rows yet')).toBeInTheDocument()
+    expect(screen.queryByText(/Select this line/)).not.toBeInTheDocument()
+  })
+
+  it('pastes predecessors that point at rows the same paste adds', async () => {
+    const { user, cellValue, store } = await renderGrid()
+    await user.click(cell(4, 'Duration'))
+    await user.paste('2d\t\n3d\t4')
+    const added = store.getState().data!.rows.find((r) => r.cells[COL.duration] === '3d' && r.id !== 'r-clear')!
+    expect(cellValue(added.id, COL.duration)).toBe('3d')
+    expect(cell(5, 'Predecessors')).toHaveTextContent('4')
+    expect(store.getState().notices).toEqual(['Added 1 row for the paste'])
+  })
+
+  it('still drops values past the last column', async () => {
+    const { user, store } = await renderGrid()
+    await user.click(cell(4, 'Status'))
+    await user.paste('Done\textra\tmore')
+    expect(store.getState().notices.at(-1)).toMatch(/past the end of the sheet/)
+  })
+
+  it('does not add rows while the rows are sorted (new rows would not land under the paste)', async () => {
+    const { user, store } = await renderGrid()
+    await user.click(within(header('Start')).getByRole('button', { name: 'Start' }))
+    await user.click(cell(4, 'Task'))
+    await user.paste('A\nB\nC')
     expect(store.getState().data!.rows).toHaveLength(4)
-    expect(store.getState().notices).toEqual(['2 cells were not pasted: 2 past the end of the sheet'])
+    expect(store.getState().notices).toEqual(['2 cells were not pasted: 2 past the end of the sheet. Clear the sort or filter to add rows.'])
   })
 
   it('leaves paste to the editor while a cell is being edited', async () => {
