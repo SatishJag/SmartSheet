@@ -328,7 +328,7 @@ export interface CommittedCostCode {
 
 export type CommittedProject =
   | { code: string; status: 'ok'; costCodes: CommittedCostCode[] }
-  /** not-in-procore: not listed, or not marked in_procore; not-found: Procore has no project with that number. */
+  /** not-in-procore: not in the caller's project list; not-found: Procore has no project with that number. */
   | { code: string; status: 'not-in-procore' | 'not-found' }
 
 export interface CommittedResponse {

@@ -56,6 +56,11 @@ export interface AppDeps {
   log?: Logger
   /** Reads committed totals from Procore for the sync; null or absent when Procore is not configured (503). */
   procore?: ProcoreClient | null
+  /**
+   * Marks a listed project as in Procore once the sync finds it there (a planner-added project, 0024).
+   * Needs the service role; null or absent: such projects still sync, they just stay unmarked.
+   */
+  markInProcore?: ((code: string) => Promise<void>) | null
 }
 
 /** Procore syncs: no AI is called, but each sync makes many Procore calls (rate-limited per company). */
@@ -348,15 +353,23 @@ export function createApp(deps: AppDeps): Server {
         log('procore.sync.error', { error: (err as Error).message })
         throw new HttpError(502, 'Could not read the project list.')
       }
-      const inProcore = new Set((options.projects ?? []).filter((p) => p.inProcore).map((p) => p.code))
+      // Every project the caller can read is looked up, marked in Procore or not: a planner-added project
+      // is found once Procore has a project with its number.
+      const listed = new Map((options.projects ?? []).map((p) => [p.code, p]))
       const projects: CommittedProject[] = []
       for (const p of parsed.value.projects) {
-        if (!inProcore.has(p.code)) {
+        const known = listed.get(p.code)
+        if (!known) {
           projects.push({ code: p.code, status: 'not-in-procore' })
           continue
         }
         try {
-          projects.push(await committedForProject(procore, p.code, p.costCodes, disconnected.signal))
+          const result = await committedForProject(procore, p.code, p.costCodes, disconnected.signal)
+          projects.push(result)
+          if (result.status === 'ok' && !known.inProcore && deps.markInProcore) {
+            // Only the label ("(new)") depends on the mark: a failure does not fail the sync.
+            await deps.markInProcore(p.code).catch((err: unknown) => log('procore.mark.failed', { project: p.code, error: (err as Error).message }))
+          }
         } catch (err) {
           if (disconnected.signal.aborted) return
           if (err instanceof ProcoreError) {

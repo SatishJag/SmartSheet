@@ -10,7 +10,8 @@
  *   PLANNER_DRAFTS_PER_HOUR       optional, per user, default 10
  *   PLANNER_MAX_CONCURRENT_DRAFTS optional, all users together, default 8
  *   PLANNER_DRAFTS_PER_HOUR_TOTAL optional, all users together, default 60
- *   SUPABASE_SERVICE_ROLE_KEY     enables time based rules, digests, update requests and approvals (server only)
+ *   SUPABASE_SERVICE_ROLE_KEY     enables time based rules, digests, update requests and approvals, and lets
+ *                                 Sync with Procore mark planner-added projects as in Procore (server only)
  *   RESEND_API_KEY, MAIL_FROM     real e-mail; without them e-mail is simulated. PUBLIC_APP_URL builds the links.
  *   See server/automation/config.ts for the other AUTOMATION_* settings.
  *   WHATSAPP_*                    the WhatsApp assistant (server/whatsapp/config.ts); without them it runs as a simulator
@@ -20,11 +21,13 @@
  */
 import path from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
+import { createClient } from '@supabase/supabase-js'
 import { DEFAULT_MODEL } from './ai'
 import { createApp, DEFAULT_DRAFT_LIMITS } from './app'
 import { createAutomation } from './automation'
 import { consoleLogger as log } from './log'
 import { createProcoreClient, procoreConfigFromEnv } from './procore'
+import { createProjectMarker } from './projectMarker'
 import { createSupabaseAuthenticator } from './supabase'
 import { createWhatsApp } from './whatsapp'
 
@@ -47,6 +50,11 @@ if ('missing' in procoreSettings) {
   })
 }
 const procore = 'config' in procoreSettings ? createProcoreClient(procoreSettings.config) : null
+const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+const markInProcore =
+  procore && supabaseUrl && serviceRoleKey
+    ? createProjectMarker(createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }))
+    : null
 
 const automation = createAutomation(env, log)
 const anthropic = apiKey ? new Anthropic({ apiKey }) : null
@@ -60,6 +68,7 @@ const server = createApp({
   model,
   log,
   procore,
+  markInProcore,
   draftLimits: {
     ...DEFAULT_DRAFT_LIMITS,
     perUserPerHour: Number(env.PLANNER_DRAFTS_PER_HOUR) || DEFAULT_DRAFT_LIMITS.perUserPerHour,
