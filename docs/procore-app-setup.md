@@ -57,6 +57,9 @@ Both show the page `https://smartsheet-web-production.up.railway.app/procore`. I
 - **Procore's frame must accept our page.** We only allow `app.procore.com`, `us02.procore.com`, `uk01.procore.com` and `sandbox.procore.com` to show `/procore`. If the panel stays blank, tell me the Procore address you were on so I can add it.
 - **Procore must let the panel open new tabs.** If "Open in SmartSheet" does nothing, tell me and I'll change it to a link you can copy.
 
+## Projects planners add
+A planner can add a project from the wizard (**Project → + New project…**). It shows as "(new)" until Sync with Procore finds a Procore project whose **Project Number** is the same code; the sync then reads its commitments and marks it as in Procore. The mark needs `SUPABASE_SERVICE_ROLE_KEY` in Railway; without it the project still syncs but keeps "(new)".
+
 ## Browsers that block sign-in inside Procore
 Some browsers refuse to keep a sign-in inside another site's frame:
 - Safari;
