@@ -78,6 +78,12 @@ export interface SheetState extends ColumnActions, BaselineActions {
    */
   batch<T>(fn: () => T): T
   /**
+   * Runs `fn` with saving held: the changes it makes are queued, and saving starts when it returns. A
+   * paste that adds rows and then writes their cells uses it, so each new row is inserted with its
+   * cells (and many new rows in a few requests) instead of being saved row by row and cell by cell.
+   */
+  deferSaves<T>(fn: () => T): T
+  /**
    * Validates and sets the sheet's working-day calendar (stored deduped and sorted), re-runs the
    * schedule and saves the sheet's settings. Unchanged input is a no-op.
    */
@@ -207,6 +213,9 @@ const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e)
  * A key that ran out of retries stays in `failedKeys` until a later job with the same key
  * (or one that supersedes it, such as the row's insert) succeeds.
  */
+/** The most rows one bulk insert sends (a paste can add thousands). */
+const INSERT_CHUNK = 500
+
 interface Job {
   key: string
   value?: unknown
@@ -249,7 +258,8 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
     }
 
     async function pump(): Promise<void> {
-      while (queue.length > 0) {
+      // A save in flight finishes, but no new one starts while deferSaves holds them.
+      while (queue.length > 0 && saveHold === 0) {
         const job = queue.shift()!
         current = job
         refreshStatus()
@@ -280,9 +290,12 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       const pending = queue.find((j) => j.key === job.key)
       if (pending) pending.value = job.value
       else queue.push(job)
-      if (current === null) void pump()
+      if (current === null && saveHold === 0) void pump()
       else refreshStatus()
     }
+
+    /** Above 0 while deferSaves runs: queued saves wait for it to finish. */
+    let saveHold = 0
 
     const findRow = (id: string) => get().data?.rows.find((r) => r.id === id)
 
@@ -293,6 +306,7 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
     async function insertNow(rowId: string): Promise<void> {
       const data = get().data
       if (!data) return
+      if (p.insertRows) return insertPending(data.sheet.id, p.insertRows)
       const chain: string[] = []
       for (let id: string | null = rowId; id !== null && unpersisted.has(id) && !chain.includes(id); ) {
         chain.unshift(id)
@@ -302,12 +316,50 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
         const row = get().data?.rows.find((r) => r.id === id)
         if (!row || !unpersisted.has(id)) continue
         await p.insertRow(data.sheet.id, row)
-        unpersisted.delete(id)
-        // The insert carried the row's place and every cell's current value, so earlier failures
-        // for them are resolved. A job still queued or in flight re-adds its key if it fails.
-        for (const key of [...failedKeys]) {
-          if (key === `tree:${id}` || key.startsWith(`cell:${id}:`)) failedKeys.delete(key)
-        }
+        settleInserted(row)
+      }
+    }
+
+    /**
+     * Every row not saved yet, in tree order (parents first), in requests of INSERT_CHUNK rows: a paste
+     * that adds hundreds of rows saves in a few requests instead of one (or three) per row and cell.
+     */
+    async function insertPending(sheetId: string, insertRows: NonNullable<Persistence['insertRows']>): Promise<void> {
+      const data = get().data
+      if (!data) return
+      const byId = new Map(data.rows.map((r) => [r.id, r]))
+      const pending = fullOrder(data.rows)
+        .filter((id) => unpersisted.has(id))
+        .map((id) => byId.get(id)!)
+      for (let i = 0; i < pending.length; i += INSERT_CHUNK) {
+        const chunk = pending.slice(i, i + INSERT_CHUNK)
+        await insertRows(sheetId, chunk)
+        for (const row of chunk) settleInserted(row)
+      }
+    }
+
+    /**
+     * After `row` (as it was sent) was inserted: it is persisted, earlier failures for its place and cells
+     * are resolved, and queued saves of a place or cell value the insert already carried are dropped. A
+     * change made while the insert was on its way differs from what was sent, so its save stays queued.
+     */
+    function settleInserted(row: RowRecord): void {
+      const id = row.id
+      unpersisted.delete(id)
+      // A job still queued or in flight re-adds its key if it fails.
+      for (const key of [...failedKeys]) {
+        if (key === `tree:${id}` || key.startsWith(`cell:${id}:`)) failedKeys.delete(key)
+      }
+      const now = findRow(id)
+      if (!now) return
+      const cellPrefix = `cell:${id}:`
+      for (let i = queue.length - 1; i >= 0; i--) {
+        const key = queue[i].key
+        const carried =
+          key === `tree:${id}`
+            ? now.parentId === row.parentId && now.position === row.position
+            : key.startsWith(cellPrefix) && Object.is(now.cells[key.slice(cellPrefix.length)], row.cells[key.slice(cellPrefix.length)])
+        if (carried) queue.splice(i, 1)
       }
     }
 
@@ -773,6 +825,16 @@ export function createSheetStore(p: Persistence, opts: SheetStoreOptions = {}): 
       ...refuseWhenReadOnly(createColumnActions({ p, get, commit, enqueue, failedKeys, unpersisted, retryers }), () => get().readOnly),
       // Baselines are the owner's (the database allows only the owner to write them).
       ...createBaselineActions({ p, get, set }),
+
+      deferSaves(fn) {
+        saveHold++
+        try {
+          return fn()
+        } finally {
+          saveHold--
+          if (saveHold === 0 && current === null && queue.length > 0) void pump()
+        }
+      },
 
       batch(fn) {
         batchDepth++

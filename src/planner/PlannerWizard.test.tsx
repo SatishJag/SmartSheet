@@ -915,7 +915,7 @@ describe('PlannerWizard: Procore project', () => {
     setup()
     const project = await screen.findByLabelText('Project')
     expect(project).toHaveValue('')
-    expect(within(project).getAllByRole('option').map((o) => o.textContent)).toEqual(['Choose a project…', 'BKK-03 — Bangkok 3'])
+    expect(within(project).getAllByRole('option').map((o) => o.textContent)).toEqual(['Choose a project…', 'BKK-03 — Bangkok 3', '+ New project…'])
     // Right after the schedule type in reading order.
     const schedule = screen.getByLabelText('Schedule type')
     expect(schedule.compareDocumentPosition(project) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -1165,9 +1165,9 @@ describe('PlannerWizard: projects for both businesses', () => {
   it('lists only the chosen project type’s projects, under the label Project', async () => {
     withBoth()
     const { user } = setup()
-    expect(optionTexts(await screen.findByLabelText('Project'))).toEqual(['Choose a project…', 'PRG-DC-01 — Data centre programme', 'BKK-03 — Bangkok 3'])
+    expect(optionTexts(await screen.findByLabelText('Project'))).toEqual(['Choose a project…', 'PRG-DC-01 — Data centre programme', 'BKK-03 — Bangkok 3', '+ New project…'])
     await user.selectOptions(screen.getByLabelText('Project type'), 'properties')
-    expect(optionTexts(screen.getByLabelText('Project'))).toEqual(['Choose a project…', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower'])
+    expect(optionTexts(screen.getByLabelText('Project'))).toEqual(['Choose a project…', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower', '+ New project…'])
   })
 
   it('clears a project that does not belong to the new project type, and the sites that followed it', async () => {
@@ -1306,6 +1306,21 @@ describe('PlannerWizard: import a plan from Excel', () => {
     expect(screen.queryByLabelText(/Instructions for a new draft/)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Back' }))
     expect(await screen.findByRole('heading', { name: 'What we found' })).toBeInTheDocument()
+  })
+
+  it('What we found’s Project list adds a new project under the project type shown', async () => {
+    withImport()
+    const { client, user } = setup()
+    await upload(user)
+    await screen.findByRole('heading', { name: 'What we found' })
+    await user.selectOptions(screen.getByLabelText('Project'), '+ New project…')
+    const group = screen.getByRole('group', { name: 'New project' })
+    await user.type(within(group).getByLabelText('Code'), 'VIL-09')
+    await user.type(within(group).getByLabelText('Name'), 'Lakeside villas{Enter}')
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue('VIL-09'))
+    expect(screen.getByRole('heading', { name: 'What we found' })).toBeInTheDocument() // Enter did not submit the step
+    const saved = (await client.from('projects').select('code, project_type')).data
+    expect(saved).toEqual([{ code: 'VIL-09', project_type: 'properties' }])
   })
 
   it('Create makes one sheet with the file’s activities, IDs, statuses and Basis notes', async () => {
@@ -1800,5 +1815,165 @@ describe('PlannerWizard: embedded, project kept after the request (Devin review)
     const projectCol = columns.find((c) => c.title === 'Project')!.id
     const rows = (await client.from('rows').select('cells')).data as { cells: Record<string, unknown> }[]
     expect(rows.every((r) => r.cells[projectCol] === 'BKK-03 — Bangkok 3')).toBe(true)
+  })
+})
+
+describe('PlannerWizard: new project', () => {
+  const OPTIONS_NEW: PlannerOptions = {
+    projectTypes: [
+      { id: 'data-centre', name: 'Data centre', description: 'Halls' },
+      { id: 'properties', name: 'Properties', description: 'Villas and towers' },
+    ],
+    scheduleTypes: [{ id: 'lle-procurement', name: 'Long-lead equipment procurement', description: 'LLE', projectTypes: ['data-centre', 'properties'] }],
+    equipmentTypes: { 'lle-procurement': ['Power transformer', 'Switchgear'] },
+    projects: [
+      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
+      { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+      { code: 'VIL-02', name: 'Villa two', isProgram: false, projectType: 'properties', inProcore: false, addedByPlanner: true },
+    ],
+  }
+  const withNew = () => mockServer({ options: () => json(200, OPTIONS_NEW) })
+  const optionTexts = (el: HTMLElement) => within(el).getAllByRole('option').map((o) => o.textContent)
+  const newProject = () => screen.getByRole('group', { name: 'New project' })
+  const saved = async (client: SupabaseClient) =>
+    ((await client.from('projects').select('code, name, project_type, created_by, in_procore, is_program, in_planner')).data ?? []) as Record<string, unknown>[]
+
+  async function openNew(user: User) {
+    await user.selectOptions(await screen.findByLabelText('Project'), '+ New project…')
+    return newProject()
+  }
+
+  it('offers + New project… last, and labels planner-added projects not in Procore as new', async () => {
+    withNew()
+    const { user } = setup()
+    expect(optionTexts(await screen.findByLabelText('Project'))).toEqual(['Choose a project…', 'BKK-03 — Bangkok 3', '+ New project…'])
+    await user.selectOptions(screen.getByLabelText('Project type'), 'properties')
+    expect(optionTexts(screen.getByLabelText('Project'))).toEqual(['Choose a project…', 'VIL-01 — Sample villa', 'VIL-02 — Villa two (new)', '+ New project…'])
+  })
+
+  it('shows Code and Name; the code is upper-cased as typed; the project stays as it was', async () => {
+    withNew()
+    const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    const group = await openNew(user)
+    expect(screen.getByLabelText('Project')).toHaveValue('BKK-03')
+    const code = within(group).getByLabelText('Code')
+    expect(within(group).getByText('Capitals, digits and hyphens, up to 20 (e.g. BKK-04)')).toBeInTheDocument()
+    await user.type(code, 'bkk-04')
+    expect(code).toHaveValue('BKK-04')
+  })
+
+  it('checks the fields and saves nothing until they are right', async () => {
+    withNew()
+    const { client, user } = setup()
+    const group = await openNew(user)
+    await user.click(within(group).getByRole('button', { name: 'Add project' }))
+    expect(within(group).getByText('Enter a code')).toBeInTheDocument()
+    expect(within(group).getByText('Enter a name')).toBeInTheDocument()
+    await user.type(within(group).getByLabelText('Code'), 'BKK 04')
+    await user.type(within(group).getByLabelText('Name'), 'Bangkok, 4')
+    await user.click(within(group).getByRole('button', { name: 'Add project' }))
+    expect(within(group).getByText('Use capitals, digits and hyphens (up to 20)')).toBeInTheDocument()
+    expect(within(group).getByText('A name cannot contain a comma')).toBeInTheDocument()
+    expect(await saved(client)).toEqual([])
+  })
+
+  it('Add project saves it under the project type on screen, selects it as new and closes the fields', async () => {
+    withNew()
+    const { client, userId, user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project type'), 'properties')
+    const group = await openNew(user)
+    await user.type(within(group).getByLabelText('Code'), 'vil-03')
+    await user.type(within(group).getByLabelText('Name'), 'Hillside villas')
+    await user.click(within(group).getByRole('button', { name: 'Add project' }))
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'New project' })).not.toBeInTheDocument())
+    expect(await saved(client)).toEqual([
+      { code: 'VIL-03', name: 'Hillside villas', project_type: 'properties', created_by: userId, in_procore: false, is_program: false, in_planner: true },
+    ])
+    const project = screen.getByLabelText('Project')
+    expect(project).toHaveValue('VIL-03')
+    expect(within(project).getByRole('option', { selected: true })).toHaveTextContent('VIL-03 — Hillside villas (new)')
+  })
+
+  it('says when the code already exists and keeps the fields open', async () => {
+    withNew()
+    const { client, userId, user } = setup()
+    await client.from('projects').insert({ code: 'BKK-04', name: 'Bangkok 4', created_by: userId, in_procore: false, is_program: false, in_planner: true })
+    const group = await openNew(user)
+    await user.type(within(group).getByLabelText('Code'), 'BKK-04')
+    await user.type(within(group).getByLabelText('Name'), 'Bangkok four')
+    await user.click(within(group).getByRole('button', { name: 'Add project' }))
+    expect(await within(group).findByText('BKK-04 already exists')).toBeInTheDocument()
+    expect(screen.getByLabelText('Project')).toHaveValue('')
+    expect((await saved(client)).map((p) => p.name)).toEqual(['Bangkok 4'])
+  })
+
+  it('saves once when Add project is pressed twice', async () => {
+    withNew()
+    const { client, user } = setup()
+    const insert = vi.spyOn(client, 'from')
+    const group = await openNew(user)
+    await user.type(within(group).getByLabelText('Code'), 'BKK-05')
+    await user.type(within(group).getByLabelText('Name'), 'Bangkok 5')
+    const add = within(group).getByRole('button', { name: 'Add project' })
+    await user.dblClick(add)
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue('BKK-05'))
+    expect(insert.mock.calls.filter(([t]) => t === 'projects')).toHaveLength(1)
+  })
+
+  it('refuses a pasted code over 20 characters instead of shortening it (Devin review)', async () => {
+    withNew()
+    const { client, user } = setup()
+    const group = await openNew(user)
+    await user.click(within(group).getByLabelText('Code'))
+    await user.paste('ABCDEFGHIJKLMNOPQRSTU')
+    expect(within(group).getByLabelText('Code')).toHaveValue('ABCDEFGHIJKLMNOPQRSTU')
+    await user.type(within(group).getByLabelText('Name'), 'Long code')
+    await user.click(within(group).getByRole('button', { name: 'Add project' }))
+    expect(within(group).getByText('Use capitals, digits and hyphens (up to 20)')).toBeInTheDocument()
+    expect(await saved(client)).toEqual([])
+  })
+
+  it('does not draft while the New project fields are open, so the plan cannot change project midway (Devin review)', async () => {
+    const { batches, drafts } = withNew()
+    const { user } = setup()
+    await user.selectOptions(await screen.findByLabelText('Project'), 'BKK-03')
+    await openNew(user)
+    await requestTwo(user)
+    expect(await screen.findAllByText('Add the new project or cancel it')).not.toHaveLength(0)
+    expect(batches).toHaveLength(0)
+    expect(drafts).toHaveLength(0)
+    await user.click(within(newProject()).getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText(/2 items · earliest required start/)
+    expect(batches).toHaveLength(1)
+  })
+
+  it('Cancel closes the fields without saving', async () => {
+    withNew()
+    const { client, user } = setup()
+    const group = await openNew(user)
+    await user.type(within(group).getByLabelText('Code'), 'BKK-06')
+    await user.click(within(group).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('group', { name: 'New project' })).not.toBeInTheDocument()
+    expect(await saved(client)).toEqual([])
+  })
+
+  it('the plan created with a new project stores it without "(new)"', async () => {
+    withNew()
+    const { client, user, onCreated } = setup()
+    const group = await openNew(user)
+    await user.type(within(group).getByLabelText('Code'), 'BKK-04')
+    await user.type(within(group).getByLabelText('Name'), 'Bangkok 4')
+    await user.click(within(group).getByRole('button', { name: 'Add project' }))
+    await waitFor(() => expect(screen.getByLabelText('Project')).toHaveValue('BKK-04'))
+    await requestTwo(user)
+    await screen.findByText(/2 items · earliest required start/)
+    await user.click(screen.getByRole('button', { name: 'Create schedule' }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1))
+    const columns = (await client.from('columns').select('id,title')).data as { id: string; title: string }[]
+    const project = columns.find((c) => c.title === 'Project')!.id
+    const rows = (await client.from('rows').select('parent_id,cells')).data as { parent_id: string | null; cells: Record<string, unknown> }[]
+    expect(rows.filter((r) => r.parent_id === null).map((r) => r.cells[project])).toEqual(['BKK-04 — Bangkok 4', 'BKK-04 — Bangkok 4'])
   })
 })

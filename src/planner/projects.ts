@@ -15,6 +15,12 @@ export function projectsFor(projects: readonly Project[], projectType: string): 
 /** The dropdown text for a project, e.g. "BKK-03 — Bangkok 3" (the sheet stores this text). */
 export const projectOption = (p: Project): string => `${p.code} — ${p.name}`
 
+/**
+ * How the wizard lists a project: as the sheet stores it, with "(new)" for a planner-added project not
+ * yet found in Procore. The sheet never stores "(new)", so sheets do not change when it reaches Procore.
+ */
+export const projectListLabel = (p: Project): string => (p.addedByPlanner && !p.inProcore ? `${projectOption(p)} (new)` : projectOption(p))
+
 /** The dropdown text for a project code, or undefined when that project is not on offer. */
 export function optionForProject(projects: readonly Project[], code: string): string | undefined {
   const found = code ? projects.find((p) => p.code === code) : undefined

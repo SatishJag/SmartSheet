@@ -11,6 +11,7 @@ import { CellEditor, CheckboxCell, type CommitReason } from './cellEditors'
 import {
   describeRejections,
   parseTsv,
+  pasteRowsNeeded,
   planPaste,
   rangeCells,
   rangeContains,
@@ -40,7 +41,9 @@ import { PredecessorCell } from './PredecessorCell'
 import { useGridViewState } from './useGridViewState'
 import { useColumnManagement } from './useColumnManagement'
 import { useRowDrag } from './useRowDrag'
-import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow } from './viewModel'
+import { buildDisplayRows, buildGridRows, effectiveFilter, effectiveSort, isDescendant, type DisplayRow, type ViewState } from './viewModel'
+import type { ScheduleResult } from '../../engine/schedule'
+import type { SheetData } from '../../store/persistence'
 import { fixedViewport, measuredViewport } from './viewport'
 import { useDensity } from '../density'
 import { formulaDisplay } from '../../formula/sheetFormulas'
@@ -86,12 +89,11 @@ export function GridView({ viewportHeight }: GridViewProps) {
   const critical = useCriticalPath(useShowCriticalPath())
 
   const allRows = useMemo(() => buildGridRows(data, scheduled), [data, scheduled])
-  const rows = useMemo<ViewRow[]>(() => {
-    const byId = new Map(allRows.map((r) => [r.id, r]))
-    return buildDisplayRows(data, scheduled, view, allRows).map((d) => ({ ...byId.get(d.id)!, ...d }))
-  }, [data, scheduled, view, allRows])
+  const rows = useMemo(() => viewRows(data, scheduled, view, allRows), [data, scheduled, view, allRows])
   const parentById = useMemo(() => new Map(data?.rows.map((r) => [r.id, r.parentId])), [data])
   const parentOf = (id: string) => parentById.get(id)
+  /** The sheet itself has no rows (not just none shown by the filter). */
+  const noRows = (data?.rows.length ?? 0) === 0
   const filterActive = effectiveFilter(columns, view.filter) !== null
   const rowDrag = useRowDrag({
     enabled: !viewOnly && !filterActive && effectiveSort(columns, view.sort) === null,
@@ -266,35 +268,86 @@ export function GridView({ viewportHeight }: GridViewProps) {
   /**
    * Pastes TSV from the top-left selected cell (filling the selection when it is a multiple of
    * the pasted block), one `setCell` per cell. Read-only cells and values `setCell` rejects keep
-   * their old value; one notice sums them up.
+   * their old value; one notice sums them up. A paste longer than the sheet first adds the rows it
+   * needs at the end, as Excel does, unless a sort or filter is on (a new row would not show under
+   * the pasted block) or the sheet is view-only.
    */
   function onGridPaste(e: ClipboardEvent<HTMLDivElement>) {
     if (!isCellClipboardEvent(e) || !selection) return
     if (!Array.from(e.clipboardData.types ?? []).includes('text/plain')) return
     e.preventDefault()
-    const plan = planPaste(parseTsv(e.clipboardData.getData('text/plain')), selection, rows.length, columns.length)
+    pasteValues(parseTsv(e.clipboardData.getData('text/plain')), selection)
+  }
+
+  /** A paste into a sheet with no rows (no cell to select): it starts at row 1, first column. */
+  function onEmptyPaste(e: ClipboardEvent<HTMLElement>) {
+    if (viewOnly || columns.length === 0 || !Array.from(e.clipboardData.types ?? []).includes('text/plain')) return
+    e.preventDefault()
+    pasteValues(parseTsv(e.clipboardData.getData('text/plain')), { top: 0, left: 0, bottom: 0, right: 0 })
+    // This line goes once the sheet has rows: the keyboard moves to the pasted block's first cell.
+    focusRequest.current = true
+  }
+
+  function pasteValues(values: string[][], selection: CellRange) {
+    const needed = pasteRowsNeeded(values, selection, rows.length)
+    const canAddRows = !viewOnly && !filterActive && effectiveSort(columns, view.sort) === null
     const rejected: Rejection[] = []
-    // One reschedule for the whole paste instead of one per cell.
-    api.getState().batch(() => {
-      for (const { row: r, col: c, value } of plan.cells) {
-        const row = rows[r]
-        const col = columns[c]
-        const where = `row ${row.rowNumber} ${col.title}`
-        if (!canEdit(col, row)) {
-          // Pasting a block back over itself is not an error for its calculated cells.
-          if (value !== copyText(col, row)) rejected.push({ where, reason: viewOnly ? READ_ONLY_MESSAGE : (readOnlyReason(col, row) ?? 'read-only') })
-          continue
-        }
-        if (value === editString(col, row) && !errorByCell.has(`${row.id}:${col.id}`)) continue
-        const result = api.getState().setCell(row.id, col.id, value)
-        if (!result.ok) rejected.push({ where, reason: result.error })
+    // Saving waits until the new rows hold their values: each is then inserted with its cells, and many
+    // new rows go in a few requests, instead of an insert per row and a save per cell.
+    const { target, plan, added } = api.getState().deferSaves(() => {
+      let target = rows
+      let addedIds: string[] = []
+      if (needed > 0 && canAddRows) {
+        api.getState().batch(() => {
+          // The first goes last among the top-level rows; each next one right after it (no sibling scan per row).
+          let last: string | null = null
+          for (let i = 0; i < needed; i++) addedIds.push((last = api.getState().addRow(last, null)))
+        })
+        const { data: grown, scheduled: grownSchedule } = api.getState()
+        target = viewRows(grown, grownSchedule, view)
       }
+      let plan = planPaste(values, selection, target.length, columns.length)
+      /** Whether any new row took a value (a blank line between filled ones counts). */
+      let filled = false
+      // One reschedule for the whole paste instead of one per cell.
+      api.getState().batch(() => {
+        for (const { row: r, col: c, value } of plan.cells) {
+          const row = target[r]
+          const col = columns[c]
+          const where = `row ${row.rowNumber} ${col.title}`
+          const isNew = r >= rows.length
+          if (!canEdit(col, row)) {
+            // Pasting a block back over itself is not an error for its calculated cells.
+            if (value !== copyText(col, row)) rejected.push({ where, reason: viewOnly ? READ_ONLY_MESSAGE : (readOnlyReason(col, row) ?? 'read-only') })
+            continue
+          }
+          if (value === editString(col, row) && !errorByCell.has(`${row.id}:${col.id}`)) {
+            if (isNew) filled = true
+            continue
+          }
+          const result = api.getState().setCell(row.id, col.id, value)
+          if (!result.ok) rejected.push({ where, reason: result.error })
+          else if (isNew) filled = true
+        }
+      })
+      // Rows that took nothing (e.g. dates pasted down the calculated End column) are not kept.
+      if (addedIds.length > 0 && !filled) {
+        api.getState().batch(() => addedIds.forEach((id) => api.getState().deleteRow(id)))
+        addedIds = []
+        target = rows
+        plan = planPaste(values, selection, rows.length, columns.length)
+      }
+      return { target, plan, added: addedIds.length }
     })
-    notify(describeRejections(rejected, plan.clipped))
+    if (added > 0) notify(`Added ${added} ${added === 1 ? 'row' : 'rows'} for the paste`)
+    const blocked = describeRejections(rejected, plan.clipped)
+    notify(blocked && needed > 0 && !canAddRows && !viewOnly ? `${blocked}. Clear the sort or filter to add rows.` : blocked)
+    // Nothing to select when no row could take the paste (an empty sheet with a sort or filter on).
+    if (target.length === 0) return
     // The pasted block becomes the selection; the active cell stays at its top-left.
     const { top, left, bottom, right } = plan.range
-    setActive({ rowId: rows[top].id, colId: columns[left].id })
-    setAnchor(rangeSize(plan.range) > 1 ? { rowId: rows[bottom].id, colId: columns[right].id } : null)
+    setActive({ rowId: target[top].id, colId: columns[left].id })
+    setAnchor(rangeSize(plan.range) > 1 ? { rowId: target[bottom].id, colId: columns[right].id } : null)
   }
 
   /** Clears every editable cell in the range; read-only cells are skipped silently. */
@@ -623,7 +676,15 @@ export function GridView({ viewportHeight }: GridViewProps) {
           </div>
         </div>
         {!viewOnly && columnUi.addColumnButton}
-        {rows.length === 0 && <p className="grid-empty">No rows yet</p>}
+        {rows.length === 0 &&
+          (noRows && !viewOnly ? (
+            // Focusable so a paste (Ctrl/Cmd+V) has somewhere to land before the sheet has a cell.
+            <p className="grid-empty" tabIndex={0} onPaste={onEmptyPaste}>
+              No rows yet. Select this line and paste rows copied from Excel, or add a row.
+            </p>
+          ) : (
+            <p className="grid-empty">No rows yet</p>
+          ))}
       </div>
       <div className="grid-toolbar">
         <button type="button" disabled={viewOnly} onClick={addRow}>
@@ -663,3 +724,9 @@ export function GridView({ viewportHeight }: GridViewProps) {
 }
 
 const clamp = (i: number, length: number) => Math.max(0, Math.min(length - 1, i))
+
+/** The grid's rows as shown: tree order, sorted, filtered and collapsed per the view, with row numbers. */
+function viewRows(data: SheetData | null, scheduled: ScheduleResult, view: ViewState, allRows = buildGridRows(data, scheduled)): ViewRow[] {
+  const byId = new Map(allRows.map((r) => [r.id, r]))
+  return buildDisplayRows(data, scheduled, view, allRows).map((d) => ({ ...byId.get(d.id)!, ...d }))
+}

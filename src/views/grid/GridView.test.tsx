@@ -323,11 +323,11 @@ describe('GridView rows', () => {
     const { store, user } = await renderGrid(makeSheetData({ rows: [], dependencies: [] }))
     expect(header('Task')).toBeInTheDocument()
     expect(header('Status')).toBeInTheDocument()
-    expect(screen.getByText('No rows yet')).toBeInTheDocument()
+    expect(screen.getByText(/^No rows yet/)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Add row' }))
     expect(store.getState().data!.rows).toHaveLength(1)
-    expect(screen.queryByText('No rows yet')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^No rows yet/)).not.toBeInTheDocument()
     expect(screen.getByRole('grid')).toHaveAttribute('aria-rowcount', '2')
     expect(cell(1, 'Task')).toBeInTheDocument()
   })

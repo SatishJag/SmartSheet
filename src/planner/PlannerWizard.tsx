@@ -39,7 +39,8 @@ import {
   type ItemForm,
 } from './plannerItems'
 import { codeForType, costCodeOption, optionForCode } from './costCodes'
-import { DATA_CENTRE, defaultDeliverySite, optionForProject, projectOption, projectsFor, siteProjects } from './projects'
+import { NEW_PROJECT, NewProjectFields } from './NewProjectFields'
+import { DATA_CENTRE, defaultDeliverySite, optionForProject, projectListLabel, projectOption, projectsFor, siteProjects } from './projects'
 import { insertSheetFromDrafts, sheetNameForDrafts } from './sheetFromDraft'
 import { NO_ITEM_TYPES, planCalendar, withFullPlanFirst } from './fullPlan'
 import {
@@ -209,6 +210,8 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const [scheduleType, setScheduleType] = useState('')
   /** The project the plan belongs to (a code), or '' while none is chosen. Kept while it stays listed. */
   const [project, setProject] = useState('')
+  /** The New project fields are open under the Project list. */
+  const [addingProject, setAddingProject] = useState(false)
   const [items, setItems] = useState<ItemForm[]>(() => [newItem('')])
   /** The target date of a full plan without items (the Data centre master's RFS date). */
   const [fullPlanDate, setFullPlanDate] = useState('')
@@ -286,7 +289,29 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
   const listed = useMemo(() => projectsFor(options?.projects ?? NO_PROJECTS, typed ? projectType : ''), [options, typed, projectType])
   const costCodes = (dataCentre && options?.costCodes) || NO_COST_CODES
   const sites = useMemo(() => (dataCentre ? siteProjects(listed) : NO_PROJECTS), [dataCentre, listed])
-  const projectProblem = listed.length > 0 && !project ? 'Choose the project' : null
+  // While the New project fields are open (or saving), the plan's project is not settled: nothing is drafted.
+  const projectProblem = addingProject ? 'Add the new project or cancel it' : listed.length > 0 && !project ? 'Choose the project' : null
+
+  /** The Project list's choice: a project, or "+ New project…", which opens the New project fields. */
+  function chooseProject(value: string) {
+    if (value === NEW_PROJECT) setAddingProject(true)
+    else setProject(value)
+  }
+
+  // Under whichever Project list shows (request step or the import's What we found).
+  const newProjectFields = addingProject && (
+    <NewProjectFields
+      client={client}
+      userId={userId}
+      projectType={typed && projectType ? projectType : DATA_CENTRE}
+      onAdded={(added) => {
+        setOptions((prev) => (prev ? { ...prev, projects: [...(prev.projects ?? []), added] } : prev))
+        setProject(added.code)
+        setAddingProject(false)
+      }}
+      onCancel={() => setAddingProject(false)}
+    />
+  )
   // Items whose type is not on offer for the schedule type (or not chosen yet) get the first type with history.
   useEffect(() => {
     // A full plan without items (the Data centre master) has no item types: leave the items as they are,
@@ -903,17 +928,19 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                           <select
                             id={ids.chosenProject}
                             value={project}
-                            onChange={(e) => setProject(e.target.value)}
+                            onChange={(e) => chooseProject(e.target.value)}
                             aria-invalid={submitted && projectProblem ? true : undefined}
                             aria-describedby={submitted && projectProblem ? `${ids.chosenProject}-error` : undefined}
                           >
                             <option value="">Choose a project…</option>
                             {listed.map((p) => (
                               <option key={p.code} value={p.code}>
-                                {projectOption(p)}
+                                {projectListLabel(p)}
                               </option>
                             ))}
+                            <option value={NEW_PROJECT}>+ New project…</option>
                           </select>
+                          {newProjectFields}
                           <small>
                             {dataCentre ? 'What the plan is bought against: a program project for batch buying, or a site.' : 'The project this plan is for.'}
                           </small>
@@ -1205,16 +1232,18 @@ export function PlannerWizard({ client, userId, onCreated, onClose, today: today
                       <select
                         id={ids.chosenProject}
                         value={project}
-                        onChange={(e) => setProject(e.target.value)}
+                        onChange={(e) => chooseProject(e.target.value)}
                         aria-invalid={submitted && projectProblem ? true : undefined}
                       >
                         <option value="">Choose a project…</option>
                         {listed.map((p) => (
                           <option key={p.code} value={p.code}>
-                            {projectOption(p)}
+                            {projectListLabel(p)}
                           </option>
                         ))}
+                        <option value={NEW_PROJECT}>+ New project…</option>
                       </select>
+                      {newProjectFields}
                     </div>
                   )}
                 </div>

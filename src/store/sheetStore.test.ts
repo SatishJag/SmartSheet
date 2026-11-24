@@ -253,6 +253,68 @@ describe('schedule without a start column', () => {
   })
 })
 
+describe('saving rows a paste adds (Devin review)', () => {
+  /** As a paste does: with saving held, adds `n` top-level rows (each after the last), then names them. */
+  function pasteRows(store: Awaited<ReturnType<typeof loaded>>['store'], n: number): string[] {
+    const ids: string[] = []
+    store.getState().deferSaves(() => {
+      store.getState().batch(() => {
+        let last: string | null = null
+        for (let i = 0; i < n; i++) ids.push((last = store.getState().addRow(last, null)))
+      })
+      store.getState().batch(() => ids.forEach((id, i) => store.getState().setCell(id, 'name', `Task ${i + 1}`)))
+    })
+    return ids
+  }
+
+  it('inserts the new rows together, with their cells, and saves nothing else for them', async () => {
+    const p = { ...fakePersistence(), insertRows: vi.fn(async (_s: string, _rows: RowRecord[]) => {}) }
+    const { store } = await loaded(p)
+    const ids = pasteRows(store, 3)
+    await settled(store)
+    expect(p.insertRows).toHaveBeenCalledTimes(1)
+    expect(p.insertRows.mock.calls[0][1].map((r) => [r.id, r.cells])).toEqual(ids.map((id, i) => [id, { name: `Task ${i + 1}` }]))
+    expect(p.insertRow).not.toHaveBeenCalled()
+    expect(p.saveRowTree).not.toHaveBeenCalled()
+    expect(p.saveCell).not.toHaveBeenCalled()
+  })
+
+  it('inserts in chunks of 500', async () => {
+    const p = { ...fakePersistence(), insertRows: vi.fn(async (_s: string, _rows: RowRecord[]) => {}) }
+    const { store } = await loaded(p)
+    pasteRows(store, 1200)
+    await settled(store)
+    expect(p.insertRows.mock.calls.map(([, rows]) => rows.length)).toEqual([500, 500, 200])
+    expect(p.saveCell).not.toHaveBeenCalled()
+  })
+
+  it('without a bulk insert, a new row is still saved once, with its cells', async () => {
+    const { store, p } = await loaded()
+    const [id] = pasteRows(store, 1)
+    store.getState().setCell(id, 'status', 'Open')
+    await settled(store)
+    // The insert carried the name; only the status, set after it was sent, needs a save of its own.
+    expect(p.insertRow).toHaveBeenCalledTimes(1)
+    expect(p.insertRow.mock.calls[0][1].cells).toEqual({ name: 'Task 1' })
+    expect(p.saveCell.mock.calls.map(([rowId, col, value]) => [rowId, col, value])).toEqual([[id, 'status', 'Open']])
+    expect(p.saveRowTree).not.toHaveBeenCalled()
+  })
+
+  it('keeps the save of a cell changed while the insert was on its way', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const p = { ...fakePersistence(), insertRows: vi.fn(async (_s: string, _rows: RowRecord[]) => gate) }
+    const { store } = await loaded(p)
+    const [id] = pasteRows(store, 1)
+    await vi.waitFor(() => expect(p.insertRows).toHaveBeenCalled())
+    store.getState().setCell(id, 'name', 'Renamed')
+    release()
+    await settled(store)
+    expect(p.insertRows.mock.calls[0][1][0].cells).toEqual({ name: 'Task 1' })
+    expect(p.saveCell.mock.calls.map(([rowId, col, value]) => [rowId, col, value])).toEqual([[id, 'name', 'Renamed']])
+  })
+})
+
 describe('rows', () => {
   it('adds a row after another with the same parent and persists it', async () => {
     const data = sheetData({ rows: [rec('p', 'a0', {}), rec('c1', 'a0', {}, 'p'), rec('c2', 'a1', {}, 'p')], dependencies: [] })

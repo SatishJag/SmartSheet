@@ -85,6 +85,7 @@ export type TableName =
   | 'rm_projects'
   | 'rm_assignments'
   | 'rm_views'
+  | 'projects'
 export type DbRecord = Record<string, unknown>
 
 export interface FakeUser {
@@ -140,6 +141,7 @@ const TABLES: readonly TableName[] = [
   'rm_projects',
   'rm_assignments',
   'rm_views',
+  'projects',
 ]
 
 /** Tables shared through a sheet's members (0017_sharing): owners and editors write, members read. */
@@ -328,6 +330,27 @@ const SCHEMA: Record<TableName, Record<string, ColumnSpec>> = {
     state: { default: () => ({}), notNull: true },
     created_at: { default: ({ now }) => now(), notNull: true },
   },
+  // 0020-0024: the shared project list. Everyone reads it; a planner adds a project as themselves (0024).
+  projects: {
+    code: { notNull: true },
+    name: { notNull: true },
+    is_program: { default: () => false, notNull: true },
+    in_planner: { default: () => true, notNull: true },
+    project_type: { default: () => 'data-centre', notNull: true },
+    in_procore: { default: () => true, notNull: true },
+    created_by: { default: () => null },
+    created_at: { default: ({ now }) => now(), notNull: true },
+  },
+}
+
+/** 0020/0024 checks on a project, and (for a user, `uid`) the 0024 insert policy. Null when fine. */
+function projectRowError(row: DbRecord, uid: string | null): FakeError | null {
+  if (uid !== null && !(row.created_by === uid && row.in_procore === false && row.is_program === false && row.in_planner === true)) return rlsError('projects')
+  const code = String(row.code)
+  const name = String(row.name)
+  if (!/^[A-Z0-9][A-Z0-9-]*$/.test(code) || code.length > 20) return pgError('new row for relation "projects" violates check constraint "projects_code_check"', '23514')
+  if (name.trim() === '' || name.includes(',') || name.length > 80) return pgError('new row for relation "projects" violates check constraint "projects_name_check"', '23514')
+  return null
 }
 
 const COLUMN_TYPES = ['TEXT_NUMBER', 'DATE', 'CHECKBOX', 'PICKLIST', 'MULTI_PICKLIST', 'CONTACT_LIST', 'DURATION', 'PREDECESSOR']
@@ -801,6 +824,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
       const may = (r: DbRecord): boolean => {
         if (serviceRole) return true
         if (this.table === 'sheets') return sheetRole(state, uid, r.id) !== null
+        if (this.table === 'projects') return true
         if (this.table === 'sheet_members') return r.user_id === uid || sheetRole(state, uid, r.sheet_id) === 'owner'
         if (SHARED_TABLES.has(this.table)) return sheetRole(state, uid, r.sheet_id) !== null
         // rm_* and every table added after sharing are owner-only.
@@ -854,6 +878,7 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
         }
       }
       if (this.table === 'sheet_members' && !serviceRole) return rlsError(this.table) // only share_sheet() adds members
+      if (this.table === 'projects') return projectRowError(row, serviceRole ? null : uid)
       if (this.table.startsWith('rm_')) {
         // 0016: owner-only, like the sheets row itself.
         if (!serviceRole && (row.owner_id !== uid || row.workspace_id !== uid)) return rlsError(this.table)
@@ -958,6 +983,9 @@ export function createFakeSupabase({ storage, key = FAKE_STORAGE_KEY, serviceRol
       }
       if (this.table === 'baselines' && others.some((r) => r !== row && r.sheet_id === row.sheet_id && r.slot === row.slot)) {
         return pgError('duplicate key value violates unique constraint "baselines_sheet_id_slot_key"', '23505')
+      }
+      if (this.table === 'projects') {
+        return others.some((r) => r !== row && r.code === row.code) ? pgError('duplicate key value violates unique constraint "projects_pkey"', '23505') : null
       }
       if (others.some((r) => r !== row && r.id === row.id)) {
         return pgError(`duplicate key value violates unique constraint "${this.table}_pkey"`, '23505')

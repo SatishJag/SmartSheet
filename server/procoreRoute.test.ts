@@ -123,6 +123,17 @@ describe('POST /api/procore/committed', () => {
     expect(asked).toEqual(['BKK-03'])
   })
 
+  it('does not look up a planner-added project until it is marked in Procore (owner decision on the Devin security review)', async () => {
+    const procore = fakeProcore({ '/rest/v1.1/projects': () => [{ id: 8, project_number: 'BKK-04' }] })
+    const base = await start({ procore }, async () => ({
+      ...OPTIONS,
+      projects: [{ code: 'BKK-04', name: 'Bangkok 4', isProgram: false, projectType: 'data-centre', inProcore: false, addedByPlanner: true }],
+    }))
+    const res = await post(base, { projects: [{ code: 'BKK-04', costCodes: ['CHL'] }] })
+    expect(await res.json()).toEqual({ ok: true, projects: [{ code: 'BKK-04', status: 'not-in-procore' }] })
+    expect(procore.getAll).not.toHaveBeenCalled()
+  })
+
   it('fails the whole sync when Procore fails', async () => {
     const base = await start({
       procore: fakeProcore({

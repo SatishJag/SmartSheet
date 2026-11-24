@@ -12,9 +12,14 @@ type Call = { target: string; method: string; args: unknown[] }
  * records its calls and resolves to the canned result for that table; `rpc` resolves to the canned
  * result for that function. Enough to check the mapping and the queries history.ts makes.
  */
-function fakeClient(results: Record<string, Result>) {
+function fakeClient(results: Record<string, Result | Result[]>) {
   const calls: Call[] = []
-  const resultFor = (target: string): Result => results[target] ?? { data: null, error: { message: `no fake result for ${target}` } }
+  // A list gives one result per query, in order (the last one repeats).
+  const resultFor = (target: string): Result => {
+    const r = results[target]
+    if (Array.isArray(r)) return (r.length > 1 ? r.shift() : r[0])!
+    return r ?? { data: null, error: { message: `no fake result for ${target}` } }
+  }
   const client = {
     from(table: string) {
       const builder: Record<string, unknown> = {}
@@ -62,6 +67,7 @@ describe('createSupabaseHistorySource', () => {
           { code: 'PRG-1', name: 'Programme', is_program: true, project_type: 'data-centre', in_procore: true },
           { code: 'BKK-03', name: 'Bangkok 3', is_program: false, project_type: 'data-centre', in_procore: true },
           { code: 'VIL-01', name: 'Sample villa', is_program: false, project_type: 'properties', in_procore: false },
+          { code: 'VIL-02', name: 'Villa two', is_program: false, project_type: 'properties', in_procore: false, created_by: 'user-1' },
         ]),
       })
       const options = await createSupabaseHistorySource(client).options()
@@ -87,6 +93,8 @@ describe('createSupabaseHistorySource', () => {
           { code: 'PRG-1', name: 'Programme', isProgram: true, projectType: 'data-centre', inProcore: true },
           { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
           { code: 'VIL-01', name: 'Sample villa', isProgram: false, projectType: 'properties', inProcore: false },
+          // Added by a planner from the wizard (created_by set).
+          { code: 'VIL-02', name: 'Villa two', isProgram: false, projectType: 'properties', inProcore: false, addedByPlanner: true },
         ],
       })
       expect(calls.filter((c) => c.method === 'select').map((c) => c.target).sort()).toEqual([
@@ -147,6 +155,23 @@ describe('createSupabaseHistorySource', () => {
 
       const empty = fakeClient({ ...base, projects: ok([]) })
       expect((await createSupabaseHistorySource(empty.client).options()).projects).toBeUndefined()
+    })
+
+    it('still lists the projects before migration 0024 adds created_by (deploy order, review)', async () => {
+      const { client, calls } = fakeClient({
+        schedule_types: ok([{ id: 'lle-procurement', name: 'LLE', description: '', project_types: [] }]),
+        project_types: ok([]),
+        planner_equipment_types: ok([]),
+        cost_codes: ok([]),
+        projects: [
+          { data: null, error: { message: 'column projects.created_by does not exist', code: '42703' } as Result['error'] },
+          ok([{ code: 'BKK-03', name: 'Bangkok 3', is_program: false, project_type: 'data-centre', in_procore: true }]),
+        ],
+      })
+      const options = await createSupabaseHistorySource(client).options()
+      expect(options.projects).toEqual([{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }])
+      const selects = calls.filter((c) => c.target === 'projects' && c.method === 'select').map((c) => c.args[0])
+      expect(selects).toEqual(['code, name, is_program, project_type, in_procore, created_by', 'code, name, is_program, project_type, in_procore'])
     })
 
     it('passes the schedule type’s own words for what it plans, and ignores malformed ones', async () => {

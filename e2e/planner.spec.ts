@@ -402,7 +402,7 @@ test('Plan with AI: a property plan needs a project, from the sample property pr
   const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
   await dialog.getByLabel('Project type').selectOption('properties')
   const project = dialog.getByLabel('Project', { exact: true })
-  await expect(project.locator('option')).toHaveText(['Choose a project…', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower'])
+  await expect(project.locator('option')).toHaveText(['Choose a project…', 'VIL-01 — Sample villa', 'TWR-01 — Sample tower', '+ New project…'])
   await expect(dialog.getByLabel('Cost code')).toHaveCount(0)
   await dialog.getByLabel('Equipment name').fill('Lift for tower A')
   await dialog.getByLabel('Required on site').fill(REQUIRED)
@@ -632,4 +632,43 @@ test('Plan with AI in Procore full screen keeps the usual width, centred', async
   const box = (await panel.boundingBox())!
   expect(box.width, 'wizard width').toBeLessThanOrEqual(1081)
   expect(Math.abs(box.x - (1600 - box.x - box.width)), 'left and right margins').toBeLessThanOrEqual(2)
+})
+
+test('Plan with AI: a planner adds a new project and plans with it', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(`${TODAY}T10:00:00`))
+  await page.route('**/api/planner/options', (route) =>
+    route.fulfill({
+      json: {
+        ...OPTIONS,
+        projectCounts: { 'lle-procurement': { 'Power transformer': 8, Switchgear: 5 } },
+        projects: [{ code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true }],
+      } satisfies PlannerOptions,
+    }),
+  )
+  await page.route('**/api/planner/draft', (route) => {
+    const request = route.request().postDataJSON() as PlanRequest
+    return route.fulfill({ json: { ok: true, draft: { ...catalogDraft(request.requiredDate), request } } })
+  })
+
+  await openApp(page)
+  await page.getByRole('button', { name: 'Plan with AI' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Plan with AI' })
+  const project = dialog.getByLabel('Project', { exact: true })
+  await project.selectOption('+ New project…')
+  const fields = dialog.getByRole('group', { name: 'New project' })
+  await fields.getByLabel('Code').fill('bkk-04')
+  await expect(fields.getByLabel('Code')).toHaveValue('BKK-04')
+  await fields.getByLabel('Name').fill('Bangkok 4')
+  await fields.getByRole('button', { name: 'Add project' }).click()
+  await expect(fields).toHaveCount(0)
+  await expect(project).toHaveValue('BKK-04')
+  await expect(project.locator('option:checked')).toHaveText('BKK-04 — Bangkok 4 (new)')
+
+  await dialog.getByLabel('Equipment type').selectOption('Power transformer')
+  await dialog.getByLabel('Equipment name').fill('400 MVA transformer')
+  await dialog.getByLabel('Required on site').fill('2028-03-31')
+  await dialog.getByRole('button', { name: 'Generate' }).click()
+  await dialog.getByRole('button', { name: 'Create schedule' }).click()
+  await expect(page.getByRole('grid')).toBeVisible()
+  await expect(await gridCell(page, 1, 'Project')).toHaveText('BKK-04 — Bangkok 4')
 })

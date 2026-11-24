@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   describeRejections,
   parseTsv,
+  pasteRowsNeeded,
   planPaste,
   rangeCells,
   rangeContains,
@@ -125,6 +126,21 @@ describe('serializeTsv', () => {
       ['multi\r\nline', '"quote" first', 'inner " quote', '50%'],
     ]
     expect(parseTsv(serializeTsv(cells))).toEqual(cells)
+  })
+})
+
+describe('pasteRowsNeeded', () => {
+  const at = (row: number, col: number) => ({ top: row, left: col, bottom: row, right: col })
+
+  it('is the number of pasted rows that fall past the last row', () => {
+    expect(pasteRowsNeeded([['a'], ['b'], ['c']], at(3, 0), 4)).toBe(2)
+    expect(pasteRowsNeeded([['a'], ['b']], at(0, 0), 4)).toBe(0)
+    expect(pasteRowsNeeded([['a'], ['b']], at(0, 0), 0)).toBe(2)
+  })
+
+  it('needs no rows for an empty paste or one repeated over a selection that fits', () => {
+    expect(pasteRowsNeeded([], at(3, 0), 4)).toBe(0)
+    expect(pasteRowsNeeded([['x']], { top: 1, left: 0, bottom: 3, right: 0 }, 4)).toBe(0)
   })
 })
 

@@ -216,6 +216,8 @@ export interface Project {
   isProgram: boolean
   projectType: string
   inProcore: boolean
+  /** Added by a planner from the wizard (created_by set, 0024); absent for the projects migrations seeded. */
+  addedByPlanner?: boolean
 }
 
 export interface PlannerOptions {

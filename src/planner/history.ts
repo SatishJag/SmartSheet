@@ -8,6 +8,14 @@ import type { ActivityStats, CatalogActivity, CostCode, HistorySource, HistorySu
  * never by anon. Rows are snake_case; this maps them to the contract in ./types. Supabase errors
  * are thrown as `Error(message)`.
  */
+const PROJECT_COLUMNS = 'code, name, is_program, project_type, in_procore'
+/** Postgres: undefined_column. */
+const UNDEFINED_COLUMN = '42703'
+
+/** The projects offered to the planner: programmes first, then by code. */
+const projectQuery = (client: SupabaseClient, columns: string) =>
+  client.from('projects').select(columns).eq('in_planner', true).order('is_program', { ascending: false }).order('code', { ascending: true })
+
 export function createSupabaseHistorySource(client: SupabaseClient): HistorySource {
   return {
     async options(): Promise<PlannerOptions> {
@@ -21,12 +29,10 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
           .order('equipment_type', { ascending: true }),
         client.from('project_types').select('id, name, description').order('position', { ascending: true }),
         client.from('cost_codes').select('code, description, equipment_type').eq('in_planner', true).order('code', { ascending: true }),
-        client
-          .from('projects')
-          .select('code, name, is_program, project_type, in_procore')
-          .eq('in_planner', true)
-          .order('is_program', { ascending: false })
-          .order('code', { ascending: true }),
+        projectQuery(client, `${PROJECT_COLUMNS}, created_by`).then((r) =>
+          // Before migration 0024 there is no created_by: still list the projects, just without "(new)".
+          r.error && (r.error as { code?: string }).code === UNDEFINED_COLUMN ? projectQuery(client, PROJECT_COLUMNS) : r,
+        ),
       ])
       const scheduleTypes = rows<ScheduleTypeRow>(types).map(
         (r): ScheduleType => ({
@@ -49,13 +55,14 @@ export function createSupabaseHistorySource(client: SupabaseClient): HistorySour
       // Projects are optional too.
       const projects = projectRows.error
         ? []
-        : ((projectRows.data ?? []) as ProjectRow[]).map(
+        : ((projectRows.data ?? []) as unknown as ProjectRow[]).map(
             (r): Project => ({
               code: r.code,
               name: r.name,
               isProgram: r.is_program === true,
               projectType: r.project_type,
               inProcore: r.in_procore === true,
+              ...(r.created_by ? { addedByPlanner: true } : {}),
             }),
           )
       return {
@@ -137,6 +144,8 @@ interface ProjectRow {
   is_program: boolean
   project_type: string
   in_procore: boolean
+  /** Null for projects seeded by migrations. */
+  created_by?: string | null
 }
 
 interface CostCodeRow {
