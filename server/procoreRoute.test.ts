@@ -93,7 +93,7 @@ describe('POST /api/procore/committed', () => {
     expect(await res.json()).toEqual({ ok: false, error: 'Send at least one project to sync.' })
   })
 
-  it('syncs every listed project Procore has, and skips codes not in the list', async () => {
+  it('syncs listed projects in Procore and skips the rest', async () => {
     const procore = fakeProcore()
     const base = await start({ procore })
     const res = await post(base, {
@@ -115,13 +115,23 @@ describe('POST /api/procore/committed', () => {
             { code: 'GEN', committed: 0, awarded: false, known: true },
           ],
         },
-        // Listed but not marked in Procore: looked up all the same (it may have been set up since).
-        { code: 'VIL-01', status: 'not-found' },
+        { code: 'VIL-01', status: 'not-in-procore' },
         { code: 'ZZZ-9', status: 'not-in-procore' },
       ],
     })
     const asked = vi.mocked(procore.getAll).mock.calls.filter((c) => c[0] === '/rest/v1.1/projects').map((c) => c[1]['filters[project_number]'])
-    expect(asked).toEqual(['BKK-03', 'VIL-01'])
+    expect(asked).toEqual(['BKK-03'])
+  })
+
+  it('does not look up a planner-added project until it is marked in Procore (owner decision on the Devin security review)', async () => {
+    const procore = fakeProcore({ '/rest/v1.1/projects': () => [{ id: 8, project_number: 'BKK-04' }] })
+    const base = await start({ procore }, async () => ({
+      ...OPTIONS,
+      projects: [{ code: 'BKK-04', name: 'Bangkok 4', isProgram: false, projectType: 'data-centre', inProcore: false, addedByPlanner: true }],
+    }))
+    const res = await post(base, { projects: [{ code: 'BKK-04', costCodes: ['CHL'] }] })
+    expect(await res.json()).toEqual({ ok: true, projects: [{ code: 'BKK-04', status: 'not-in-procore' }] })
+    expect(procore.getAll).not.toHaveBeenCalled()
   })
 
   it('fails the whole sync when Procore fails', async () => {
@@ -260,65 +270,3 @@ describe('GET /api/procore/project: review fixes', () => {
     expect(await res.json()).toEqual({ code: '1234' })
   })
 })
-
-describe('POST /api/procore/committed: planner-added projects', () => {
-  const WITH_NEW: PlannerOptions = {
-    ...OPTIONS,
-    projects: [
-      { code: 'BKK-03', name: 'Bangkok 3', isProgram: false, projectType: 'data-centre', inProcore: true },
-      { code: 'BKK-04', name: 'Bangkok 4', isProgram: false, projectType: 'data-centre', inProcore: false, addedByPlanner: true },
-    ],
-  }
-  /** Procore has BKK-03 and BKK-04 (id 8, nothing committed). */
-  const procoreWithBoth = () =>
-    fakeProcore({
-      '/rest/v1.1/projects': () => [
-        { id: 7, project_number: 'BKK-03' },
-        { id: 8, project_number: 'BKK-04' },
-      ],
-    })
-  const body = { projects: [{ code: 'BKK-03', costCodes: ['CHL'] }, { code: 'BKK-04', costCodes: ['CHL'] }] }
-
-  it('syncs a planner project once Procore has it, and marks it as in Procore', async () => {
-    const markInProcore = vi.fn(async () => {})
-    const base = await start({ procore: procoreWithBoth(), markInProcore }, async () => WITH_NEW)
-    const res = await post(base, body)
-    expect(res.status).toBe(200)
-    const out = (await res.json()) as CommittedResponse
-    expect(out.ok && out.projects.map((p) => [p.code, p.status])).toEqual([
-      ['BKK-03', 'ok'],
-      ['BKK-04', 'ok'],
-    ])
-    expect(markInProcore).toHaveBeenCalledTimes(1)
-    expect(markInProcore).toHaveBeenCalledWith('BKK-04')
-  })
-
-  it('does not mark a planner project Procore does not have', async () => {
-    const markInProcore = vi.fn(async () => {})
-    const base = await start({ procore: fakeProcore(), markInProcore }, async () => WITH_NEW)
-    const out = (await (await post(base, body)).json()) as CommittedResponse
-    expect(out.ok && out.projects.map((p) => [p.code, p.status])).toEqual([
-      ['BKK-03', 'ok'],
-      ['BKK-04', 'not-found'],
-    ])
-    expect(markInProcore).not.toHaveBeenCalled()
-  })
-
-  it('still answers when marking fails, and logs it', async () => {
-    const log = vi.fn()
-    const markInProcore = vi.fn(async () => {
-      throw new Error('db down')
-    })
-    const base = await start({ procore: procoreWithBoth(), markInProcore, log }, async () => WITH_NEW)
-    const res = await post(base, body)
-    expect(res.status).toBe(200)
-    expect(log).toHaveBeenCalledWith('procore.mark.failed', { project: 'BKK-04', error: 'db down' })
-  })
-
-  it('syncs without marking when the server cannot mark projects', async () => {
-    const base = await start({ procore: procoreWithBoth(), markInProcore: null }, async () => WITH_NEW)
-    const out = (await (await post(base, body)).json()) as CommittedResponse
-    expect(out.ok && out.projects.map((p) => p.status)).toEqual(['ok', 'ok'])
-  })
-})
-

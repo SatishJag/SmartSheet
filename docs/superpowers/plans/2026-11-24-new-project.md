@@ -70,6 +70,8 @@
 
 ### Task 4: Sync looks up and marks planner-added projects
 
+> **Reverted (owner decision, option 1, after the Devin security review):** the sync again looks up only projects marked in Procore; a planner-added project is marked by hand. See the spec's "Sync with Procore".
+
 **Files:**
 - Modify: `server/app.ts` (committed route; `AppDeps.markInProcore?: ((code: string) => Promise<void>) | null`), `server/main.ts` (service client when `SUPABASE_SERVICE_ROLE_KEY` and URL are set: `update projects set in_procore = true where code = $code and in_procore = false`), `src/planner/types.ts` comment on `not-in-procore`
 - Test: `server/procoreRoute.test.ts`

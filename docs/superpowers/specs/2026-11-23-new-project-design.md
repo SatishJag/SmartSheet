@@ -14,8 +14,9 @@ project needs a migration from a developer. The owner wants **any planner** to b
     project**, and it is saved to the shared list and selected.
   - The new project is an ordinary project from then on: every planner sees it, for every schedule type,
     imports, and (Data centre) as a delivery site.
-  - When the project is later created in Procore with the same project number, **Sync with Procore**
-    finds and syncs it without a developer, and marks it as in Procore.
+  - ~~When the project is later created in Procore, Sync with Procore finds and marks it.~~ Changed after the
+    security review (see "Sync with Procore" below): a planner-added project is synced only once it is marked
+    as in Procore.
 - Non-goals (this round): renaming or deleting projects; adding programme projects; limiting who can add.
 - Anti-goals: duplicate or near-duplicate codes; codes or names that break the sheet's dropdowns (commas)
   or the catalog rules; a planner able to change projects they did not create, or to mark a project as in
@@ -69,14 +70,15 @@ project needs a migration from a developer. The owner wants **any planner** to b
   change when the project reaches Procore.
 - Options loading (`history.ts`) reads `created_by` so the client knows which projects are planner-added.
 
-### Sync with Procore
-- `POST /api/procore/committed` today answers `not-in-procore` for any project not marked `in_procore`.
-  It now looks up **every** listed project the caller can read; `not-in-procore` remains for codes that are
-  not in the caller's list at all. A project not found in Procore answers `not-found` as today.
-- When a project not marked `in_procore` is found in Procore, the server marks it (`in_procore = true`)
-  using the service-role Supabase client when `SUPABASE_SERVICE_ROLE_KEY` is set (it is the existing
-  server-side key used by automation). Without that key the project still syncs; only the mark (and so the
-  "(new)" label) stays.
+### Sync with Procore (owner decision, 2026-11-24: option 1)
+- Unchanged: `POST /api/procore/committed` looks up only projects marked `in_procore` and answers
+  `not-in-procore` for every other code, planner-added ones included.
+- Why: the sync reads Procore with the app's integration account, not the caller's Procore login. Letting any
+  signed-in user add a code that the sync then looks up would let them read the committed totals of any Procore
+  project whose number they guess (Devin security review on PR 22). An auto-mark design was built and removed.
+- A planner-added project starts syncing once someone with database access marks it, e.g.
+  `update projects set in_procore = true where code = 'BKK-04';` (service role / SQL editor). That also drops
+  its "(new)" label.
 - The side panel's project match already matches any listed project by number; unchanged.
 
 ## Testing
@@ -95,8 +97,5 @@ project needs a migration from a developer. The owner wants **any planner** to b
 
 ## Risks
 - Any planner can add projects, so the list can collect typos; renaming and deleting are deferred.
-- Planner-added projects stay labelled "(new)" if the service-role key is not configured.
-- A planner can add a code that matches any Procore project the app's Procore account can see; the sync then
-  reads its commitments and marks it, keeping the name the planner typed. Seeded sample projects are now looked
-  up too (answered "not found" rather than "not in Procore").
+- Planner-added projects stay "(new)" and unsynced until someone marks them in the database.
 - `created_by` (a user id) is readable by every signed-in user, like the rest of the project list.

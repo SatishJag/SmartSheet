@@ -8,9 +8,9 @@
 --   created_at  when it was added.
 --
 -- A planner adds a project only as themselves, not in Procore, not a programme and offered to the
--- planner. Nobody but the service role changes or deletes projects: Sync with Procore marks a planner
--- project as in Procore once Procore has a project with that number. The codes and names keep the
--- dropdown rules (no commas) and gain length limits.
+-- planner. Nobody but the service role changes or deletes projects: Sync with Procore skips a planner
+-- project until someone marks it as in Procore (update projects set in_procore = true ...). The codes and
+-- names keep the dropdown rules (no commas) and gain length limits.
 --
 -- Deploy note: the app works before and after this migration (without created_by it lists projects
 -- without the "(new)" label), but "+ New project…" fails until it is applied.

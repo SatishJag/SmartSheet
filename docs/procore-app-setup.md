@@ -58,7 +58,13 @@ Both show the page `https://smartsheet-web-production.up.railway.app/procore`. I
 - **Procore must let the panel open new tabs.** If "Open in SmartSheet" does nothing, tell me and I'll change it to a link you can copy.
 
 ## Projects planners add
-A planner can add a project from the wizard (**Project → + New project…**). It shows as "(new)" until Sync with Procore finds a Procore project whose **Project Number** is the same code; the sync then reads its commitments and marks it as in Procore. The mark needs `SUPABASE_SERVICE_ROLE_KEY` in Railway; without it the project still syncs but keeps "(new)".
+A planner can add a project from the wizard (**Project → + New project…**). It shows as "(new)" and Sync with Procore skips it ("not in Procore") until someone marks it as in Procore. Once its Procore project exists with the same **Project Number**, run this in the Supabase SQL editor (with the real code):
+
+```sql
+update projects set in_procore = true where code = 'BKK-04';
+```
+
+The sync reads Procore with the app's own account, so it only reads projects someone has checked like this.
 
 ## Browsers that block sign-in inside Procore
 Some browsers refuse to keep a sign-in inside another site's frame:
